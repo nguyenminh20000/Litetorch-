@@ -39,19 +39,14 @@ CAT_DIR = os.path.join(DATA_DIR, "Cat")
 DOG_DIR = os.path.join(DATA_DIR, "Dog")
 TEST_CAT_IMAGE = os.path.join(DATA_DIR, "cat_test.jpg")
 TEST_DOG_IMAGE = os.path.join(DATA_DIR, "dog_test2.jpg")
-MODEL_SAVE_PATH = "cat_dog_model.lt"
+MODEL_SAVE_PATH = "cat_dog_cnn_model.lt"
 
 IMAGE_SIZE = 64
 CHANNELS = 3
-PATCH_SIZE = 4
-NUM_PATCHES = (IMAGE_SIZE // PATCH_SIZE) * (IMAGE_SIZE // PATCH_SIZE)
-PATCH_DIM = PATCH_SIZE * PATCH_SIZE * CHANNELS
-EMBED_DIM = 128
-NUM_HEADS = 4
 NUM_CLASSES = 2
 BATCH_SIZE = 32
 EPOCHS = 25
-LEARNING_RATE = 0.0003
+LEARNING_RATE = 0.0005
 
 def get_ram_usage_mb():
     try:
@@ -80,72 +75,69 @@ def get_gpu_metrics():
         pass
     return None, None, None
 
-class TransformerBlock(lt.nn.Module):
-    def __init__(self, embed_dim, num_heads, mlp_dim):
+class ConvNetClassifier(lt.nn.Module):
+    def __init__(self, num_classes=2):
         super().__init__()
-        self.attn = lt.nn.MultiHeadAttention(embed_dim, num_heads)
-        self.ln1 = lt.nn.LayerNorm([embed_dim])
-        self.fc1 = lt.nn.Linear(embed_dim, mlp_dim, True)
-        self.fc2 = lt.nn.Linear(mlp_dim, embed_dim, True)
-        self.ln2 = lt.nn.LayerNorm([embed_dim])
-
-    def forward(self, x):
-        norm1 = self.ln1.forward(x)
-        attn_out = self.attn.forward(norm1)
-        x = lt.Ops.add(x, attn_out)
-        norm2 = self.ln2.forward(x)
-        mlp_h = self.fc1.forward(norm2)
-        mlp_h = lt.Ops.gelu(mlp_h)
-        mlp_out = self.fc2.forward(mlp_h)
-        x = lt.Ops.add(x, mlp_out)
-        return x
-
-    def parameters(self):
-        return self.attn.parameters() + self.ln1.parameters() + self.fc1.parameters() + self.fc2.parameters() + self.ln2.parameters()
-
-    def to(self, device):
-        self.attn.to(device)
-        self.ln1.to(device)
-        self.fc1.to(device)
-        self.fc2.to(device)
-        self.ln2.to(device)
-
-class VisionTransformerClassifier(lt.nn.Module):
-    def __init__(self, num_patches, patch_dim, embed_dim, num_heads, num_classes):
-        super().__init__()
-        self.num_patches = num_patches
-        self.embed_dim = embed_dim
-        self.patch_proj = lt.nn.Linear(patch_dim, embed_dim, True)
-        self.pos_proj = lt.nn.Linear(embed_dim, embed_dim, True)
-        self.block1 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
-        self.block2 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
-        self.ln_f = lt.nn.LayerNorm([embed_dim])
-        self.head = lt.nn.Linear(num_patches * embed_dim, num_classes, True)
+        self.conv1 = lt.nn.Conv2d(3, 32, 3, 1, 1, True)
+        self.bn1 = lt.nn.BatchNorm2d(32)
+        self.pool1 = lt.nn.MaxPool2d(2, 2, 0)
+        self.conv2 = lt.nn.Conv2d(32, 64, 3, 1, 1, True)
+        self.bn2 = lt.nn.BatchNorm2d(64)
+        self.pool2 = lt.nn.MaxPool2d(2, 2, 0)
+        self.conv3 = lt.nn.Conv2d(64, 128, 3, 1, 1, True)
+        self.bn3 = lt.nn.BatchNorm2d(128)
+        self.pool3 = lt.nn.MaxPool2d(2, 2, 0)
+        self.dropout = lt.nn.Dropout(0.4)
+        self.fc1 = lt.nn.Linear(128 * 8 * 8, 128, True)
+        self.fc2 = lt.nn.Linear(128, num_classes, True)
 
     def forward(self, x):
         b = x.shape[0]
-        h = self.patch_proj.forward(x)
-        pos = self.pos_proj.forward(h)
-        h = lt.Ops.add(h, pos)
-        h = self.block1.forward(h)
-        h = self.block2.forward(h)
-        h = self.ln_f.forward(h)
-        h_flat = h.view([b, self.num_patches * self.embed_dim])
-        out = self.head.forward(h_flat)
+        h = self.conv1.forward(x)
+        h = self.bn1.forward(h)
+        h = lt.Ops.relu(h)
+        h = self.pool1.forward(h)
+
+        h = self.conv2.forward(h)
+        h = self.bn2.forward(h)
+        h = lt.Ops.relu(h)
+        h = self.pool2.forward(h)
+
+        h = self.conv3.forward(h)
+        h = self.bn3.forward(h)
+        h = lt.Ops.relu(h)
+        h = self.pool3.forward(h)
+
+        h = self.dropout.forward(h)
+        h_flat = h.view([b, 128 * 8 * 8])
+        h_fc = self.fc1.forward(h_flat)
+        h_fc = lt.Ops.relu(h_fc)
+        out = self.fc2.forward(h_fc)
         return out
 
     def parameters(self):
-        return self.patch_proj.parameters() + self.pos_proj.parameters() + self.block1.parameters() + self.block2.parameters() + self.ln_f.parameters() + self.head.parameters()
+        return (
+            self.conv1.parameters() +
+            self.bn1.parameters() +
+            self.conv2.parameters() +
+            self.bn2.parameters() +
+            self.conv3.parameters() +
+            self.bn3.parameters() +
+            self.fc1.parameters() +
+            self.fc2.parameters()
+        )
 
     def to(self, device):
-        self.patch_proj.to(device)
-        self.pos_proj.to(device)
-        self.block1.to(device)
-        self.block2.to(device)
-        self.ln_f.to(device)
-        self.head.to(device)
+        self.conv1.to(device)
+        self.bn1.to(device)
+        self.conv2.to(device)
+        self.bn2.to(device)
+        self.conv3.to(device)
+        self.bn3.to(device)
+        self.fc1.to(device)
+        self.fc2.to(device)
 
-def load_and_preprocess_image(img_path, size=IMAGE_SIZE, patch_size=PATCH_SIZE, augment=False):
+def load_and_preprocess_image(img_path, size=IMAGE_SIZE, augment=False):
     try:
         with Image.open(img_path) as img:
             if img.mode in ("P", "RGBA", "LA"):
@@ -155,14 +147,11 @@ def load_and_preprocess_image(img_path, size=IMAGE_SIZE, patch_size=PATCH_SIZE, 
             if augment and random.random() > 0.5:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
             img = img.resize((size, size))
-            w, h = img.size
-            patches = []
-            for r in range(0, h, patch_size):
-                for c in range(0, w, patch_size):
-                    patch = img.crop((c, r, c + patch_size, r + patch_size))
-                    raw_bytes = patch.tobytes()
-                    patches.extend([(b / 255.0 - 0.5) * 2.0 for b in raw_bytes])
-            return patches
+            r, g, b = img.split()
+            r_bytes = [(x / 255.0 - 0.485) / 0.229 for x in r.tobytes()]
+            g_bytes = [(x / 255.0 - 0.456) / 0.224 for x in g.tobytes()]
+            b_bytes = [(x / 255.0 - 0.406) / 0.225 for x in b.tobytes()]
+            return r_bytes + g_bytes + b_bytes
     except Exception:
         return None
 
@@ -180,7 +169,7 @@ def load_dataset():
     random.shuffle(samples)
     return samples
 
-def build_gpu_batches(dataset_list, batch_size, num_patches, patch_dim, device):
+def build_gpu_batches(dataset_list, batch_size, channels, height, width, device):
     batches = []
     for i in range(0, len(dataset_list), batch_size):
         batch = dataset_list[i:i + batch_size]
@@ -189,7 +178,7 @@ def build_gpu_batches(dataset_list, batch_size, num_patches, patch_dim, device):
             continue
         batch_x = [v for item in batch for v in item[0]]
         batch_y = [item[1] for item in batch]
-        x_tensor = lt.Tensor.from_vector(batch_x, [actual_batch_size, num_patches, patch_dim], device, False)
+        x_tensor = lt.Tensor.from_vector(batch_x, [actual_batch_size, channels, height, width], device, False)
         y_tensor = lt.Tensor.from_vector(batch_y, [actual_batch_size], device, False)
         batches.append((x_tensor, y_tensor, actual_batch_size))
     return batches
@@ -201,7 +190,7 @@ def main():
 
     samples = load_dataset()
     print("================================================================================")
-    print("                 LITETORCH DEEP LEARNING SYSTEM MONITOR")
+    print("                 LITETORCH CONVNET SYSTEM MONITOR")
     print("================================================================================")
     print(f"Total dataset images found: {len(samples)}")
     if len(samples) == 0:
@@ -225,27 +214,27 @@ def main():
 
     device = lt.auto_device()
     print(f"Active Compute Device: {device}")
-    
+
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:
         print(f"GPU Hardware: NVIDIA GPU | Initial VRAM: {vram_used:.1f} MB / {vram_total:.1f} MB")
     print(f"Host System RAM: {get_ram_usage_mb():.1f} MB")
 
-    print(f"Pre-loading entire dataset into GPU VRAM (Num Patches: {NUM_PATCHES}, Embed Dim: {EMBED_DIM})...")
-    train_gpu_batches = build_gpu_batches(train_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
-    val_gpu_batches = build_gpu_batches(val_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
+    print(f"Pre-loading entire dataset into GPU VRAM (NCHW: [3, {IMAGE_SIZE}, {IMAGE_SIZE}])...")
+    train_gpu_batches = build_gpu_batches(train_data, BATCH_SIZE, CHANNELS, IMAGE_SIZE, IMAGE_SIZE, device)
+    val_gpu_batches = build_gpu_batches(val_data, BATCH_SIZE, CHANNELS, IMAGE_SIZE, IMAGE_SIZE, device)
     gpu_util, vram_used_after, _ = get_gpu_metrics()
     if vram_used_after is not None and vram_used is not None:
         print(f"Dataset VRAM Footprint: {vram_used_after - vram_used:.2f} MB | Current VRAM: {vram_used_after:.1f} MB")
     print("================================================================================\n")
 
     random.seed(42)
-    model = VisionTransformerClassifier(NUM_PATCHES, PATCH_DIM, EMBED_DIM, NUM_HEADS, NUM_CLASSES)
+    model = ConvNetClassifier(NUM_CLASSES)
     model.to(device)
     optimizer = lt.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
 
     total_train_batches = len(train_gpu_batches)
-    print("Beginning Model Training Pipeline:")
+    print("Beginning ConvNet Model Training Pipeline:")
     total_training_start = time.perf_counter()
     best_val_acc = 0.0
     best_epoch = 0
@@ -340,7 +329,7 @@ def main():
     total_training_end = time.perf_counter()
     print("================================================================================")
     print(f"Training Complete! Total Wall Time: {total_training_end - total_training_start:.2f}s | Best Val Acc: {best_val_acc:.2f}% (Epoch {best_epoch})")
-    
+
     if os.path.exists(MODEL_SAVE_PATH):
         lt.load(model, MODEL_SAVE_PATH)
         file_size_kb = os.path.getsize(MODEL_SAVE_PATH) / 1024.0
@@ -358,7 +347,7 @@ def main():
             t_load_done = time.perf_counter()
 
             if feat is not None:
-                x_tensor = lt.Tensor.from_vector(feat, [1, NUM_PATCHES, PATCH_DIM], device, False)
+                x_tensor = lt.Tensor.from_vector(feat, [1, CHANNELS, IMAGE_SIZE, IMAGE_SIZE], device, False)
                 t_infer_start = time.perf_counter()
                 logits = model.forward(x_tensor)
                 probs = lt.Ops.softmax(logits, -1).to_vector()
