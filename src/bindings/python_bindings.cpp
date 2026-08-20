@@ -30,6 +30,7 @@ using namespace litetorch;
 class PyModule : public nn::Module {
 public:
     using nn::Module::Module;
+    using ParamList = std::vector<std::shared_ptr<Tensor>>;
 
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override {
         PYBIND11_OVERRIDE_PURE(
@@ -40,9 +41,9 @@ public:
         );
     }
 
-    std::vector<std::shared_ptr<Tensor>> parameters() override {
+    ParamList parameters() override {
         PYBIND11_OVERRIDE(
-            std::vector<std::shared_ptr<Tensor>>,
+            ParamList,
             nn::Module,
             parameters
         );
@@ -61,6 +62,7 @@ public:
 class PyDataset : public data::Dataset {
 public:
     using data::Dataset::Dataset;
+    using ItemType = std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>;
 
     size_t size() override {
         PYBIND11_OVERRIDE_PURE(
@@ -70,9 +72,9 @@ public:
         );
     }
 
-    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> get(size_t index) override {
+    ItemType get(size_t index) override {
         PYBIND11_OVERRIDE_PURE(
-            (std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>),
+            ItemType,
             data::Dataset,
             get,
             index
@@ -233,7 +235,7 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("ring_attention", &Ops::ring_attention);
     ops.def("checkpoint", &Ops::checkpoint, py::arg("module"), py::arg("input"));
 
-    m.def("checkpoint", &checkpoint, "Activation Checkpointing helper");
+    m.def("checkpoint", &litetorch::checkpoint, "Activation Checkpointing helper");
 
     auto nn_mod = m.def_submodule("nn", "LiteTorch Neural Network Modules");
     
@@ -676,7 +678,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("type", &distributed::Placement::type)
         .def_readwrite("dim", &distributed::Placement::dim);
 
-    py::class_<distributed::DTensor, Tensor, std::shared_ptr<distributed::DTensor>>(dist_mod, "DTensor")
+    py::class_<distributed::DTensor, std::shared_ptr<distributed::DTensor>>(dist_mod, "DTensor")
         .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<distributed::DeviceMesh>, const std::vector<distributed::Placement>&>(),
              py::arg("local_tensor"), py::arg("mesh"), py::arg("placements"))
         .def("redistribute", &distributed::DTensor::redistribute, py::arg("new_mesh"), py::arg("new_placements"))

@@ -104,6 +104,7 @@ echo "Executing Python script: $PY_FILE"
 echo "--------------------------------------------------"
 
 export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
+export LD_LIBRARY_PATH="$SCRIPT_DIR/build:$LD_LIBRARY_PATH"
 
 if [ "$GPU_MODE" == "2" ]; then
     LITETORCH_NO_NATIVE_GPU=1 python3 "$PY_FILE"

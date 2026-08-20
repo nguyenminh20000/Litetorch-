@@ -106,6 +106,7 @@ public:
 
     friend class distributed::ProcessGroup;
 
+    virtual ~Tensor() = default;
     Tensor(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     Tensor(std::shared_ptr<StorageImpl> storage, const std::vector<int64_t>& shape, const std::vector<int64_t>& strides, int64_t offset, const Device& device, bool requires_grad = false);
 

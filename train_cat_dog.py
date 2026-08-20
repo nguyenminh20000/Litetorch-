@@ -254,6 +254,7 @@ def main():
         epoch_start_time = time.perf_counter()
         epoch_cpu_start = time.process_time()
 
+        model.train()
         random.shuffle(train_gpu_batches)
         total_loss = 0.0
         correct = 0
@@ -303,6 +304,7 @@ def main():
         avg_loss = total_loss / (total if total > 0 else 1)
         train_acc = (correct / total * 100.0) if total > 0 else 0.0
 
+        model.eval()
         val_correct = 0
         val_total = 0
 
@@ -348,6 +350,7 @@ def main():
     print("================================================================================\n")
 
     print("Running Inference & Latency Benchmark on Test Images:")
+    model.eval()
     test_images = [TEST_CAT_IMAGE, TEST_DOG_IMAGE]
     classes = ["Cat", "Dog"]
 
