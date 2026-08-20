@@ -261,18 +261,10 @@ def main():
 
             gpu_step_time = (t_gpu_end - t_gpu_start)
             epoch_gpu_compute_time += gpu_step_time
-            total_loss += loss.item() * actual_batch_size
+            loss_val = loss.item()
+            total_loss += loss_val * actual_batch_size
+            total += actual_batch_size
 
-            logits_vec = logits.to_vector()
-            y_vec = y_tensor.to_vector()
-            for b in range(actual_batch_size):
-                pred = 0 if logits_vec[b * 2] > logits_vec[b * 2 + 1] else 1
-                if pred == int(y_vec[b]):
-                    correct += 1
-                total += 1
-
-            current_train_acc = (correct / total * 100.0) if total > 0 else 0.0
-            current_loss = loss.item()
             ram_mb = get_ram_usage_mb()
             g_util, v_used, v_tot = get_gpu_metrics()
 
@@ -285,13 +277,12 @@ def main():
 
             sys.stdout.write(
                 f"\rEpoch [{epoch:2d}/{EPOCHS}] [{bar}] {batch_idx}/{total_train_batches} | "
-                f"Loss: {current_loss:.4f} | Acc: {current_train_acc:.1f}% | "
+                f"Loss: {loss_val:.4f} | "
                 f"GPU Time: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
             )
             sys.stdout.flush()
 
         avg_loss = total_loss / (total if total > 0 else 1)
-        train_acc = (correct / total * 100.0) if total > 0 else 0.0
 
         model.eval()
         val_correct = 0
@@ -324,7 +315,7 @@ def main():
 
         sys.stdout.write("\r" + " " * 120 + "\r")
         print(
-            f"Epoch {epoch:2d}/{EPOCHS} | Loss: {avg_loss:.4f} | Train Acc: {train_acc:5.2f}% | Val Acc: {val_acc:5.2f}%{saved_marker} | "
+            f"Epoch {epoch:2d}/{EPOCHS} | Loss: {avg_loss:.4f} | Val Acc: {val_acc:5.2f}%{saved_marker} | "
             f"GPU Pure Compute: {epoch_gpu_compute_time:5.2f}s | CPU Time: {epoch_cpu_time:5.2f}s | Wall Time: {epoch_wall_time:5.2f}s | RAM: {get_ram_usage_mb():.1f}MB"
         )
 
