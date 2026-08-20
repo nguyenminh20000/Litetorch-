@@ -51,6 +51,8 @@ public:
     virtual void free_graph(void* graph) = 0;
 
     virtual void* get_comm_stream() = 0;
+    virtual void* get_compute_stream() { return nullptr; }
+    virtual void* create_stream() { return nullptr; }
     virtual void sync_stream(void* stream) = 0;
     virtual void set_device(int device_id) = 0;
 

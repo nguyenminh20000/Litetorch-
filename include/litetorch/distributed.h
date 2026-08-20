@@ -12,12 +12,23 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <atomic>
 
 namespace litetorch {
 namespace distributed {
 
+struct ShmControl {
+    std::atomic<int> steps[128];
+};
+
+uint16_t float_to_half(float f);
+float half_to_float(uint16_t h);
+
+class NCCLBridge;
+
 class ProcessGroup {
 public:
+    friend class NCCLBridge;
     static ProcessGroup& get();
     void init(int rank, int world_size, const std::string& master_addr = "127.0.0.1", int master_port = 29500);
     void shutdown();
@@ -28,7 +39,7 @@ public:
 
     void all_reduce(std::shared_ptr<Tensor> tensor);
     std::future<void> all_reduce_async(std::shared_ptr<Tensor> tensor);
-    void broadcast(std::shared_ptr<Tensor> tensor, int src_rank);
+    void broadcast(std::shared_ptr<Tensor> tensor, int src);
     void all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
     void reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
     void send_tensor(std::shared_ptr<Tensor> tensor, int dst);
@@ -45,21 +56,21 @@ private:
 
     int server_fd_ = -1;
     std::vector<int> client_fds_;
+    int peer_fd_ = -1;
 
-    void send_all(int fd, const void* buf, size_t len);
-    void recv_all(int fd, void* buf, size_t len);
-
-    std::string shm_name_prefix_ = "/litetorch_shm_";
-    struct ShmHeader {
-        int ready_flags[64];
-        uint8_t data[64 * 1024 * 1024];
-    };
-    int shm_fd_ = -1;
-    ShmHeader* shm_header_ = nullptr;
     bool use_shm_ = false;
+    int master_port_ = 0;
+    int shm_ctrl_fd_ = -1;
+    ShmControl* shm_ctrl_ = nullptr;
+    std::vector<float*> shm_buffers_;
+    size_t shm_buffer_size_ = 0;
 
-    void init_shm();
-    void cleanup_shm();
+    void init_shm(const std::string& master_addr, int master_port);
+    void shutdown_shm();
+    bool all_reduce_shm(std::shared_ptr<Tensor> tensor);
+    bool broadcast_shm(std::shared_ptr<Tensor> tensor, int src);
+    bool all_gather_shm(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
+    bool reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
 
     std::thread async_worker_;
     std::queue<std::pair<std::shared_ptr<Tensor>, std::shared_ptr<std::promise<void>>>> async_queue_;
