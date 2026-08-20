@@ -1,6 +1,6 @@
 #include "gpu_common.h"
 
-extern "C" void gpu_matmul(void* A, int a_off, void* B, int b_off, void* C, int c_off, int M, int N, int K) {
+extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
     float alpha = 1.0f;
@@ -20,7 +20,7 @@ extern "C" void gpu_matmul(void* A, int a_off, void* B, int b_off, void* C, int 
 #endif
 }
 
-extern "C" void gpu_bmm(void* A, int a_off, void* B, int b_off, void* C, int c_off, int batch_size, int M, int N, int K) {
+extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
     float alpha = 1.0f;
@@ -46,7 +46,7 @@ extern "C" void gpu_bmm(void* A, int a_off, void* B, int b_off, void* C, int c_o
 #endif
 }
 
-extern "C" void gpu_matmul_half(void* A, int a_off, void* B, int b_off, void* C, int c_off, int M, int N, int K) {
+extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
     const __half alpha = __float2half(1.0f);
@@ -68,7 +68,7 @@ extern "C" void gpu_matmul_half(void* A, int a_off, void* B, int b_off, void* C,
 #endif
 }
 
-extern "C" void gpu_bmm_half(void* A, int a_off, void* B, int b_off, void* C, int c_off, int batch_size, int M, int N, int K) {
+extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
     const __half alpha = __float2half(1.0f);
@@ -89,9 +89,59 @@ extern "C" void gpu_bmm_half(void* A, int a_off, void* B, int b_off, void* C, in
     const rocblas_half* a_ptr = (const rocblas_half*)A + a_off;
     const rocblas_half* b_ptr = (const rocblas_half*)B + b_off;
     rocblas_half* c_ptr = (rocblas_half*)C + c_off;
-    long long strideA = M * K;
-    long long strideB = K * N;
-    long long strideC = M * N;
     rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, alpha, b_ptr, N, strideB, a_ptr, K, strideA, beta, c_ptr, N, strideC, batch_size);
+#endif
+}
+
+extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float a_scale, float b_scale, float d_scale) {
+#ifndef __HIP_PLATFORM_AMD__
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11080
+    cublasLtHandle_t lt_handle = get_cublaslt_handle();
+    cublasLtMatmulDesc_t matmulDesc = nullptr;
+    cublasLtMatmulDescCreate(&matmulDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+    
+    cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
+    cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, K, M, K);
+    cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, N, K, N);
+    cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16F, N, M, N);
+    
+    cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(float));
+    cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(float));
+    
+    float alpha = 1.0f / (d_scale > 0.0f ? d_scale : 1.0f);
+    float beta = 0.0f;
+    const void* a_ptr = (const char*)A + a_off;
+    const void* b_ptr = (const char*)B + b_off;
+    void* c_ptr = (char*)C + c_off;
+    
+    cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, g_compute_stream);
+    
+    cublasLtMatrixLayoutDestroy(Adesc);
+    cublasLtMatrixLayoutDestroy(Bdesc);
+    cublasLtMatrixLayoutDestroy(Cdesc);
+    cublasLtMatmulDescDestroy(matmulDesc);
+#else
+    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+#endif
+#else
+    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+#endif
+}
+
+extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+#ifndef __HIP_PLATFORM_AMD__
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+    cublasHandle_t handle = get_cublas_handle();
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const void* a_ptr = (const char*)A + a_off * sizeof(unsigned short);
+    const void* b_ptr = (const char*)B + b_off * sizeof(unsigned short);
+    void* c_ptr = (char*)C + c_off * sizeof(unsigned short);
+    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16BF, N, a_ptr, CUDA_R_16BF, K, &beta, c_ptr, CUDA_R_16BF, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+#else
+    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+#endif
+#else
+    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
 #endif
 }

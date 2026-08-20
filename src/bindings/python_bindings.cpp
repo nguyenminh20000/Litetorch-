@@ -692,6 +692,26 @@ PYBIND11_MODULE(litetorch, m) {
         .def("shard_parameters", &distributed::FullyShardedDataParallel::shard_parameters)
         .def("get_module", &distributed::FullyShardedDataParallel::get_module);
 
+    py::class_<distributed::OverlappedAllReducer>(dist_mod, "OverlappedAllReducer")
+        .def_static("get", &distributed::OverlappedAllReducer::get, py::return_value_policy::reference)
+        .def("push_and_all_reduce", &distributed::OverlappedAllReducer::push_and_all_reduce, py::arg("tensor"))
+        .def("push_and_reduce_scatter", &distributed::OverlappedAllReducer::push_and_reduce_scatter, py::arg("shard"), py::arg("full"))
+        .def("sync", &distributed::OverlappedAllReducer::sync);
+
+    dist_mod.def("overlapped_all_reduce", &distributed::overlapped_all_reduce, py::arg("tensor"));
+    dist_mod.def("overlapped_reduce_scatter", &distributed::overlapped_reduce_scatter, py::arg("shard"), py::arg("full"));
+    dist_mod.def("sync_overlapped_all_reduce", &distributed::sync_overlapped_all_reduce);
+
+    py::class_<distributed::PipelineParallelModule, nn::Module, std::shared_ptr<distributed::PipelineParallelModule>>(dist_mod, "PipelineParallelModule")
+        .def(py::init<std::shared_ptr<nn::Module>>(), py::arg("sub_module"))
+        .def("forward", &distributed::PipelineParallelModule::forward, py::arg("input"))
+        .def("forward_microbatches", &distributed::PipelineParallelModule::forward_microbatches, py::arg("microbatches"))
+        .def("schedule_1f1b", &distributed::PipelineParallelModule::schedule_1f1b, py::arg("microbatches"))
+        .def("train_step_1f1b", &distributed::PipelineParallelModule::train_step_1f1b, py::arg("microbatches"), py::arg("loss_fn") = nullptr)
+        .def("run_1f1b_with_backward", &distributed::PipelineParallelModule::run_1f1b_with_backward, py::arg("microbatches"), py::arg("loss_fn"))
+        .def("parameters", &distributed::PipelineParallelModule::parameters)
+        .def("to", &distributed::PipelineParallelModule::to, py::arg("device"));
+
     auto jit_mod = m.def_submodule("jit", "LiteTorch JIT Compilation");
 
     py::enum_<JITVar::OpType>(jit_mod, "OpType")

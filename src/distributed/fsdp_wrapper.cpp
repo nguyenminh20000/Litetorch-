@@ -75,8 +75,12 @@ static void shard_module_parameters(std::shared_ptr<nn::Module> module,
         if (p->requires_grad) {
             p->register_hook([shard, p](std::shared_ptr<Tensor> grad) {
                 auto sharded_grad = Tensor::create(shard->shape, shard->device, false, shard->dtype);
-                ProcessGroup::get().reduce_scatter(sharded_grad, grad);
-                ProcessGroup::get().sync_comm();
+                if (NCCLBridge::get().is_available() && grad->device.type == DeviceType::GPU) {
+                    OverlappedAllReducer::get().push_and_reduce_scatter(sharded_grad, grad);
+                } else {
+                    ProcessGroup::get().reduce_scatter(sharded_grad, grad);
+                    ProcessGroup::get().sync_comm();
+                }
                 
                 shard->grad = sharded_grad;
                 
@@ -137,6 +141,98 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
             p->storage->discard_gpu();
         }
     });
+}
+
+void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, size_t bucket_size_bytes) {
+    if (tensors.empty()) return;
+    std::vector<std::shared_ptr<Tensor>> current_bucket;
+    size_t current_bucket_bytes = 0;
+
+    auto flush_bucket = [](const std::vector<std::shared_ptr<Tensor>>& bucket) {
+        if (bucket.empty()) return;
+        if (bucket.size() == 1) {
+            if (NCCLBridge::get().is_available() && bucket[0]->device.type == DeviceType::GPU) {
+                OverlappedAllReducer::get().push_and_all_reduce(bucket[0]);
+                OverlappedAllReducer::get().sync();
+            } else {
+                ProcessGroup::get().all_reduce(bucket[0]);
+            }
+            return;
+        }
+        size_t total_elements = 0;
+        for (const auto& t : bucket) {
+            total_elements += t->numel();
+        }
+        auto flat_buffer = Tensor::create({static_cast<int64_t>(total_elements)}, bucket[0]->device, false, bucket[0]->dtype);
+        size_t offset = 0;
+        for (const auto& t : bucket) {
+            size_t n = t->numel();
+            if (t->device.type == DeviceType::CPU) {
+                t->storage->ensure_cpu();
+                flat_buffer->storage->ensure_cpu();
+                std::memcpy(flat_buffer->data_ptr() + offset, t->data_ptr(), n * t->storage->element_size());
+            } else {
+                auto backend = BackendDispatcher::get().get_backend();
+                if (backend && backend->is_available()) {
+                    backend->copy(t->gpu_data(), flat_buffer->gpu_data(), n * t->storage->element_size(), 0, offset * t->storage->element_size());
+                } else if (CLBackend::get().is_available()) {
+                    CLBackend::get().copy(t->gpu_data(), flat_buffer->gpu_data(), n * t->storage->element_size(), 0, offset * t->storage->element_size());
+                }
+            }
+            offset += n;
+        }
+
+        if (NCCLBridge::get().is_available() && flat_buffer->device.type == DeviceType::GPU) {
+            OverlappedAllReducer::get().push_and_all_reduce(flat_buffer);
+            OverlappedAllReducer::get().sync();
+        } else {
+            ProcessGroup::get().all_reduce(flat_buffer);
+            ProcessGroup::get().sync_comm();
+        }
+
+        offset = 0;
+        for (const auto& t : bucket) {
+            size_t n = t->numel();
+            if (t->device.type == DeviceType::CPU) {
+                t->storage->ensure_cpu();
+                flat_buffer->storage->ensure_cpu();
+                std::memcpy(t->data_ptr(), flat_buffer->data_ptr() + offset, n * t->storage->element_size());
+            } else {
+                auto backend = BackendDispatcher::get().get_backend();
+                if (backend && backend->is_available()) {
+                    backend->copy(flat_buffer->gpu_data(), t->gpu_data(), n * t->storage->element_size(), offset * t->storage->element_size(), 0);
+                } else if (CLBackend::get().is_available()) {
+                    CLBackend::get().copy(flat_buffer->gpu_data(), t->gpu_data(), n * t->storage->element_size(), offset * t->storage->element_size(), 0);
+                }
+            }
+            offset += n;
+        }
+    };
+
+    for (auto& t : tensors) {
+        if (!t) continue;
+        size_t tensor_bytes = t->numel() * t->storage->element_size();
+        if (current_bucket_bytes + tensor_bytes > bucket_size_bytes && !current_bucket.empty()) {
+            flush_bucket(current_bucket);
+            current_bucket.clear();
+            current_bucket_bytes = 0;
+        }
+        current_bucket.push_back(t);
+        current_bucket_bytes += tensor_bytes;
+    }
+    if (!current_bucket.empty()) {
+        flush_bucket(current_bucket);
+    }
+}
+
+void all_reduce_grads(std::shared_ptr<nn::Module> module) {
+    std::vector<std::shared_ptr<Tensor>> grads;
+    for (auto& p : module->parameters()) {
+        if (p->requires_grad && p->grad) {
+            grads.push_back(p->grad);
+        }
+    }
+    all_reduce_bucketed(grads, 25 * 1024 * 1024);
 }
 
 }

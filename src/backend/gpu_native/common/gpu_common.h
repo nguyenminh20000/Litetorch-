@@ -28,10 +28,20 @@
 #include <cmath>
 #include <cstdint>
 
+#ifndef __HIP_PLATFORM_AMD__
+#include <cublasLt.h>
+#endif
+
+typedef void (*fa3_fwd_t)(const void*, const void*, const void*, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, void*, int);
+typedef void (*fa3_bwd_t)(void*, void*, void*, const void*, const void*, const void*, const void*, const void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, void*, int);
+extern fa3_fwd_t g_fa3_fwd_fn;
+extern fa3_bwd_t g_fa3_bwd_fn;
+
 extern GPU_API(Stream_t) g_compute_stream;
 
 #ifndef __HIP_PLATFORM_AMD__
 cublasHandle_t get_cublas_handle();
+cublasLtHandle_t get_cublaslt_handle();
 #ifdef USE_CUDNN
 cudnnHandle_t get_cudnn_handle();
 #endif

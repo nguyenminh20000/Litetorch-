@@ -23,6 +23,13 @@ cublasHandle_t get_cublas_handle() {
     }
     return handle;
 }
+cublasLtHandle_t get_cublaslt_handle() {
+    thread_local cublasLtHandle_t handle = nullptr;
+    if (!handle) {
+        cublasLtCreate(&handle);
+    }
+    return handle;
+}
 #ifdef USE_CUDNN
 cudnnHandle_t get_cudnn_handle() {
     thread_local cudnnHandle_t handle = nullptr;
@@ -79,11 +86,24 @@ static void auto_set_device(const void* ptr) {
 #endif
 }
 
+static void* g_fa3_handle = nullptr;
+fa3_fwd_t g_fa3_fwd_fn = nullptr;
+fa3_bwd_t g_fa3_bwd_fn = nullptr;
+
 extern "C" bool gpu_init() {
     GPU_API(Error_t) err = GPU_API(SetDevice)(0);
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+    const char* fa_paths[] = { "libflash_attn.so", "/usr/local/cuda/lib64/libflash_attn.so", "./libflash_attn.so" };
+    for (const char* p : fa_paths) {
+        g_fa3_handle = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+        if (g_fa3_handle) {
+            g_fa3_fwd_fn = (fa3_fwd_t)dlsym(g_fa3_handle, "flash_attn_fwd");
+            g_fa3_bwd_fn = (fa3_bwd_t)dlsym(g_fa3_handle, "flash_attn_bwd");
+            break;
+        }
+    }
     return true;
 }
 
@@ -92,6 +112,15 @@ extern "C" bool gpu_init_device(int device_id) {
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+    const char* fa_paths[] = { "libflash_attn.so", "/usr/local/cuda/lib64/libflash_attn.so", "./libflash_attn.so" };
+    for (const char* p : fa_paths) {
+        g_fa3_handle = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+        if (g_fa3_handle) {
+            g_fa3_fwd_fn = (fa3_fwd_t)dlsym(g_fa3_handle, "flash_attn_fwd");
+            g_fa3_bwd_fn = (fa3_bwd_t)dlsym(g_fa3_handle, "flash_attn_bwd");
+            break;
+        }
+    }
     return true;
 }
 
@@ -102,6 +131,30 @@ extern "C" void* gpu_get_comm_stream() {
 extern "C" void gpu_sync_stream(void* stream) {
     if (stream) {
         GPU_API(StreamSynchronize)((GPU_API(Stream_t))stream);
+    }
+}
+
+extern "C" void* gpu_create_event() {
+    GPU_API(Event_t) event;
+    GPU_API(EventCreateWithFlags)(&event, GPU_API(EventDisableTiming));
+    return (void*)event;
+}
+
+extern "C" void gpu_record_event(void* event, void* stream) {
+    if (event) {
+        GPU_API(EventRecord)((GPU_API(Event_t))event, stream ? (GPU_API(Stream_t))stream : g_compute_stream);
+    }
+}
+
+extern "C" void gpu_stream_wait_event(void* stream, void* event) {
+    if (event) {
+        GPU_API(StreamWaitEvent)(stream ? (GPU_API(Stream_t))stream : g_comm_stream, (GPU_API(Event_t))event, 0);
+    }
+}
+
+extern "C" void gpu_destroy_event(void* event) {
+    if (event) {
+        GPU_API(EventDestroy)((GPU_API(Event_t))event);
     }
 }
 
@@ -196,7 +249,6 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
     if (src) auto_set_device(src);
     else if (dst) auto_set_device(dst);
     GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), g_compute_stream);
-    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_read_async(void* ptr, size_t size, void* host_ptr, size_t offset) {

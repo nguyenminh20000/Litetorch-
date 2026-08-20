@@ -383,10 +383,16 @@ __global__ void flash_attn_bwd_half_kernel(__half *dQ, __half *dK, __half *dV,
   }
 }
 
-extern "C" void gpu_flash_attention(void *Q, int q_off, void *K, int k_off,
-                                    void *V, int v_off, void *O, int o_off,
-                                    int B, int H, int H_kv, int Tq, int Tk,
-                                    int D, float scale) {
+extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_off,
+                                    void *V, int64_t v_off, void *O, int64_t o_off,
+                                    int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
+                                    int64_t D, float scale) {
+  if (g_fa3_fwd_fn) {
+    g_fa3_fwd_fn((const char*)Q + q_off * sizeof(float), (const char*)K + k_off * sizeof(float),
+                 (const char*)V + v_off * sizeof(float), (char*)O + o_off * sizeof(float),
+                 B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+    return;
+  }
   int block_size = 128;
   int shared_mem_size = (block_size * D * 3) * sizeof(float);
 
@@ -408,10 +414,16 @@ extern "C" void gpu_flash_attention(void *Q, int q_off, void *K, int k_off,
 #endif
 }
 
-extern "C" void gpu_flash_attention_half(void *Q, int q_off, void *K, int k_off,
-                                         void *V, int v_off, void *O, int o_off,
-                                         int B, int H, int H_kv, int Tq, int Tk,
-                                         int D, float scale) {
+extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_t k_off,
+                                         void *V, int64_t v_off, void *O, int64_t o_off,
+                                         int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
+                                         int64_t D, float scale) {
+  if (g_fa3_fwd_fn) {
+    g_fa3_fwd_fn((const char*)Q + q_off * sizeof(__half), (const char*)K + k_off * sizeof(__half),
+                 (const char*)V + v_off * sizeof(__half), (char*)O + o_off * sizeof(__half),
+                 B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+    return;
+  }
   int block_size = 128;
   int shared_mem_size = (block_size * D * 3) * sizeof(__half);
 
@@ -436,11 +448,19 @@ extern "C" void gpu_flash_attention_half(void *Q, int q_off, void *K, int k_off,
 }
 
 extern "C" void
-gpu_flash_attention_backward(void *dQ, int dq_off, void *dK, int dk_off,
-                             void *dV, int dv_off, void *O, int o_off, void *dO,
-                             int do_off, void *Q, int q_off, void *K, int k_off,
-                             void *V, int v_off, int B, int H, int H_kv, int Tq,
-                             int Tk, int D, float scale) {
+gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK, int64_t dk_off,
+                             void *dV, int64_t dv_off, void *O, int64_t o_off, void *dO,
+                             int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
+                             void *V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq,
+                             int64_t Tk, int64_t D, float scale) {
+  if (g_fa3_bwd_fn) {
+    g_fa3_bwd_fn((char*)dQ + dq_off * sizeof(float), (char*)dK + dk_off * sizeof(float),
+                 (char*)dV + dv_off * sizeof(float), (const char*)O + o_off * sizeof(float),
+                 (const char*)dO + do_off * sizeof(float), (const char*)Q + q_off * sizeof(float),
+                 (const char*)K + k_off * sizeof(float), (const char*)V + v_off * sizeof(float),
+                 B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+    return;
+  }
   size_t dq_size = B * H * Tq * D * sizeof(float);
   size_t dk_size = B * H_kv * Tk * D * sizeof(float);
   size_t dv_size = B * H_kv * Tk * D * sizeof(float);
@@ -471,10 +491,18 @@ gpu_flash_attention_backward(void *dQ, int dq_off, void *dK, int dk_off,
 }
 
 extern "C" void gpu_flash_attention_backward_half(
-    void *dQ, int dq_off, void *dK, int dk_off, void *dV, int dv_off, void *O,
-    int o_off, void *dO, int do_off, void *Q, int q_off, void *K, int k_off,
-    void *V, int v_off, int B, int H, int H_kv, int Tq, int Tk, int D,
+    void *dQ, int64_t dq_off, void *dK, int64_t dk_off, void *dV, int64_t dv_off, void *O,
+    int64_t o_off, void *dO, int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
+    void *V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
     float scale) {
+  if (g_fa3_bwd_fn) {
+    g_fa3_bwd_fn((char*)dQ + dq_off * sizeof(__half), (char*)dK + dk_off * sizeof(__half),
+                 (char*)dV + dv_off * sizeof(__half), (const char*)O + o_off * sizeof(__half),
+                 (const char*)dO + do_off * sizeof(__half), (const char*)Q + q_off * sizeof(__half),
+                 (const char*)K + k_off * sizeof(__half), (const char*)V + v_off * sizeof(__half),
+                 B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+    return;
+  }
   size_t dq_size = B * H * Tq * D * sizeof(__half);
   size_t dk_size = B * H_kv * Tk * D * sizeof(__half);
   size_t dv_size = B * H_kv * Tk * D * sizeof(__half);

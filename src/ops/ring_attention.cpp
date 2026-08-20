@@ -28,6 +28,39 @@ std::shared_ptr<Tensor> ring_attention(
     int64_t T_local = q->shape[2];
     int64_t D = q->shape[3];
 
+    auto k_curr = k->is_contiguous() ? k : k->contiguous();
+    auto v_curr = v->is_contiguous() ? v : v->contiguous();
+
+    if (q->device.type == DeviceType::GPU) {
+        auto out = flash_attention(q, k_curr, v_curr);
+        int dst = (rank + 1) % world_size;
+        int src = (rank - 1 + world_size) % world_size;
+
+        for (int step = 1; step < world_size; ++step) {
+            auto k_next = Tensor::create(k_curr->shape, k_curr->device, false, k_curr->dtype);
+            auto v_next = Tensor::create(v_curr->shape, v_curr->device, false, v_curr->dtype);
+
+            if (rank % 2 == 0) {
+                pg->send_tensor(k_curr, dst);
+                pg->recv_tensor(k_next, src);
+                pg->send_tensor(v_curr, dst);
+                pg->recv_tensor(v_next, src);
+            } else {
+                pg->recv_tensor(k_next, src);
+                pg->send_tensor(k_curr, dst);
+                pg->recv_tensor(v_next, src);
+                pg->send_tensor(v_curr, dst);
+            }
+
+            auto step_out = flash_attention(q, k_next, v_next);
+            out = Ops::add(out, step_out);
+            k_curr = k_next;
+            v_curr = v_next;
+        }
+        auto scale_tensor = Tensor::from_vector({1.0f / static_cast<float>(world_size)}, {}, q->device, false, q->dtype);
+        return Ops::mul(out, scale_tensor);
+    }
+
     auto out = Tensor::zeros({B, H, T_local, D}, q->device, false);
     auto M = Tensor::create({B, H, T_local}, q->device, false);
     auto L = Tensor::zeros({B, H, T_local}, q->device, false);
@@ -37,11 +70,7 @@ std::shared_ptr<Tensor> ring_attention(
         M_ptr[i] = -std::numeric_limits<float>::infinity();
     }
 
-    auto k_curr = k->is_contiguous() ? k : k->contiguous();
-    auto v_curr = v->is_contiguous() ? v : v->contiguous();
-
     float scale = 1.0f / std::sqrt(static_cast<float>(D));
-
     int dst = (rank + 1) % world_size;
     int src = (rank - 1 + world_size) % world_size;
 
