@@ -261,8 +261,6 @@ def main():
 
             gpu_step_time = (t_gpu_end - t_gpu_start)
             epoch_gpu_compute_time += gpu_step_time
-            loss_val = loss.item()
-            total_loss += loss_val * actual_batch_size
             total += actual_batch_size
 
             ram_mb = get_ram_usage_mb()
@@ -277,12 +275,11 @@ def main():
 
             sys.stdout.write(
                 f"\rEpoch [{epoch:2d}/{EPOCHS}] [{bar}] {batch_idx}/{total_train_batches} | "
-                f"Loss: {loss_val:.4f} | "
                 f"GPU Time: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
             )
             sys.stdout.flush()
 
-        avg_loss = total_loss / (total if total > 0 else 1)
+        avg_loss = loss.item()
 
         model.eval()
         val_correct = 0

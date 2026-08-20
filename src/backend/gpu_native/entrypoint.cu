@@ -61,29 +61,7 @@ miopenHandle_t get_miopen_handle() {
 #endif
 #endif
 
-static void auto_set_device(const void* ptr) {
-    if (!ptr) return;
-#ifndef __HIP_PLATFORM_AMD__
-    cudaPointerAttributes attr;
-    if (cudaPointerGetAttributes(&attr, ptr) == cudaSuccess) {
-#if CUDART_VERSION >= 10000
-        if (attr.type == cudaMemoryTypeDevice) {
-            cudaSetDevice(attr.device);
-        }
-#else
-        if (attr.memoryType == cudaMemoryTypeDevice) {
-            cudaSetDevice(attr.device);
-        }
-#endif
-    }
-#else
-    hipPointerAttribute_t attr;
-    if (hipPointerGetAttributes(&attr, ptr) == hipSuccess) {
-        if (attr.memoryType == hipMemoryTypeDevice) {
-            hipSetDevice(attr.device);
-        }
-    }
-#endif
+static inline void auto_set_device(const void* ptr) {
 }
 
 static void* g_fa3_handle = nullptr;
@@ -220,50 +198,37 @@ extern "C" void gpu_free_graph(void* graph) {
 extern "C" void* gpu_allocate(size_t size) {
     void* ptr = nullptr;
     GPU_API(Malloc)(&ptr, size);
-    if (ptr) {
-        GPU_API(Memset)(ptr, 0, size);
-    }
     return ptr;
 }
 
 extern "C" void gpu_free(void* ptr) {
     if (ptr) {
-        auto_set_device(ptr);
         GPU_API(Free)(ptr);
     }
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
-    if (ptr) auto_set_device(ptr);
     GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), g_compute_stream);
     GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
-    if (ptr) auto_set_device(ptr);
     GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), g_compute_stream);
-    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
-    if (src) auto_set_device(src);
-    else if (dst) auto_set_device(dst);
     GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), g_compute_stream);
 }
 
 extern "C" void gpu_read_async(void* ptr, size_t size, void* host_ptr, size_t offset) {
-    if (ptr) auto_set_device(ptr);
     GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), g_compute_stream);
 }
 
 extern "C" void gpu_write_async(void* ptr, size_t size, const void* host_ptr, size_t offset) {
-    if (ptr) auto_set_device(ptr);
     GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), g_compute_stream);
 }
 
 extern "C" void gpu_copy_async(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
-    if (src) auto_set_device(src);
-    else if (dst) auto_set_device(dst);
     GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), g_compute_stream);
 }
 
@@ -272,9 +237,6 @@ extern "C" void gpu_finish() {
 }
 
 extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
-    if (arg_count > 0 && args && args[0]) {
-        auto_set_device(*(void**)args[0]);
-    }
     dim3 block(256, 1, 1);
     if (global_y > 1) {
         block = dim3(16, 16, 1);
