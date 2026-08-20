@@ -1,0 +1,10 @@
+README.md
+setup.py
+litetorch.egg-info/PKG-INFO
+litetorch.egg-info/SOURCES.txt
+litetorch.egg-info/dependency_links.txt
+litetorch.egg-info/entry_points.txt
+litetorch.egg-info/not-zip-safe
+litetorch.egg-info/top_level.txt
+src/bindings/python_bindings.cpp
+tests/test_litetorch.py

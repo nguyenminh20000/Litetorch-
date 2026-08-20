@@ -1,0 +1,3 @@
+[console_scripts]
+demo_run.py = tests.demo_run:main
+test_litetorch.py = tests.test_litetorch:main
