@@ -1,65 +1,65 @@
-from setuptools import setup
-from pybind11.setup_helpers import Pybind11Extension, build_ext
+from setuptools import setup, Extension
+from setuptools.command.build_ext import build_ext
+import pybind11
 import os
 import sys
-import subprocess
+import glob
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-class CustomBuildExt(build_ext):
-    def run(self):
-        nproc = os.cpu_count() or 4
-        subprocess.check_call(["make", f"-j{nproc}"], cwd=SCRIPT_DIR)
-        
-        nvcc_bin = None
-        for p in ["nvcc", "/usr/local/cuda/bin/nvcc"]:
-            try:
-                if subprocess.call(["which", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
-                    nvcc_bin = p
-                    break
-            except Exception:
-                if os.path.exists(p):
-                    nvcc_bin = p
-                    break
+cpp_sources = sorted(glob.glob(os.path.join(SCRIPT_DIR, "src", "**", "*.cpp"), recursive=True))
 
-        if nvcc_bin:
-            os.makedirs(os.path.join(SCRIPT_DIR, "build"), exist_ok=True)
-            cudnn_flag = ""
-            if os.path.exists("/usr/local/cuda/lib64/libcudnn.so") or subprocess.call("ldconfig -p 2>/dev/null | grep -q libcudnn", shell=True) == 0:
-                cudnn_flag = "-DUSE_CUDNN -lcudnn"
-            
-            cmd = (
-                f"{nvcc_bin} -std=c++14 -O3 --shared -Xcompiler -fPIC -Wno-deprecated-gpu-targets "
-                f"-Iinclude -Isrc/backend/gpu_native/common -Isrc/backend/gpu_native "
-                f"src/backend/gpu_native/kernels.cu -o build/liblitetorch_gpu.so -lcublas {cudnn_flag}"
-            )
-            subprocess.call(cmd, shell=True, cwd=SCRIPT_DIR)
+inc_dirs = [
+    pybind11.get_include(),
+    os.path.join(SCRIPT_DIR, "include"),
+    os.path.join(SCRIPT_DIR, "src"),
+] + [x[0] for x in os.walk(os.path.join(SCRIPT_DIR, "src"))]
 
-        super().run()
+class BuildExt(build_ext):
+    def build_extensions(self):
+        compiler_type = self.compiler.compiler_type
+        for ext in self.extensions:
+            if compiler_type == "msvc":
+                ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
+            else:
+                ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
+        super().build_extensions()
 
 ext_modules = [
-    Pybind11Extension(
+    Extension(
         "litetorch",
-        ["src/bindings/python_bindings.cpp"],
-        include_dirs=[os.path.join(SCRIPT_DIR, "include")],
-        library_dirs=[os.path.join(SCRIPT_DIR, "build")],
-        libraries=["litetorch"],
-        extra_compile_args=["-std=c++14", "-O3"],
-        extra_link_args=[
-            f"-Wl,-rpath,{os.path.join(SCRIPT_DIR, 'build')}",
-            "-Wl,-rpath,$ORIGIN/build",
-            "-Wl,-rpath,$ORIGIN"
-        ],
+        cpp_sources,
+        include_dirs=inc_dirs,
+        libraries=["pthread", "ws2_32"] if sys.platform.startswith("win") else ["pthread", "dl", "rt"],
+        language="c++",
     ),
 ]
 
+readme_file = os.path.join(SCRIPT_DIR, "README.md")
+long_desc = ""
+if os.path.exists(readme_file):
+    with open(readme_file, "r", encoding="utf-8") as f:
+        long_desc = f.read()
+
 setup(
     name="litetorch",
-    version="0.1.0",
+    version="0.2.0",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
+    long_description=long_desc,
+    long_description_content_type="text/markdown",
+    url="https://github.com/nguyenminh20000/Litetorch-",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: C++",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
+    python_requires=">=3.8",
     ext_modules=ext_modules,
-    cmdclass={"build_ext": CustomBuildExt},
+    cmdclass={"build_ext": BuildExt},
     zip_safe=False,
     entry_points={
         "console_scripts": [

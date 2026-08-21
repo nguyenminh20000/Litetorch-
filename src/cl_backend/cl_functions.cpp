@@ -28,18 +28,4 @@ clGetProgramBuildInfo_t p_clGetProgramBuildInfo = nullptr;
 clCreateSubBuffer_t p_clCreateSubBuffer = nullptr;
 clGetDeviceInfo_t p_clGetDeviceInfo = nullptr;
 
-static std::string read_kernels_file() {
-    std::ifstream f("src/ops/kernels.cl");
-    if (!f.is_open()) {
-        f.open("kernels.cl");
-        if (!f.is_open()) {
-            throw std::runtime_error("Could not open kernels.cl or src/ops/kernels.cl");
-        }
-    }
-    std::stringstream buffer;
-    buffer << f.rdbuf();
-    return buffer.str();
-}
-extern const std::string litetorch_kernels_src = read_kernels_file();
-
 }

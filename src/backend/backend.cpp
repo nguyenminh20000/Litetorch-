@@ -110,9 +110,26 @@ public:
         if (getenv("LITETORCH_NO_GPU") || getenv("LITETORCH_NO_NATIVE_GPU")) {
             return;
         }
-        const char* paths[] = { "./build/liblitetorch_gpu.so", "liblitetorch_gpu.so" };
-        for (const char* path : paths) {
-            handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+        std::vector<std::string> paths = {
+            "./build/liblitetorch_gpu.so",
+            "build/liblitetorch_gpu.so",
+            "liblitetorch_gpu.so",
+            "/tmp/liblitetorch_gpu.so",
+            "/usr/local/lib/liblitetorch_gpu.so",
+            "/usr/lib/liblitetorch_gpu.so"
+        };
+#ifndef _WIN32
+        Dl_info info;
+        if (dladdr((void*)&NativeGPUBackend::get, &info) && info.dli_fname) {
+            std::string dir = info.dli_fname;
+            size_t slash = dir.find_last_of("/\\");
+            if (slash != std::string::npos) {
+                paths.insert(paths.begin(), dir.substr(0, slash) + "/liblitetorch_gpu.so");
+            }
+        }
+#endif
+        for (const auto& path : paths) {
+            handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
             if (handle) break;
         }
         if (!handle) return;

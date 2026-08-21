@@ -4,6 +4,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/allocator.h"
+#include "litetorch/backend.h"
 #include <numeric>
 #include <stdexcept>
 #include <random>
@@ -204,11 +205,13 @@ std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, cons
     if (tensor->device.type == DeviceType::GPU) {
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
         if (gpu_ptr) {
-            CLBackend::get().write(gpu_ptr, tensor->storage->size * sizeof(float), data.data());
+            size_t bytes_to_copy = std::min(data.size(), static_cast<size_t>(tensor->numel())) * sizeof(float);
+            CLBackend::get().write(gpu_ptr, bytes_to_copy, data.data(), tensor->offset * sizeof(float));
         }
     } else {
         float* cpu_ptr = tensor->storage->get_cpu_ptr();
-        std::copy(data.begin(), data.end(), cpu_ptr + tensor->offset);
+        size_t count = std::min(data.size(), static_cast<size_t>(tensor->numel()));
+        std::copy(data.begin(), data.begin() + count, cpu_ptr + tensor->offset);
     }
     if (dtype != DataType::FP32) {
         return tensor->cast(dtype);
@@ -219,10 +222,16 @@ std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, cons
 std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const Device& device, bool requires_grad) {
     auto tensor = create(shape, device, requires_grad);
     if (tensor->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
-        int size_val = static_cast<int>(tensor->numel());
-        cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-        CLBackend::get().launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &size_val}, {sizeof(cl_mem), sizeof(int)});
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            std::vector<float> zeros_vec(tensor->numel(), 0.0f);
+            native->write(tensor->gpu_data(), tensor->numel() * sizeof(float), zeros_vec.data(), tensor->offset * sizeof(float));
+        } else {
+            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
+            int size_val = static_cast<int>(tensor->numel());
+            cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
+            CLBackend::get().launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &size_val}, {sizeof(cl_mem), sizeof(int)});
+        }
     }
     return tensor;
 }

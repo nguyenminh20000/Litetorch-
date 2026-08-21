@@ -323,13 +323,16 @@ cl_mem CLBackend::allocate(size_t size) {
                 }
                 cl_buffer_region region = { it->offset, it->size };
                 cl_int err = 0;
-                cl_mem sub_buf = p_clCreateSubBuffer(sb->buffer, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);
-                if (err != CL_SUCCESS) {
-                    throw std::runtime_error("[litetorch Error] clCreateSubBuffer failed: " + std::to_string(err));
+                cl_mem sub_buf = nullptr;
+                if (p_clCreateSubBuffer) {
+                    sub_buf = p_clCreateSubBuffer(sb->buffer, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);
                 }
-                it->sub_buffer = sub_buf;
-                active_sub_buffers_[sub_buf] = &(*it);
-                return sub_buf;
+                if (err == CL_SUCCESS && sub_buf) {
+                    it->sub_buffer = sub_buf;
+                    active_sub_buffers_[sub_buf] = &(*it);
+                    return sub_buf;
+                }
+                it->is_free = true;
             }
         }
     }
@@ -351,47 +354,54 @@ cl_mem CLBackend::allocate(size_t size) {
         raw_buffer = p_clCreateBuffer(context_, CL_MEM_READ_WRITE, sb_size, nullptr, &err);
     }
 
-    if (err != CL_SUCCESS) {
-        return nullptr;
+    if (err == CL_SUCCESS && raw_buffer) {
+        total_device_allocated_ += sb_size;
+        auto sb = std::make_unique<SuperBlock>();
+        sb->buffer = raw_buffer;
+        sb->size = sb_size;
+
+        Block initial_block;
+        initial_block.offset = 0;
+        initial_block.size = sb_size;
+        initial_block.is_free = true;
+        initial_block.sub_buffer = nullptr;
+        initial_block.parent = sb.get();
+        sb->blocks.push_back(initial_block);
+
+        super_blocks_.push_back(std::move(sb));
+
+        auto& new_sb = super_blocks_.back();
+        auto it = new_sb->blocks.begin();
+        it->is_free = false;
+        if (it->size > aligned_size) {
+            Block remaining;
+            remaining.offset = aligned_size;
+            remaining.size = it->size - aligned_size;
+            remaining.is_free = true;
+            remaining.sub_buffer = nullptr;
+            remaining.parent = new_sb.get();
+            new_sb->blocks.insert(std::next(it), remaining);
+            it->size = aligned_size;
+        }
+
+        cl_buffer_region region = { it->offset, it->size };
+        cl_mem sub_buf = nullptr;
+        if (p_clCreateSubBuffer) {
+            sub_buf = p_clCreateSubBuffer(new_sb->buffer, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);
+        }
+        if (err == CL_SUCCESS && sub_buf) {
+            it->sub_buffer = sub_buf;
+            active_sub_buffers_[sub_buf] = &(*it);
+            return sub_buf;
+        }
     }
 
-    total_device_allocated_ += sb_size;
-    auto sb = std::make_unique<SuperBlock>();
-    sb->buffer = raw_buffer;
-    sb->size = sb_size;
-
-    Block initial_block;
-    initial_block.offset = 0;
-    initial_block.size = sb_size;
-    initial_block.is_free = true;
-    initial_block.sub_buffer = nullptr;
-    initial_block.parent = sb.get();
-    sb->blocks.push_back(initial_block);
-
-    super_blocks_.push_back(std::move(sb));
-
-    auto& new_sb = super_blocks_.back();
-    auto it = new_sb->blocks.begin();
-    it->is_free = false;
-    if (it->size > aligned_size) {
-        Block remaining;
-        remaining.offset = aligned_size;
-        remaining.size = it->size - aligned_size;
-        remaining.is_free = true;
-        remaining.sub_buffer = nullptr;
-        remaining.parent = new_sb.get();
-        new_sb->blocks.insert(std::next(it), remaining);
-        it->size = aligned_size;
+    cl_int direct_err = 0;
+    cl_mem direct_buf = p_clCreateBuffer(context_, CL_MEM_READ_WRITE, size, nullptr, &direct_err);
+    if (direct_err == CL_SUCCESS && direct_buf) {
+        return direct_buf;
     }
-
-    cl_buffer_region region = { it->offset, it->size };
-    cl_mem sub_buf = p_clCreateSubBuffer(new_sb->buffer, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("[litetorch Error] clCreateSubBuffer failed: " + std::to_string(err));
-    }
-    it->sub_buffer = sub_buf;
-    active_sub_buffers_[sub_buf] = &(*it);
-    return sub_buf;
+    return nullptr;
 }
 
 void CLBackend::free(cl_mem buffer) {

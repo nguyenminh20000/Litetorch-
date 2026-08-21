@@ -5,7 +5,7 @@ ifeq ($(OS),Windows_NT)
     LDFLAGS ?= -shared -lpthread -lws2_32
     TARGET_LIB := build/liblitetorch.so
 else
-    LDFLAGS ?= -shared -lpthread -ldl
+    LDFLAGS ?= -shared -lpthread -ldl -lrt
     TARGET_LIB := build/liblitetorch.so
 endif
 
