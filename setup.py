@@ -28,7 +28,11 @@ class BuildExt(build_ext):
                 ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
         try:
             super().build_extensions()
-            nvcc_bin = shutil.which("nvcc")
+            nvcc_bin = None
+            for candidate in [shutil.which("nvcc"), "/usr/local/cuda/bin/nvcc", "/usr/bin/nvcc", "/usr/local/cuda-12/bin/nvcc", "/usr/local/cuda-11/bin/nvcc"]:
+                if candidate and os.path.exists(candidate):
+                    nvcc_bin = candidate
+                    break
             if nvcc_bin and not os.environ.get("LITETORCH_NO_NATIVE_GPU"):
                 cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
                 if os.path.exists(cu_src):
@@ -36,14 +40,21 @@ class BuildExt(build_ext):
                     out_so = os.path.join(target_dir, "liblitetorch_gpu.so")
                     inc1 = os.path.join(SCRIPT_DIR, "include")
                     inc2 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native")
+                    inc3 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "common")
                     cmd = [
                         nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
-                        f"-I{inc1}", f"-I{inc2}",
+                        f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                         cu_src, "-o", out_so,
                         "-lcublas", "-lcublasLt"
                     ]
                     try:
-                        subprocess.run(cmd, check=True)
+                        res = subprocess.run(cmd, capture_output=True, text=True)
+                        if res.returncode == 0:
+                            for extra_dest in ["/tmp/liblitetorch_gpu.so", "/usr/local/lib/liblitetorch_gpu.so"]:
+                                try:
+                                    shutil.copyfile(out_so, extra_dest)
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
         except Exception as e:
@@ -82,7 +93,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.2.6",
+    version="0.2.7",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,
