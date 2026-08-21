@@ -120,7 +120,7 @@ public:
         };
 #ifndef _WIN32
         Dl_info info;
-        if (dladdr((void*)&NativeGPUBackend::get, &info) && info.dli_fname) {
+        if (dladdr((void*)&BackendDispatcher::get, &info) && info.dli_fname) {
             std::string dir = info.dli_fname;
             size_t slash = dir.find_last_of("/\\");
             if (slash != std::string::npos) {
