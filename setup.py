@@ -23,7 +23,25 @@ class BuildExt(build_ext):
                 ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
             else:
                 ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
-        super().build_extensions()
+        try:
+            super().build_extensions()
+        except Exception as e:
+            sys.stderr.write("\n" + "=" * 70 + "\n")
+            sys.stderr.write("LITETORCH BUILD ERROR:\n")
+            sys.stderr.write(f"Compiler Type: {compiler_type}\n")
+            sys.stderr.write(f"Platform: {sys.platform}\n")
+            sys.stderr.write(f"Error Details: {str(e)}\n\n")
+            if sys.platform.startswith("win"):
+                sys.stderr.write("Windows Troubleshooting:\n")
+                sys.stderr.write("1. Ensure Microsoft C++ Build Tools is installed: https://aka.ms/vs/17/release/vs_BuildTools.exe\n")
+                sys.stderr.write("2. Select 'Desktop development with C++' during installation.\n")
+                sys.stderr.write("3. Alternatively, install via PowerShell (Admin): winget install Microsoft.VisualStudio.2022.BuildTools\n")
+            else:
+                sys.stderr.write("Linux Troubleshooting:\n")
+                sys.stderr.write("1. Install C++ build tools: sudo apt-get install -y build-essential python3-dev\n")
+                sys.stderr.write("2. Ensure g++ >= 7.0 is available.\n")
+            sys.stderr.write("=" * 70 + "\n\n")
+            raise
 
 ext_modules = [
     Extension(
@@ -43,7 +61,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.2.0",
+    version="0.2.1",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,
