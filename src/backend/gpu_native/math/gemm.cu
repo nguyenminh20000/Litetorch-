@@ -20,6 +20,32 @@ extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void*
 #endif
 }
 
+extern "C" void gpu_matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                             void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                             void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+#ifndef __HIP_PLATFORM_AMD__
+    cublasHandle_t handle = get_cublas_handle();
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    float* c_ptr = (float*)C + c_off;
+    cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasSgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
+#else
+    rocblas_handle handle = get_rocblas_handle();
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    float* c_ptr = (float*)C + c_off;
+    rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_sgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
+#endif
+}
+
 extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();

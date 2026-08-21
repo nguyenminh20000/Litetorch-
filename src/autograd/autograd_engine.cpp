@@ -95,12 +95,7 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
                     }
                     std::lock_guard<std::mutex> lock(input_t->grad_mutex);
                     if (!input_t->grad) {
-                        if (create_graph) {
-                            input_t->grad = grad;
-                        } else {
-                            input_t->grad = Tensor::create(grad->shape, grad->device, false, grad->dtype);
-                            input_t->grad->copy_(grad);
-                        }
+                        input_t->grad = grad;
                     } else {
                         if (create_graph) {
                             input_t->grad = Ops::add(input_t->grad, grad);
@@ -114,13 +109,7 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
             if (i < node->next_nodes.size() && node->next_nodes[i]) {
                 auto next_node = node->next_nodes[i];
                 if (grads.find(next_node) == grads.end()) {
-                    if (create_graph) {
-                        grads[next_node] = grad;
-                    } else {
-                        auto grad_clone = Tensor::create(grad->shape, grad->device, false, grad->dtype);
-                        grad_clone->copy_(grad);
-                        grads[next_node] = grad_clone;
-                    }
+                    grads[next_node] = grad;
                 } else {
                     if (create_graph) {
                         grads[next_node] = Ops::add(grads[next_node], grad);

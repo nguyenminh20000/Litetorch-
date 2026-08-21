@@ -20,6 +20,7 @@ typedef void (*gpu_launch_t)(void*, int, int, int, void**, int);
 typedef void* (*gpu_compile_kernel_t)(const char*, const char*);
 typedef void (*gpu_launch_dynamic_t)(void*, int, int, int, void**, int);
 typedef void (*gpu_matmul_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
+typedef void (*gpu_matmul_ex_t)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_bmm_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_matmul_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_bmm_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
@@ -73,6 +74,7 @@ public:
     gpu_compile_kernel_t gpu_compile_kernel_fn = nullptr;
     gpu_launch_dynamic_t gpu_launch_dynamic_fn = nullptr;
     gpu_matmul_t gpu_matmul_fn = nullptr;
+    gpu_matmul_ex_t gpu_matmul_ex_fn = nullptr;
     gpu_bmm_t gpu_bmm_fn = nullptr;
     gpu_matmul_half_t gpu_matmul_half_fn = nullptr;
     gpu_bmm_half_t gpu_bmm_half_fn = nullptr;
@@ -131,6 +133,7 @@ public:
         gpu_compile_kernel_fn = (gpu_compile_kernel_t)dlsym(handle, "gpu_compile_kernel");
         gpu_launch_dynamic_fn = (gpu_launch_dynamic_t)dlsym(handle, "gpu_launch_dynamic");
         gpu_matmul_fn = (gpu_matmul_t)dlsym(handle, "gpu_matmul");
+        gpu_matmul_ex_fn = (gpu_matmul_ex_t)dlsym(handle, "gpu_matmul_ex");
         gpu_bmm_fn = (gpu_bmm_t)dlsym(handle, "gpu_bmm");
         gpu_matmul_half_fn = (gpu_matmul_half_t)dlsym(handle, "gpu_matmul_half");
         gpu_bmm_half_fn = (gpu_bmm_half_t)dlsym(handle, "gpu_bmm_half");
@@ -185,6 +188,10 @@ public:
     void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_sum_fn) gpu_sum_fn(A, a_off, B, b_off, size); }
     void max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_max_fn) gpu_max_fn(A, a_off, B, b_off, size); }
     void matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
+    void matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, void* B, int64_t b_off, bool trans_b, int64_t ldb, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
+        if (gpu_matmul_ex_fn) gpu_matmul_ex_fn(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+        else if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+    }
     void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
     void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_half_fn) gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
     void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_half_fn) gpu_bmm_half_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }

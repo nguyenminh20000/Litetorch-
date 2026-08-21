@@ -25,6 +25,11 @@ public:
     virtual void* get_precompiled_kernel(int kernel_id) = 0;
     virtual void launch(void* kernel, const std::vector<size_t>& global_work_size, const std::vector<size_t>& local_work_size, const std::vector<void*>& args, const std::vector<size_t>& arg_sizes) = 0;
     virtual void matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) = 0;
+    virtual void matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                           void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                           void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+        matmul(A, a_off, B, b_off, C, c_off, M, N, K);
+    }
     virtual void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) = 0;
     virtual void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) = 0;
     virtual void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) = 0;

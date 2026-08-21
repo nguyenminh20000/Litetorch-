@@ -33,10 +33,16 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
-        auto b_t = b->transpose(0, 1);
-        auto grad_a = Ops::matmul(grad_output, b_t);
-        auto a_t = a->transpose(0, 1);
-        auto grad_b = Ops::matmul(a_t, grad_output);
+        std::shared_ptr<Tensor> grad_a = nullptr;
+        std::shared_ptr<Tensor> grad_b = nullptr;
+        if (inputs.size() > 0 && inputs[0].requires_grad) {
+            auto b_t = b->transpose(0, 1);
+            grad_a = Ops::matmul(grad_output, b_t);
+        }
+        if (inputs.size() > 1 && inputs[1].requires_grad) {
+            auto a_t = a->transpose(0, 1);
+            grad_b = Ops::matmul(a_t, grad_output);
+        }
         return { grad_a, grad_b };
     }
 };
@@ -47,10 +53,16 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
-        auto b_t = b->transpose(1, 2);
-        auto grad_a = Ops::bmm(grad_output, b_t);
-        auto a_t = a->transpose(1, 2);
-        auto grad_b = Ops::bmm(a_t, grad_output);
+        std::shared_ptr<Tensor> grad_a = nullptr;
+        std::shared_ptr<Tensor> grad_b = nullptr;
+        if (inputs.size() > 0 && inputs[0].requires_grad) {
+            auto b_t = b->transpose(1, 2);
+            grad_a = Ops::bmm(grad_output, b_t);
+        }
+        if (inputs.size() > 1 && inputs[1].requires_grad) {
+            auto a_t = a->transpose(1, 2);
+            grad_b = Ops::bmm(a_t, grad_output);
+        }
         return { grad_a, grad_b };
     }
 };
@@ -145,23 +157,34 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         throw std::runtime_error("[litetorch Error] Matrix inner dimensions must match");
     }
 
-    auto a_c = a->is_contiguous() ? a : a->contiguous();
-    auto b_c = b->is_contiguous() ? b : b->contiguous();
-    int M = a_c->shape[0];
-    int K = a_c->shape[1];
-    int N = b_c->shape[1];
-    auto out = Tensor::create({M, N}, a_c->device, false, a_c->dtype);
+    bool a_trans = (a->shape.size() == 2 && a->strides[0] == 1 && a->strides[1] == a->shape[0]);
+    bool b_trans = (b->shape.size() == 2 && b->strides[0] == 1 && b->strides[1] == b->shape[0]);
+
+    auto a_c = a_trans ? a : (a->is_contiguous() ? a : a->contiguous());
+    auto b_c = b_trans ? b : (b->is_contiguous() ? b : b->contiguous());
+    int M = a->shape[0];
+    int K = a->shape[1];
+    int N = b->shape[1];
+    auto out = Tensor::create({M, N}, a->device, false, a->dtype);
     StorageUseGuard guard({a_c->storage, b_c->storage, out->storage});
 
     bool run_gpu = false;
-    if (a_c->device.type == DeviceType::GPU) {
+    if (a->device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
-            if (a_c->dtype == DataType::FP16) {
-                native->matmul_half(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, M, N, K);
+            int64_t lda = a_trans ? a->shape[0] : a_c->shape[1];
+            int64_t ldb = b_trans ? b->shape[0] : b_c->shape[1];
+            if (a->dtype == DataType::FP16) {
+                if (a_trans || b_trans) {
+                    auto a_cont = a->is_contiguous() ? a : a->contiguous();
+                    auto b_cont = b->is_contiguous() ? b : b->contiguous();
+                    native->matmul_half(a_cont->gpu_data(), a_cont->offset, b_cont->gpu_data(), b_cont->offset, out->gpu_data(), out->offset, M, N, K);
+                } else {
+                    native->matmul_half(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, M, N, K);
+                }
             } else {
-                native->matmul(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, M, N, K);
+                native->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
             }
         } else {
             void* kernel = nullptr;
