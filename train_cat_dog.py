@@ -3,30 +3,17 @@ import sys
 import glob
 import time
 import random
-import ctypes
 import subprocess
-
-current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
-if hasattr(os, "add_dll_directory"):
-    for p in [current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
-        if os.path.isdir(p):
-            try:
-                os.add_dll_directory(p)
-            except Exception:
-                pass
-
-for bdir in [os.path.join(current_dir, "build"), os.path.join(os.getcwd(), "build"), "/content/Litetorch-/Litetorch-/build", "/content/Litetorch-/build"]:
-    for ext in ["liblitetorch.so", "liblitetorch.dll"]:
-        lib_file = os.path.join(bdir, ext)
-        if os.path.exists(lib_file):
-            try:
-                ctypes.CDLL(lib_file, mode=ctypes.RTLD_GLOBAL)
-                break
-            except Exception:
-                pass
-
 from PIL import Image
-import litetorch as lt
+
+try:
+    import litetorch as lt
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
+    for search_path in [current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
+        if search_path not in sys.path and os.path.isdir(search_path):
+            sys.path.insert(0, search_path)
+    import litetorch as lt
 
 def find_dataset_dir():
     for c in ["/content/dataset/data", "../dataset/data", "dataset/data", "dataset", "/content/dataset"]:
