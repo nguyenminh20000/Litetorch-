@@ -9,8 +9,8 @@ namespace distributed {
 
 class DeviceMesh {
 public:
-    std::string mesh_dim_names;
     std::vector<int> mesh_shape;
+    std::string mesh_dim_names;
     std::vector<int> mesh_topology;
 
     DeviceMesh(const std::vector<int>& shape, const std::string& dim_names)

@@ -17,6 +17,7 @@ inc_dirs = [
 
 class BuildExt(build_ext):
     def build_extensions(self):
+        self.parallel = os.cpu_count() or 4
         compiler_type = self.compiler.compiler_type
         for ext in self.extensions:
             if compiler_type == "msvc":
@@ -61,7 +62,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.2.2",
+    version="0.2.3",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,
