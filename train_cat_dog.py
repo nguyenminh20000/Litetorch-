@@ -211,7 +211,8 @@ def main():
     print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     device = lt.auto_device()
-    print(f"Active Compute Device: {device}")
+    backend_name = lt.get_backend_name() if hasattr(lt, "get_backend_name") else ("CUDA (Native)" if (hasattr(lt, "cuda") and lt.cuda.is_available()) else ("OpenCL" if lt.is_gpu_available() else "CPU"))
+    print(f"Active Compute Device: {device} | Backend Driver: {backend_name}")
     
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:

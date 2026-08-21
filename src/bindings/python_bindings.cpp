@@ -126,6 +126,23 @@ PYBIND11_MODULE(litetorch, m) {
         return Device(DeviceType::CPU, 0);
     });
 
+    m.def("get_backend_name", []() -> std::string {
+        if (!std::getenv("LITETORCH_NO_NATIVE_GPU")) {
+            auto backend = litetorch::BackendDispatcher::get().get_backend();
+            if (backend && backend->is_available()) {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+                return "ROCm";
+#else
+                return "CUDA";
+#endif
+            }
+        }
+        if (litetorch::CLBackend::get().is_available()) {
+            return "OpenCL";
+        }
+        return "CPU";
+    });
+
     auto cuda_mod = m.def_submodule("cuda");
     cuda_mod.def("is_available", []() {
         if (std::getenv("LITETORCH_NO_NATIVE_GPU")) {
