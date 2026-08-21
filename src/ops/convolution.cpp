@@ -395,45 +395,24 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     StorageUseGuard guard({input_c->storage, weight_c->storage, bias_c ? bias_c->storage : nullptr, out->storage});
 
     if (input->device.type == DeviceType::GPU) {
-        auto weight_flat = Tensor::create({C_out, C_in * KH * KW}, weight_c->device);
-        weight_flat->storage = weight_c->storage;
-        weight_flat->offset = weight_c->offset;
-        weight_flat->requires_grad = false;
-
-        auto col = Tensor::create({C_in * KH * KW, H_out * W_out}, input_c->device);
-        col->requires_grad = false;
-
-        auto kernel_im2col = CLBackend::get().get_kernel(KernelID::Im2col);
-        cl_mem im_mem = input_c->gpu_data();
-        cl_mem col_mem = col->gpu_data();
-        int total_threads = C_in * KH * KW * H_out * W_out;
-
-        for (int n = 0; n < N; ++n) {
-            int im_off = input_c->offset + n * C_in * H_in * W_in;
-            int col_off = col->offset;
-
-            CLBackend::get().launch(kernel_im2col, {static_cast<size_t>(total_threads)}, {},
-                {&im_mem, &im_off, &C_in, &H_in, &W_in, &KH, &KW, &padding, &stride, &H_out, &W_out, &col_mem, &col_off},
-                {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
-
-            auto out_n_flat = matmul(weight_flat, col);
-
-            CLBackend::get().copy(out_n_flat->gpu_data(), out->gpu_data(),
-                                  C_out * H_out * W_out * sizeof(float),
-                                  out_n_flat->offset,
-                                  out->offset + n * C_out * H_out * W_out);
-        }
-
-        if (bias_c) {
-            auto kernel_bias = CLBackend::get().get_kernel(KernelID::AddBias2d);
+        auto kernel_conv = CLBackend::get().get_kernel(KernelID::Conv2dForward);
+        if (kernel_conv) {
+            cl_mem in_mem = input_c->gpu_data();
+            int in_off = input_c->offset;
+            cl_mem w_mem = weight_c->gpu_data();
+            int w_off = weight_c->offset;
+            cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;
+            int b_off = bias_c ? bias_c->offset : 0;
+            int has_bias = bias_c ? 1 : 0;
             cl_mem out_mem = out->gpu_data();
             int out_off = out->offset;
-            cl_mem b_mem = bias_c->gpu_data();
-            int b_off = bias_c->offset;
-            int total_bias_threads = N * C_out * H_out * W_out;
-            CLBackend::get().launch(kernel_bias, {static_cast<size_t>(total_bias_threads)}, {},
-                {&out_mem, &out_off, &b_mem, &b_off, &N, &C_out, &H_out, &W_out},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            int total_threads = N * C_out * H_out * W_out;
+
+            CLBackend::get().launch(kernel_conv, {static_cast<size_t>(total_threads)}, {},
+                {&in_mem, &in_off, &w_mem, &w_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off,
+                 &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
+                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),
+                 sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         }
     } else {
         const float* in_ptr = input_c->data_ptr();

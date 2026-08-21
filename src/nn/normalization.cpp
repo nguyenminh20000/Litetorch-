@@ -23,7 +23,7 @@ std::shared_ptr<Tensor> BatchNorm2d::forward(std::shared_ptr<Tensor> input) {
 }
 
 std::vector<std::shared_ptr<Tensor>> BatchNorm2d::parameters() {
-    return { weight, bias, running_mean, running_var };
+    return { weight, bias };
 }
 
 void BatchNorm2d::to(const Device& device) {
