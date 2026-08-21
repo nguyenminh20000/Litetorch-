@@ -25,12 +25,23 @@ public:
     void step(optim::Optimizer& optimizer) {
         bool has_nan_or_inf = false;
         for (auto& p : optimizer.params) {
-            if (p->grad) {
-                std::vector<float> grads = p->grad->to_vector();
-                for (float g : grads) {
-                    if (std::isnan(g) || std::isinf(g)) {
-                        has_nan_or_inf = true;
-                        break;
+            if (p && p->grad) {
+                if (p->grad->device.type == DeviceType::CPU) {
+                    float* ptr = p->grad->data_ptr();
+                    size_t total = p->grad->numel();
+                    for (size_t i = 0; i < total; ++i) {
+                        if (std::isnan(ptr[i]) || std::isinf(ptr[i])) {
+                            has_nan_or_inf = true;
+                            break;
+                        }
+                    }
+                } else {
+                    std::vector<float> grads = p->grad->to_vector();
+                    for (float g : grads) {
+                        if (std::isnan(g) || std::isinf(g)) {
+                            has_nan_or_inf = true;
+                            break;
+                        }
                     }
                 }
                 if (has_nan_or_inf) break;

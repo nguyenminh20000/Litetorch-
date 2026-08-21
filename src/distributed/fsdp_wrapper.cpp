@@ -24,6 +24,9 @@ public:
     }
     
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        if (NCCLBridge::get().is_available()) {
+            NCCLBridge::get().group_start();
+        }
         for (size_t i = 0; i < full_params.size(); ++i) {
             auto full = full_params[i];
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
@@ -37,6 +40,9 @@ public:
                 full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
             }
             ProcessGroup::get().all_gather(sharded_params[i], full);
+        }
+        if (NCCLBridge::get().is_available()) {
+            NCCLBridge::get().group_end();
         }
         ProcessGroup::get().sync_comm();
         return { grad_output };
@@ -115,6 +121,9 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
     shard_module_parameters(module, *full_params, *sharded_params);
     
     module->register_forward_pre_hook([full_params, sharded_params](nn::Module*, std::shared_ptr<Tensor>) {
+        if (NCCLBridge::get().is_available()) {
+            NCCLBridge::get().group_start();
+        }
         for (size_t i = 0; i < full_params->size(); ++i) {
             auto full = (*full_params)[i];
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
@@ -128,6 +137,9 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
                 full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
             }
             ProcessGroup::get().all_gather((*sharded_params)[i], full);
+        }
+        if (NCCLBridge::get().is_available()) {
+            NCCLBridge::get().group_end();
         }
         ProcessGroup::get().sync_comm();
     });

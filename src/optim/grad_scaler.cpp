@@ -17,10 +17,20 @@ std::shared_ptr<Tensor> GradScaler::scale_loss(std::shared_ptr<Tensor> loss) {
 bool GradScaler::check_inf_nan(const std::vector<std::shared_ptr<Tensor>>& grads) {
     for (const auto& g : grads) {
         if (!g) continue;
-        std::vector<float> vals = g->to_vector();
-        for (float v : vals) {
-            if (std::isnan(v) || std::isinf(v)) {
-                return true;
+        if (g->device.type == DeviceType::CPU) {
+            float* ptr = g->data_ptr();
+            size_t total = g->numel();
+            for (size_t i = 0; i < total; ++i) {
+                if (std::isnan(ptr[i]) || std::isinf(ptr[i])) {
+                    return true;
+                }
+            }
+        } else {
+            std::vector<float> vals = g->to_vector();
+            for (float v : vals) {
+                if (std::isnan(v) || std::isinf(v)) {
+                    return true;
+                }
             }
         }
     }

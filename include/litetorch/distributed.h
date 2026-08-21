@@ -18,7 +18,7 @@ namespace litetorch {
 namespace distributed {
 
 struct ShmControl {
-    std::atomic<int> steps[128];
+    std::atomic<int> steps[4096];
 };
 
 uint16_t float_to_half(float f);
@@ -279,6 +279,9 @@ public:
     bool dp_reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
     bool dp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
 
+    void group_start();
+    void group_end();
+
     void sync_comm();
     void shutdown();
 
@@ -310,6 +313,8 @@ private:
     void* all_gather_fn = nullptr;
     void* reduce_scatter_fn = nullptr;
     void* comm_destroy_fn = nullptr;
+    void* group_start_fn = nullptr;
+    void* group_end_fn = nullptr;
 };
 
 class OverlappedAllReducer {

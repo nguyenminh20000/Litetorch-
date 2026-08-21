@@ -2,6 +2,9 @@
 #include "litetorch/backend.h"
 #include "litetorch/platform.h"
 #include <iostream>
+#include <fstream>
+#include <chrono>
+#include <thread>
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
@@ -805,6 +808,8 @@ void NCCLBridge::init(int rank, int world_size) {
     all_gather_fn = dlsym(lib_handle_, "ncclAllGather");
     reduce_scatter_fn = dlsym(lib_handle_, "ncclReduceScatter");
     comm_destroy_fn = dlsym(lib_handle_, "ncclCommDestroy");
+    group_start_fn = dlsym(lib_handle_, "ncclGroupStart");
+    group_end_fn = dlsym(lib_handle_, "ncclGroupEnd");
 
     if (!get_unique_id_fn || !comm_init_rank_fn || !all_reduce_fn || 
         !broadcast_fn || !all_gather_fn || !reduce_scatter_fn || !comm_destroy_fn) {
@@ -816,24 +821,67 @@ void NCCLBridge::init(int rank, int world_size) {
     }
 
     char unique_id[128] = {0};
-    auto& pg = ProcessGroup::get();
-    if (rank == 0) {
-        typedef int (*get_id_t)(void*);
-        ((get_id_t)get_unique_id_fn)(unique_id);
-        for (int i = 1; i < world_size; ++i) {
-            size_t sent = 0;
-            while (sent < 128) {
-                ssize_t s = ::send(pg.client_fds_[i], unique_id + sent, 128 - sent, 0);
-                if (s <= 0) break;
-                sent += s;
+    const char* rend_file = std::getenv("LITETORCH_RENDEZVOUS_FILE");
+    if (!rend_file) {
+        rend_file = std::getenv("NCCL_UNIQUE_ID_FILE");
+    }
+
+    if (rend_file && std::strlen(rend_file) > 0) {
+        if (rank == 0) {
+            typedef int (*get_id_t)(void*);
+            ((get_id_t)get_unique_id_fn)(unique_id);
+            std::ofstream ofs(rend_file, std::ios::binary | std::ios::trunc);
+            if (ofs.is_open()) {
+                ofs.write(unique_id, 128);
+                ofs.close();
+            }
+        } else {
+            bool loaded = false;
+            for (int attempt = 0; attempt < 3000; ++attempt) {
+                std::ifstream ifs(rend_file, std::ios::binary);
+                if (ifs.is_open()) {
+                    ifs.seekg(0, std::ios::end);
+                    if (ifs.tellg() >= 128) {
+                        ifs.seekg(0, std::ios::beg);
+                        ifs.read(unique_id, 128);
+                        loaded = true;
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (!loaded) {
+                dlclose(lib_handle_);
+                lib_handle_ = nullptr;
+                available_ = false;
+                initialized_ = true;
+                return;
             }
         }
     } else {
-        size_t recvd = 0;
-        while (recvd < 128) {
-            ssize_t r = ::recv(pg.peer_fd_, unique_id + recvd, 128 - recvd, MSG_WAITALL);
-            if (r <= 0) break;
-            recvd += r;
+        auto& pg = ProcessGroup::get();
+        if (rank == 0) {
+            typedef int (*get_id_t)(void*);
+            ((get_id_t)get_unique_id_fn)(unique_id);
+            for (int i = 1; i < world_size; ++i) {
+                if (i < static_cast<int>(pg.client_fds_.size()) && pg.client_fds_[i] >= 0) {
+                    size_t sent = 0;
+                    while (sent < 128) {
+                        ssize_t s = ::send(pg.client_fds_[i], unique_id + sent, 128 - sent, 0);
+                        if (s <= 0) break;
+                        sent += s;
+                    }
+                }
+            }
+        } else {
+            if (pg.peer_fd_ >= 0) {
+                size_t recvd = 0;
+                while (recvd < 128) {
+                    ssize_t r = ::recv(pg.peer_fd_, unique_id + recvd, 128 - recvd, MSG_WAITALL);
+                    if (r <= 0) break;
+                    recvd += r;
+                }
+            }
         }
     }
 
@@ -1018,6 +1066,20 @@ bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<T
         return true;
     }
     return false;
+}
+
+void NCCLBridge::group_start() {
+    if (available_ && initialized_ && group_start_fn) {
+        typedef int (*group_start_t)();
+        ((group_start_t)group_start_fn)();
+    }
+}
+
+void NCCLBridge::group_end() {
+    if (available_ && initialized_ && group_end_fn) {
+        typedef int (*group_end_t)();
+        ((group_end_t)group_end_fn)();
+    }
 }
 
 void NCCLBridge::sync_comm() {
