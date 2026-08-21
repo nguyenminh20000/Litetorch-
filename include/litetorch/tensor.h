@@ -23,7 +23,8 @@ enum class DataType {
     INT4,
     FP8_E4M3,
     FP8_E5M2,
-    NF4
+    NF4,
+    FP4_E2M1
 };
 
 class Node;
@@ -58,6 +59,7 @@ public:
         if (dtype == DataType::FP8_E4M3) return 1;
         if (dtype == DataType::FP8_E5M2) return 1;
         if (dtype == DataType::NF4) return 1;
+        if (dtype == DataType::FP4_E2M1) return 1;
         return 4;
     }
 

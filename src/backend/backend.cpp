@@ -54,6 +54,8 @@ typedef void (*gpu_destroy_event_t)(void*);
 typedef void* (*gpu_get_comm_stream_t)();
 typedef void (*gpu_sync_stream_t)(void*);
 typedef void (*gpu_set_device_t)(int);
+typedef void (*gpu_set_tf32_enabled_t)(bool);
+typedef bool (*gpu_is_tf32_enabled_t)();
 
 class NativeGPUBackend : public DeviceBackend {
 public:
@@ -103,6 +105,8 @@ public:
     gpu_destroy_event_t gpu_destroy_event_fn = nullptr;
     gpu_get_comm_stream_t gpu_get_comm_stream_fn = nullptr;
     gpu_sync_stream_t gpu_sync_stream_fn = nullptr;
+    gpu_set_tf32_enabled_t gpu_set_tf32_enabled_fn = nullptr;
+    gpu_is_tf32_enabled_t gpu_is_tf32_enabled_fn = nullptr;
     std::unordered_set<void*> dynamic_kernels;
     bool is_ok = false;
 
@@ -180,6 +184,8 @@ public:
         gpu_get_comm_stream_fn = (gpu_get_comm_stream_t)dlsym(handle, "gpu_get_comm_stream");
         gpu_sync_stream_fn = (gpu_sync_stream_t)dlsym(handle, "gpu_sync_stream");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
+        gpu_set_tf32_enabled_fn = (gpu_set_tf32_enabled_t)dlsym(handle, "gpu_set_tf32_enabled");
+        gpu_is_tf32_enabled_fn = (gpu_is_tf32_enabled_t)dlsym(handle, "gpu_is_tf32_enabled");
 
         if (gpu_init_fn && gpu_allocate_fn && gpu_free_fn && gpu_read_fn && 
             gpu_write_fn && gpu_copy_fn && gpu_finish_fn && gpu_get_kernel_fn && gpu_launch_fn) {
@@ -274,6 +280,8 @@ public:
     void* get_comm_stream() override { return gpu_get_comm_stream_fn ? gpu_get_comm_stream_fn() : nullptr; }
     void sync_stream(void* stream) override { if (gpu_sync_stream_fn && stream) gpu_sync_stream_fn(stream); }
     void set_device(int device_id) override { if (gpu_set_device_fn) gpu_set_device_fn(device_id); }
+    void set_tf32_enabled(bool enabled) override { if (gpu_set_tf32_enabled_fn) gpu_set_tf32_enabled_fn(enabled); }
+    bool is_tf32_enabled() const override { return gpu_is_tf32_enabled_fn ? gpu_is_tf32_enabled_fn() : false; }
     void* get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name) override {
         if (gpu_get_kernel_fn) {
             void* precompiled = gpu_get_kernel_fn(kernel_name.c_str());

@@ -33,14 +33,14 @@ LiteTorch tích hợp toàn bộ sức mạnh huấn luyện cốt lõi của **
 - **Cơ Chế Khởi Tạo Rendezvous Đa Dạng**: Hỗ trợ khởi tạo qua Shared FileStore (`LITETORCH_RENDEZVOUS_FILE`) và TCP Sockets cho quy mô 1.000+ GPU.
 
 ### 3. Hỗ Trợ Phần Cứng Đa Nền Tảng
-- **NVIDIA CUDA**: Tích hợp cuBLAS, cuDNN, hỗ trợ kiến trúc Blackwell B200 (`sm_100`), tính toán ma trận độ chính xác thấp FP8/FP4 (`cublasLtMatmul`).
+- **NVIDIA CUDA**: Tích hợp cuBLAS, cuDNN, hỗ trợ kiến trúc Blackwell B200 (`sm_100`), tự động nhận diện phần cứng (`-arch=native`), tăng tốc TensorFloat-32 (`TF32`), và tính toán ma trận độ chính xác thấp FP8/FP4 (`cublasLtMatmul`).
 - **AMD ROCm / HIP**: Biên dịch trực tiếp qua `hipcc` với rocBLAS và MIOpen.
 - **OpenCL & CPU Đa Luồng**: Tự động nhận diện phần cứng và fallback mượt mà về OpenCL hoặc CPU ThreadPool nếu không có card GPU chuyên dụng.
 
 ### 4. Quản Lý Bộ Nhớ Nâng Cao
 - **Activation Checkpointing**: Tái tính toán activation trong lượt backward, giảm từ 60% đến 70% dung lượng VRAM tiêu thụ.
 - **LRU Memory Eviction & Caching Allocator**: Cấp phát khối bộ nhớ thông minh, tự động chuyển đổi dữ liệu giữa RAM và VRAM theo thuật toán LRU.
-- **Mixed Precision (AMP)**: Tự động huấn luyện FP16/BF16/FP8 chống tràn số qua `GradScaler`.
+- **Mixed Precision (AMP) & Lượng Tử Hóa**: Tự động huấn luyện FP16/BF16/FP8/FP4 chống tràn số qua `GradScaler` và chế độ TF32.
 - **CUDA Graph Capture**: Ghi luồng tính toán GPU để loại bỏ độ trễ phát lệnh từ CPU.
 
 ---

@@ -129,6 +129,29 @@ float nf4_to_float(uint8_t idx) {
     return NF4_GRID[idx];
 }
 
+const float FP4_E2M1_GRID[16] = {
+    0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
+    -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
+};
+
+uint8_t float_to_fp4_e2m1(float val) {
+    float min_dist = 1e9f;
+    uint8_t best_idx = 0;
+    for (uint8_t i = 0; i < 16; ++i) {
+        float dist = std::abs(FP4_E2M1_GRID[i] - val);
+        if (dist < min_dist) {
+            min_dist = dist;
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
+float fp4_e2m1_to_float(uint8_t idx) {
+    if (idx >= 16) idx = 0;
+    return FP4_E2M1_GRID[idx];
+}
+
 class ViewNode : public Node {
 public:
     std::vector<int64_t> orig_shape;
@@ -1069,6 +1092,18 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
         float* dst = (float*)dst_cpu;
         for (size_t i = 0; i < numel_; ++i) {
             dst[i] = nf4_to_float(src[i]);
+        }
+    } else if (dtype == DataType::FP32 && target_dtype == DataType::FP4_E2M1) {
+        float* src = (float*)src_cpu;
+        uint8_t* dst = (uint8_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = float_to_fp4_e2m1(src[i]);
+        }
+    } else if (dtype == DataType::FP4_E2M1 && target_dtype == DataType::FP32) {
+        uint8_t* src = (uint8_t*)src_cpu;
+        float* dst = (float*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = fp4_e2m1_to_float(src[i]);
         }
     } else {
         throw std::runtime_error("Unsupported cast operation");

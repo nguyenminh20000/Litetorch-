@@ -43,12 +43,21 @@ class BuildExt(build_ext):
                     inc3 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "common")
                     cmd = [
                         nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                        "-arch=native",
                         f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                         cu_src, "-o", out_so,
                         "-lcublas", "-lcublasLt"
                     ]
                     try:
                         res = subprocess.run(cmd, capture_output=True, text=True)
+                        if res.returncode != 0:
+                            cmd_fallback = [
+                                nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                                f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
+                                cu_src, "-o", out_so,
+                                "-lcublas", "-lcublasLt"
+                            ]
+                            res = subprocess.run(cmd_fallback, capture_output=True, text=True)
                         if res.returncode == 0:
                             for extra_dest in ["/tmp/liblitetorch_gpu.so", "/usr/local/lib/liblitetorch_gpu.so"]:
                                 try:
@@ -93,7 +102,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.2.7",
+    version="0.2.8",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,

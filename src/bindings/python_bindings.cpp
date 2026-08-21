@@ -151,6 +151,19 @@ PYBIND11_MODULE(litetorch, m) {
         auto backend = litetorch::BackendDispatcher::get().get_backend();
         return backend && backend->is_available();
     });
+    cuda_mod.def("set_tf32_enabled", [](bool enabled) {
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend) {
+            backend->set_tf32_enabled(enabled);
+        }
+    }, py::arg("enabled") = true);
+    cuda_mod.def("is_tf32_enabled", []() {
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend) {
+            return backend->is_tf32_enabled();
+        }
+        return false;
+    });
 
     py::enum_<DataType>(m, "DataType")
         .value("FP64", DataType::FP64)
@@ -163,6 +176,8 @@ PYBIND11_MODULE(litetorch, m) {
         .value("FP8_E4M3", DataType::FP8_E4M3)
         .value("FP8_E5M2", DataType::FP8_E5M2)
         .value("NF4", DataType::NF4)
+        .value("FP4_E2M1", DataType::FP4_E2M1)
+        .value("FP4", DataType::FP4_E2M1)
         .export_values();
 
     py::class_<Tensor, std::shared_ptr<Tensor>>(m, "Tensor")

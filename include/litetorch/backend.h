@@ -65,6 +65,9 @@ public:
     virtual void record_event(void* event, void* stream) {}
     virtual void stream_wait_event(void* stream, void* event) {}
     virtual void destroy_event(void* event) {}
+
+    virtual void set_tf32_enabled(bool) {}
+    virtual bool is_tf32_enabled() const { return false; }
 };
 
 class BackendDispatcher {

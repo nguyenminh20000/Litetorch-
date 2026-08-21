@@ -15,11 +15,28 @@ GPU_API(Stream_t) g_compute_stream = nullptr;
 GPU_API(Stream_t) g_comm_stream = nullptr;
 
 #ifndef __HIP_PLATFORM_AMD__
+static bool g_tf32_enabled = true;
+
+extern "C" void gpu_set_tf32_enabled(bool enabled) {
+    g_tf32_enabled = enabled;
+    cublasHandle_t handle = get_cublas_handle();
+    if (handle) {
+        cublasMath_t mode = enabled ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
+        cublasSetMathMode(handle, mode);
+    }
+}
+
+extern "C" bool gpu_is_tf32_enabled() {
+    return g_tf32_enabled;
+}
+
 cublasHandle_t get_cublas_handle() {
     thread_local cublasHandle_t handle = nullptr;
     if (!handle) {
         cublasCreate(&handle);
         cublasSetStream(handle, g_compute_stream);
+        cublasMath_t mode = g_tf32_enabled ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
+        cublasSetMathMode(handle, mode);
     }
     return handle;
 }
@@ -351,6 +368,8 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "rope_backward") return (void*)&rope_backward;
     if (sname == "paged_attention_forward") return (void*)&paged_attention_forward;
     if (sname == "w8a8_matmul_kernel") return (void*)&w8a8_matmul_kernel;
+    if (sname == "gpu_set_tf32_enabled") return (void*)&gpu_set_tf32_enabled;
+    if (sname == "gpu_is_tf32_enabled") return (void*)&gpu_is_tf32_enabled;
     return nullptr;
 }
 

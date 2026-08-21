@@ -33,14 +33,14 @@ LiteTorch delivers the core training capabilities of **PyTorch + Megatron-LM + D
 - **Rendezvous System**: Dual initialization via Shared FileStore (`LITETORCH_RENDEZVOUS_FILE`) and TCP sockets for massive GPU scale (1000+ GPUs).
 
 ### 3. Dual-Platform Hardware Acceleration
-- **NVIDIA CUDA**: cuBLAS, cuDNN, 5th-Gen Blackwell Tensor Core support (sm_100), native FP8/FP4 matrix multiplication (`cublasLtMatmul`).
+- **NVIDIA CUDA**: cuBLAS, cuDNN, 5th-Gen Blackwell Tensor Core support (`sm_100`), auto-architecture discovery (`-arch=native`), TensorFloat-32 (`TF32`) acceleration, and native FP8/FP4 precision.
 - **AMD ROCm / HIP**: Full hipcc compilation with rocBLAS and MIOpen support.
 - **OpenCL & CPU Fallback**: Automatic hardware detection falling back to OpenCL or multi-threaded CPU execution.
 
 ### 4. Advanced Memory Management
 - **Activation Checkpointing**: Recomputes intermediate layer activations on the backward pass to reduce activation VRAM by 60% to 70%.
 - **LRU Memory Eviction & Caching Allocator**: Smart block caching with automatic LRU swapping between Host RAM and GPU VRAM.
-- **Mixed Precision (AMP)**: Automatic FP16/BF16/FP8 training with dynamic loss scaling via `GradScaler`.
+- **Mixed Precision (AMP) & Quantization**: Automatic FP16/BF16/FP8/FP4 training with dynamic loss scaling via `GradScaler` and TF32 execution.
 - **CUDA Graph Capture**: Stream recording to eliminate host-device launch latency.
 
 ---
