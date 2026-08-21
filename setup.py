@@ -4,6 +4,8 @@ import pybind11
 import os
 import sys
 import glob
+import shutil
+import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,6 +28,24 @@ class BuildExt(build_ext):
                 ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
         try:
             super().build_extensions()
+            nvcc_bin = shutil.which("nvcc")
+            if nvcc_bin and not os.environ.get("LITETORCH_NO_NATIVE_GPU"):
+                cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
+                if os.path.exists(cu_src):
+                    target_dir = self.build_lib
+                    out_so = os.path.join(target_dir, "liblitetorch_gpu.so")
+                    inc1 = os.path.join(SCRIPT_DIR, "include")
+                    inc2 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native")
+                    cmd = [
+                        nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                        f"-I{inc1}", f"-I{inc2}",
+                        cu_src, "-o", out_so,
+                        "-lcublas", "-lcublasLt"
+                    ]
+                    try:
+                        subprocess.run(cmd, check=True)
+                    except Exception:
+                        pass
         except Exception as e:
             sys.stderr.write("\n" + "=" * 70 + "\n")
             sys.stderr.write("LITETORCH BUILD ERROR:\n")
@@ -62,7 +82,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.2.5",
+    version="0.2.6",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,
