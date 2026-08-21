@@ -478,6 +478,13 @@ std::shared_ptr<Tensor> Tensor::view(const std::vector<int64_t>& new_shape) {
     return out;
 }
 
+std::shared_ptr<Tensor> Tensor::reshape(const std::vector<int64_t>& new_shape) {
+    if (is_contiguous()) {
+        return view(new_shape);
+    }
+    return contiguous()->view(new_shape);
+}
+
 std::shared_ptr<Tensor> Tensor::transpose(int64_t dim0, int64_t dim1) {
     int64_t ndims = shape.size();
     if (dim0 < 0) dim0 += ndims;

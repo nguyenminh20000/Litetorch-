@@ -130,7 +130,7 @@ class VisionTransformerClassifier(lt.nn.Module):
         h = self.block1.forward(h)
         h = self.block2.forward(h)
         h = self.ln_f.forward(h)
-        h_flat = h.view([b, self.num_patches * self.embed_dim])
+        h_flat = h.reshape([b, self.num_patches * self.embed_dim]) if hasattr(h, "reshape") else (h.contiguous().view([b, self.num_patches * self.embed_dim]) if not h.is_contiguous() else h.view([b, self.num_patches * self.embed_dim]))
         out = self.head.forward(h_flat)
         return out
 

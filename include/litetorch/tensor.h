@@ -124,6 +124,7 @@ public:
     void copy_(std::shared_ptr<Tensor> src);
     void add_(std::shared_ptr<Tensor> other);
     std::shared_ptr<Tensor> view(const std::vector<int64_t>& new_shape);
+    std::shared_ptr<Tensor> reshape(const std::vector<int64_t>& new_shape);
     std::shared_ptr<Tensor> transpose(int64_t dim0, int64_t dim1);
 
     float* data_ptr();

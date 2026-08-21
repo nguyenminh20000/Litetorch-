@@ -124,14 +124,16 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         int64_t K = a->shape[ndim_a - 1];
         int64_t N = b->shape[ndim_b - 1];
 
-        auto a_flat = a->view({batch_size, M, K});
-        auto b_flat = b->view({batch_size, K, N});
+        auto a_c = a->is_contiguous() ? a : a->contiguous();
+        auto b_c = b->is_contiguous() ? b : b->contiguous();
+        auto a_flat = a_c->view({batch_size, M, K});
+        auto b_flat = b_c->view({batch_size, K, N});
         auto out_flat = bmm(a_flat, b_flat);
 
         std::vector<int64_t> out_shape = outer_shape;
         out_shape.push_back(M);
         out_shape.push_back(N);
-        return out_flat->view(out_shape);
+        return out_flat->is_contiguous() ? out_flat->view(out_shape) : out_flat->contiguous()->view(out_shape);
     }
     else if (ndim_a > 2 && ndim_b == 2) {
         int64_t in_features = a->shape.back();
@@ -139,12 +141,14 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             throw std::runtime_error("[litetorch Error] Dimension mismatch in matmul");
         }
         int64_t batch_elements = a->numel() / in_features;
-        auto a_flat = a->view({batch_elements, in_features});
-        auto out_flat = matmul(a_flat, b);
+        auto a_c = a->is_contiguous() ? a : a->contiguous();
+        auto b_c = b->is_contiguous() ? b : b->contiguous();
+        auto a_flat = a_c->view({batch_elements, in_features});
+        auto out_flat = matmul(a_flat, b_c);
         
         std::vector<int64_t> out_shape = a->shape;
         out_shape.back() = b->shape[1];
-        return out_flat->view(out_shape);
+        return out_flat->is_contiguous() ? out_flat->view(out_shape) : out_flat->contiguous()->view(out_shape);
     }
     else if (ndim_a == 3 && ndim_b == 3) {
         return bmm(a, b);

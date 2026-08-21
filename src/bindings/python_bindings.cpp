@@ -167,6 +167,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("zero_grad", &Tensor::zero_grad)
         .def("to", &Tensor::to)
         .def("view", &Tensor::view)
+        .def("reshape", &Tensor::reshape)
         .def("transpose", &Tensor::transpose)
         .def("contiguous", &Tensor::contiguous)
         .def("clone", &Tensor::clone)

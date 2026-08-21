@@ -119,31 +119,31 @@ public:
         auto scaled_scores = Ops::mul(scores_4d, scale_tensor);
         auto attn = Ops::softmax(scaled_scores, -1);
 
-        auto attn_3d = attn->view({B * H, Tq, Tk});
-        auto v_3d = v_rep->view({B * H, Tk, D});
+        auto attn_3d = attn->is_contiguous() ? attn->view({B * H, Tq, Tk}) : attn->contiguous()->view({B * H, Tq, Tk});
+        auto v_3d = v_rep->is_contiguous() ? v_rep->view({B * H, Tk, D}) : v_rep->contiguous()->view({B * H, Tk, D});
 
         auto attn_t_3d = attn_3d->transpose(1, 2)->contiguous();
-        auto grad_output_3d = grad_output->view({B * H, Tq, D});
+        auto grad_output_3d = gout_c->is_contiguous() ? gout_c->view({B * H, Tq, D}) : gout_c->contiguous()->view({B * H, Tq, D});
         auto grad_v_3d = Ops::bmm(attn_t_3d, grad_output_3d);
-        auto grad_v = grad_v_3d->view({B, H, Tk, D});
+        auto grad_v = grad_v_3d->is_contiguous() ? grad_v_3d->view({B, H, Tk, D}) : grad_v_3d->contiguous()->view({B, H, Tk, D});
 
         auto v_t_3d = v_3d->transpose(1, 2)->contiguous();
         auto grad_attn_3d = Ops::bmm(grad_output_3d, v_t_3d);
-        auto grad_attn = grad_attn_3d->view({B, H, Tq, Tk});
+        auto grad_attn = grad_attn_3d->is_contiguous() ? grad_attn_3d->view({B, H, Tq, Tk}) : grad_attn_3d->contiguous()->view({B, H, Tq, Tk});
 
         auto grad_attn_attn = Ops::mul(grad_attn, attn);
         auto sum_grad_attn_attn = Ops::reduce_broadcast(grad_attn_attn, {B, H, Tq, 1});
         auto grad_scores_unscaled = Ops::mul(attn, Ops::sub(grad_attn, sum_grad_attn_attn));
         auto grad_scores = Ops::mul(grad_scores_unscaled, scale_tensor);
 
-        auto grad_scores_3d = grad_scores->view({B * H, Tq, Tk});
-        auto k_3d = k_rep->view({B * H, Tk, D});
+        auto grad_scores_3d = grad_scores->is_contiguous() ? grad_scores->view({B * H, Tq, Tk}) : grad_scores->contiguous()->view({B * H, Tq, Tk});
+        auto k_3d = k_rep->is_contiguous() ? k_rep->view({B * H, Tk, D}) : k_rep->contiguous()->view({B * H, Tk, D});
         auto grad_q_3d = Ops::bmm(grad_scores_3d, k_3d);
-        auto grad_q = grad_q_3d->view({B, H, Tq, D});
+        auto grad_q = grad_q_3d->is_contiguous() ? grad_q_3d->view({B, H, Tq, D}) : grad_q_3d->contiguous()->view({B, H, Tq, D});
 
         auto grad_scores_t_3d = grad_scores_3d->transpose(1, 2)->contiguous();
         auto grad_k_3d = Ops::bmm(grad_scores_t_3d, q_3d);
-        auto grad_k = grad_k_3d->view({B, H, Tk, D});
+        auto grad_k = grad_k_3d->is_contiguous() ? grad_k_3d->view({B, H, Tk, D}) : grad_k_3d->contiguous()->view({B, H, Tk, D});
 
         if (H > H_kv) {
             auto grad_k_vec = grad_k->to_vector();
