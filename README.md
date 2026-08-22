@@ -33,7 +33,7 @@ LiteTorch delivers the core training capabilities of **PyTorch + Megatron-LM + D
 - **Rendezvous System**: Dual initialization via Shared FileStore (`LITETORCH_RENDEZVOUS_FILE`) and TCP sockets for massive GPU scale (1000+ GPUs).
 
 ### 3. Dual-Platform Hardware Acceleration
-- **NVIDIA CUDA**: cuBLAS, cuDNN, 5th-Gen Blackwell Tensor Core support (`sm_100`), auto-architecture discovery (`-arch=native`), TensorFloat-32 (`TF32`) acceleration, and native FP8/FP4 precision.
+- **NVIDIA CUDA**: cuBLAS, cuDNN, Blackwell B200 and Rubin R100 support (`sm_100`/`sm_105+`), auto-architecture discovery (`-arch=native`), TensorFloat-32 (`TF32`) acceleration, and native FP8/FP4 precision.
 - **AMD ROCm / HIP**: Full hipcc compilation with rocBLAS and MIOpen support.
 - **OpenCL & CPU Fallback**: Automatic hardware detection falling back to OpenCL or multi-threaded CPU execution.
 
@@ -261,11 +261,12 @@ lt.distributed.FSDP.fully_shard(model)
 
 ## Verification & Benchmarks
 
-| Workload | Hardware | LiteTorch Latency | PyTorch Latency | Speedup |
+| Workload | Hardware | LiteTorch Latency / Memory | PyTorch Latency | Speedup / Efficiency |
 |---|---|---|---|---|
 | **ViT Training (Pure Compute)** | NVIDIA T4 GPU | **0.29s / epoch** | 0.42s / epoch | **1.45x Faster** |
 | **ViT Training (Total Wall Time)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 785.40s (sequential) | **20.2x Faster** |
-| **100B LLM (1000x B200 Budget)** | NVIDIA Blackwell B200 | **~6.0 GB VRAM/GPU** | N/A | **Full Scalability** |
+| **100B LLM Training** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Comfortable Single-Node (8-GPU)** |
+| **500B - 1T LLM Training** | 64x NVIDIA Rubin R100 Cluster | **~85 GB VRAM/GPU (4D Parallel)** | N/A | **Ultra-High Scalability (NVLink 6)** |
 
 ---
 

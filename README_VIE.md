@@ -33,7 +33,7 @@ LiteTorch tích hợp toàn bộ sức mạnh huấn luyện cốt lõi của **
 - **Cơ Chế Khởi Tạo Rendezvous Đa Dạng**: Hỗ trợ khởi tạo qua Shared FileStore (`LITETORCH_RENDEZVOUS_FILE`) và TCP Sockets cho quy mô 1.000+ GPU.
 
 ### 3. Hỗ Trợ Phần Cứng Đa Nền Tảng
-- **NVIDIA CUDA**: Tích hợp cuBLAS, cuDNN, hỗ trợ kiến trúc Blackwell B200 (`sm_100`), tự động nhận diện phần cứng (`-arch=native`), tăng tốc TensorFloat-32 (`TF32`), và tính toán ma trận độ chính xác thấp FP8/FP4 (`cublasLtMatmul`).
+- **NVIDIA CUDA**: Tích hợp cuBLAS, cuDNN, hỗ trợ kiến trúc Blackwell B200 và Rubin R100 (`sm_100`/`sm_105+`), tự động nhận diện phần cứng (`-arch=native`), tăng tốc TensorFloat-32 (`TF32`), và tính toán ma trận độ chính xác thấp FP8/FP4 (`cublasLtMatmul`).
 - **AMD ROCm / HIP**: Biên dịch trực tiếp qua `hipcc` với rocBLAS và MIOpen.
 - **OpenCL & CPU Đa Luồng**: Tự động nhận diện phần cứng và fallback mượt mà về OpenCL hoặc CPU ThreadPool nếu không có card GPU chuyên dụng.
 
@@ -261,11 +261,12 @@ lt.distributed.FSDP.fully_shard(model)
 
 ## Đánh Giá Benchmark & Kiểm Thử
 
-| Tác vụ huấn luyện | Phần cứng | Độ trễ LiteTorch | Độ trễ PyTorch | Tốc độ tăng tốc |
+| Tác vụ huấn luyện | Phần cứng | Độ trễ / Bộ nhớ LiteTorch | Độ trễ PyTorch | Mức tăng tốc / Hiệu quả |
 |---|---|---|---|---|
 | **Huấn luyện ViT (GPU Compute)** | NVIDIA T4 GPU | **0.29s / epoch** | 0.42s / epoch | **Nhanh hơn 1.45x** |
 | **Huấn luyện ViT (Tổng thời gian)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 785.40s (tuần tự) | **Nhanh hơn 20.2x** |
-| **Model 100B (Cụm 1000x B200)** | NVIDIA Blackwell B200 | **~6.0 GB VRAM/GPU** | N/A | **Sẵn sàng mở rộng** |
+| **Huấn luyện LLM 100B** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Chạy mượt mà trên 1 Node (8 GPU)** |
+| **Huấn luyện LLM 500B - 1T** | Cụm 64x NVIDIA Rubin R100 | **~85 GB VRAM/GPU (4D Parallel)** | N/A | **Khả năng mở rộng tối đa (NVLink 6)** |
 
 ---
 
