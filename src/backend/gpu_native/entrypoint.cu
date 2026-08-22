@@ -375,10 +375,16 @@ extern "C" void* gpu_get_kernel(const char* name) {
 
 extern "C" void* gpu_compile_kernel(const char* source, const char* name) {
     if (!source || !name) return nullptr;
-    char temp_src[256];
-    char temp_so[256];
-    snprintf(temp_src, sizeof(temp_src), "/tmp/litetorch_jit_%s_%d.cu", name, getpid());
-    snprintf(temp_so, sizeof(temp_so), "/tmp/litetorch_jit_%s_%d.so", name, getpid());
+    const char* tmp_dir = "/tmp";
+#ifdef _WIN32
+    tmp_dir = getenv("TEMP");
+    if (!tmp_dir) tmp_dir = getenv("TMP");
+    if (!tmp_dir) tmp_dir = ".";
+#endif
+    char temp_src[512];
+    char temp_so[512];
+    snprintf(temp_src, sizeof(temp_src), "%s/litetorch_jit_%s_%d.cu", tmp_dir, name, (int)getpid());
+    snprintf(temp_so, sizeof(temp_so), "%s/litetorch_jit_%s_%d.so", tmp_dir, name, (int)getpid());
 
     std::ofstream ofs(temp_src);
     if (!ofs.is_open()) return nullptr;
@@ -393,7 +399,11 @@ extern "C" void* gpu_compile_kernel(const char* source, const char* name) {
 #endif
 
     int ret = system(cmd);
+#ifdef _WIN32
+    _unlink(temp_src);
+#else
     unlink(temp_src);
+#endif
     if (ret != 0) return nullptr;
 
     void* handle = dlopen(temp_so, RTLD_NOW | RTLD_GLOBAL);

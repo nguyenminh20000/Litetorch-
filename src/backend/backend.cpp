@@ -115,6 +115,9 @@ public:
             return;
         }
         std::vector<std::string> paths = {
+            "./build/liblitetorch_gpu.dll",
+            "build/liblitetorch_gpu.dll",
+            "liblitetorch_gpu.dll",
             "./build/liblitetorch_gpu.so",
             "build/liblitetorch_gpu.so",
             "liblitetorch_gpu.so",
@@ -122,6 +125,13 @@ public:
             "/usr/local/lib/liblitetorch_gpu.so",
             "/usr/lib/liblitetorch_gpu.so"
         };
+        const char* temp_env = getenv("TEMP");
+        if (!temp_env) temp_env = getenv("TMP");
+        if (temp_env) {
+            paths.push_back(std::string(temp_env) + "/liblitetorch_gpu.dll");
+            paths.push_back(std::string(temp_env) + "\\liblitetorch_gpu.dll");
+            paths.push_back(std::string(temp_env) + "/liblitetorch_gpu.so");
+        }
 #ifndef _WIN32
         Dl_info info;
         if (dladdr((void*)&BackendDispatcher::get, &info) && info.dli_fname) {
@@ -129,6 +139,18 @@ public:
             size_t slash = dir.find_last_of("/\\");
             if (slash != std::string::npos) {
                 paths.insert(paths.begin(), dir.substr(0, slash) + "/liblitetorch_gpu.so");
+            }
+        }
+#else
+        char module_path[MAX_PATH];
+        HMODULE hModule = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&BackendDispatcher::get, &hModule);
+        if (hModule && GetModuleFileNameA(hModule, module_path, sizeof(module_path))) {
+            std::string dir = module_path;
+            size_t slash = dir.find_last_of("/\\");
+            if (slash != std::string::npos) {
+                paths.insert(paths.begin(), dir.substr(0, slash) + "\\liblitetorch_gpu.dll");
+                paths.insert(paths.begin(), dir.substr(0, slash) + "/liblitetorch_gpu.dll");
             }
         }
 #endif

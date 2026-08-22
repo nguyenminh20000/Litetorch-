@@ -6,6 +6,7 @@ import sys
 import glob
 import shutil
 import subprocess
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -37,7 +38,8 @@ class BuildExt(build_ext):
                 cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
                 if os.path.exists(cu_src):
                     target_dir = self.build_lib
-                    out_so = os.path.join(target_dir, "liblitetorch_gpu.so")
+                    lib_name = "liblitetorch_gpu.dll" if sys.platform.startswith("win") else "liblitetorch_gpu.so"
+                    out_so = os.path.join(target_dir, lib_name)
                     inc1 = os.path.join(SCRIPT_DIR, "include")
                     inc2 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native")
                     inc3 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "common")
@@ -59,7 +61,13 @@ class BuildExt(build_ext):
                             ]
                             res = subprocess.run(cmd_fallback, capture_output=True, text=True)
                         if res.returncode == 0:
-                            for extra_dest in ["/tmp/liblitetorch_gpu.so", "/usr/local/lib/liblitetorch_gpu.so"]:
+                            extra_dests = []
+                            temp_dir = tempfile.gettempdir()
+                            if temp_dir and os.path.exists(temp_dir):
+                                extra_dests.append(os.path.join(temp_dir, lib_name))
+                            if not sys.platform.startswith("win"):
+                                extra_dests.extend(["/tmp/liblitetorch_gpu.so", "/usr/local/lib/liblitetorch_gpu.so"])
+                            for extra_dest in extra_dests:
                                 try:
                                     shutil.copyfile(out_so, extra_dest)
                                 except Exception:
