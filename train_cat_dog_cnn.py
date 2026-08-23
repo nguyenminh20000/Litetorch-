@@ -158,65 +158,94 @@ def load_and_preprocess_image(img_path, size=IMAGE_SIZE, augment=False):
         with Image.open(img_path) as img:
             if img.mode in ("P", "RGBA", "LA"):
                 img = img.convert("RGBA").convert("RGB")
-            else:
+            elif img.mode != "RGB":
                 img = img.convert("RGB")
-            if augment and random.random() > 0.5:
-                img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            img = img.resize((size, size))
-            r, g, b = img.split()
-            r_bytes = [(x / 255.0 - 0.485) / 0.229 for x in r.tobytes()]
-            g_bytes = [(x / 255.0 - 0.456) / 0.224 for x in g.tobytes()]
-            b_bytes = [(x / 255.0 - 0.406) / 0.225 for x in b.tobytes()]
-            return r_bytes + g_bytes + b_bytes
+            
+            if augment:
+                if random.random() > 0.5:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if random.random() > 0.6:
+                    angle = random.uniform(-15.0, 15.0)
+                    img = img.rotate(angle, resample=Image.BILINEAR)
+
+            img = img.resize((size, size), Image.BILINEAR)
+            raw_bytes = img.tobytes()
+            
+            total_px = size * size
+            ch_r = [0.0] * total_px
+            ch_g = [0.0] * total_px
+            ch_b = [0.0] * total_px
+
+            mean = (0.485, 0.456, 0.406)
+            std = (0.229, 0.224, 0.225)
+
+            inv_255 = 1.0 / 255.0
+            inv_std_r = 1.0 / std[0]
+            inv_std_g = 1.0 / std[1]
+            inv_std_b = 1.0 / std[2]
+
+            for i in range(total_px):
+                base_idx = i * 3
+                r = raw_bytes[base_idx] * inv_255
+                g = raw_bytes[base_idx + 1] * inv_255
+                b = raw_bytes[base_idx + 2] * inv_255
+
+                ch_r[i] = (r - mean[0]) * inv_std_r
+                ch_g[i] = (g - mean[1]) * inv_std_g
+                ch_b[i] = (b - mean[2]) * inv_std_b
+
+            return ch_r + ch_g + ch_b
     except Exception:
         return None
 
-def load_dataset():
-    samples = []
-    cat_files = glob.glob(os.path.join(CAT_DIR, "*.*"))
-    for p in cat_files:
-        if p.lower().endswith((".jpg", ".jpeg", ".png")):
-            samples.append((p, 0))
-    dog_files = glob.glob(os.path.join(DOG_DIR, "*.*"))
-    for p in dog_files:
-        if p.lower().endswith((".jpg", ".jpeg", ".png")):
-            samples.append((p, 1))
-    random.seed(42)
-    random.shuffle(samples)
-    return samples
-
-def build_gpu_batches(dataset_list, batch_size, channels, height, width, device):
+def build_gpu_batches(dataset_pairs, batch_size, channels, height, width, device):
     batches = []
-    for i in range(0, len(dataset_list), batch_size):
-        batch = dataset_list[i:i + batch_size]
-        actual_batch_size = len(batch)
-        if actual_batch_size == 0:
-            continue
-        batch_x = [v for item in batch for v in item[0]]
-        batch_y = [item[1] for item in batch]
-        x_tensor = lt.Tensor.from_vector(batch_x, [actual_batch_size, channels, height, width], device, False)
-        y_tensor = lt.Tensor.from_vector(batch_y, [actual_batch_size], device, False)
-        batches.append((x_tensor, y_tensor, actual_batch_size))
+    num_samples = len(dataset_pairs)
+    sample_len = channels * height * width
+
+    for start_idx in range(0, num_samples, batch_size):
+        chunk = dataset_pairs[start_idx : start_idx + batch_size]
+        actual_bs = len(chunk)
+        
+        flat_x = []
+        flat_y = []
+        for feat, label in chunk:
+            flat_x.extend(feat)
+            flat_y.append(label)
+
+        if actual_bs < batch_size:
+            pad_count = batch_size - actual_bs
+            for _ in range(pad_count):
+                flat_x.extend([0.0] * sample_len)
+                flat_y.append(0.0)
+
+        x_tensor = lt.Tensor.from_vector(flat_x, [batch_size, channels, height, width], device, False)
+        y_tensor = lt.Tensor.from_vector(flat_y, [batch_size], device, False)
+        batches.append((x_tensor, y_tensor, actual_bs))
+
     return batches
 
 def main():
-    if not os.path.exists(CAT_DIR) or not os.path.exists(DOG_DIR):
-        print(f"Error: Folders '{CAT_DIR}' or '{DOG_DIR}' not found.")
+    print("=" * 80)
+    print("                 LITETORCH CONVNET SYSTEM MONITOR")
+    print("=" * 80)
+
+    cat_files = glob.glob(os.path.join(CAT_DIR, "*.jpg")) + glob.glob(os.path.join(CAT_DIR, "*.png"))
+    dog_files = glob.glob(os.path.join(DOG_DIR, "*.jpg")) + glob.glob(os.path.join(DOG_DIR, "*.png"))
+
+    all_samples = [(f, 0) for f in cat_files] + [(f, 1) for f in dog_files]
+    if not all_samples:
+        print(f"Error: No images found in '{CAT_DIR}' or '{DOG_DIR}'")
         return
 
-    samples = load_dataset()
-    print("================================================================================")
-    print("                 LITETORCH CONVNET SYSTEM MONITOR")
-    print("================================================================================")
-    print(f"Total dataset images found: {len(samples)}")
-    if len(samples) == 0:
-        print("No images found in dataset/data/Cat or dataset/data/Dog.")
-        return
+    random.seed(42)
+    random.shuffle(all_samples)
+    print(f"Total dataset images found: {len(all_samples)}")
 
     print("Pre-caching dataset images into system RAM...")
     t_cache_start = time.perf_counter()
     cached_dataset = []
-    for path, label in samples:
+    for path, label in all_samples:
         feat = load_and_preprocess_image(path, augment=True)
         if feat is not None:
             cached_dataset.append((feat, float(label)))
@@ -263,7 +292,6 @@ def main():
 
         model.train()
         random.shuffle(train_gpu_batches)
-        total_loss = 0.0
         correct = 0
         total = 0
         epoch_gpu_compute_time = 0.0
