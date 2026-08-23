@@ -229,7 +229,7 @@ def main():
     print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     device = lt.auto_device()
-    backend_name = "CUDA GPU" if "cuda" in device else ("OpenCL GPU" if "opencl" in device else "Multi-Threaded CPU")
+    backend_name = lt.get_backend_name() if hasattr(lt, "get_backend_name") else ("CUDA (Native)" if (hasattr(lt, "cuda") and lt.cuda.is_available()) else ("OpenCL" if lt.is_gpu_available() else "CPU"))
     jit_status = "Enabled (Runtime Kernel Fusion)" if hasattr(lt, "jit") else "Disabled"
     print(f"Active Compute Device: {device} | Backend Driver: {backend_name} | JIT Engine: {jit_status}")
 
