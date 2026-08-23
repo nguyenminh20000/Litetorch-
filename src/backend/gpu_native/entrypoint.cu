@@ -231,10 +231,12 @@ extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) 
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
     GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
     GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), g_compute_stream);
+    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_read_async(void* ptr, size_t size, void* host_ptr, size_t offset) {

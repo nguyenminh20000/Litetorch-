@@ -270,6 +270,14 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
 
     if (out->device.type == DeviceType::GPU) {
         CLBackend::get().write(out->gpu_data(), size * sizeof(float), cpu_out.data(), out->offset * sizeof(float));
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            native->finish();
+        }
+        float* out_cpu = out->data_ptr();
+        if (out_cpu) {
+            std::memcpy(out_cpu, cpu_out.data(), size * sizeof(float));
+        }
     } else {
         std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
     }
