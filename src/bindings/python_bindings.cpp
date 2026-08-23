@@ -23,6 +23,7 @@
 #include "litetorch/dtensor.h"
 #include "litetorch/device_mesh.h"
 #include "litetorch/jit.h"
+#include "litetorch/allocator.h"
 
 namespace py = pybind11;
 using namespace litetorch;
@@ -853,4 +854,20 @@ PYBIND11_MODULE(litetorch, m) {
             throw std::runtime_error("load expects a Module, list of Tensor parameters, or Optimizer");
         }
     }, py::arg("obj"), py::arg("filepath"));
+
+    m.def("empty_cache", []() {
+        CachingAllocator::get().empty_cache();
+    });
+
+    m.def("set_max_cpu_cache_size", [](size_t bytes) {
+        CachingAllocator::get().set_max_cpu_cache_size(bytes);
+    }, py::arg("bytes"));
+
+    m.def("get_cached_cpu_bytes", []() -> size_t {
+        return CachingAllocator::get().get_cached_cpu_bytes();
+    });
+
+    m.def("get_cached_gpu_bytes", []() -> size_t {
+        return CachingAllocator::get().get_cached_gpu_bytes();
+    });
 }

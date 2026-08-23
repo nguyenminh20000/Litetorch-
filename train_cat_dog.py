@@ -303,6 +303,11 @@ def main():
             lt.save(model, MODEL_SAVE_PATH)
             saved_marker = " *"
 
+        if hasattr(lt, "empty_cache"):
+            lt.empty_cache()
+        import gc
+        gc.collect()
+
         epoch_end_time = time.perf_counter()
         epoch_cpu_end = time.process_time()
 
