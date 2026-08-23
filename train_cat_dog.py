@@ -4,7 +4,17 @@ import glob
 import time
 import random
 import subprocess
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+for dll_dir in [r"C:\mingw64\bin", os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()]:
+    if os.path.isdir(dll_dir) and hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(dll_dir)
+        except Exception:
+            pass
 
 try:
     import litetorch as lt
@@ -70,6 +80,7 @@ def get_gpu_metrics():
 class TransformerBlock(lt.nn.Module):
     def __init__(self, embed_dim, num_heads, mlp_dim):
         super().__init__()
+        self.training = True
         self.attn = lt.nn.MultiHeadAttention(embed_dim, num_heads)
         self.ln1 = lt.nn.LayerNorm([embed_dim])
         self.fc1 = lt.nn.Linear(embed_dim, mlp_dim, True)
@@ -93,6 +104,19 @@ class TransformerBlock(lt.nn.Module):
         x = self.jit_add([x, mlp_out]) if (self.jit_add and not self.training) else lt.Ops.add(x, mlp_out)
         return x
 
+    def train(self, mode=True):
+        self.training = mode
+        if mode:
+            if hasattr(self.attn, "train"):
+                self.attn.train()
+        else:
+            if hasattr(self.attn, "eval"):
+                self.attn.eval()
+        return self
+
+    def eval(self):
+        return self.train(False)
+
     def parameters(self):
         return self.attn.parameters() + self.ln1.parameters() + self.fc1.parameters() + self.fc2.parameters() + self.ln2.parameters()
 
@@ -106,6 +130,7 @@ class TransformerBlock(lt.nn.Module):
 class VisionTransformerClassifier(lt.nn.Module):
     def __init__(self, num_patches, patch_dim, embed_dim, num_heads, num_classes):
         super().__init__()
+        self.training = True
         self.num_patches = num_patches
         self.embed_dim = embed_dim
         self.patch_proj = lt.nn.Linear(patch_dim, embed_dim, True)
@@ -126,6 +151,15 @@ class VisionTransformerClassifier(lt.nn.Module):
         h_flat = h.reshape([b, self.num_patches * self.embed_dim]) if hasattr(h, "reshape") else (h.contiguous().view([b, self.num_patches * self.embed_dim]) if not h.is_contiguous() else h.view([b, self.num_patches * self.embed_dim]))
         out = self.head.forward(h_flat)
         return out
+
+    def train(self, mode=True):
+        self.training = mode
+        self.block1.train(mode)
+        self.block2.train(mode)
+        return self
+
+    def eval(self):
+        return self.train(False)
 
     def parameters(self):
         return self.patch_proj.parameters() + self.pos_proj.parameters() + self.block1.parameters() + self.block2.parameters() + self.ln_f.parameters() + self.head.parameters()
