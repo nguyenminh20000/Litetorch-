@@ -1,5 +1,6 @@
 #include "litetorch/jit.h"
 #include "litetorch/autograd.h"
+#include "litetorch/ops.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
 #include "litetorch/thread_pool.h"
@@ -86,6 +87,41 @@ static std::string shape_to_key(const std::vector<int64_t>& shape) {
 JITFunction::JITFunction(const std::string& name, std::shared_ptr<JITVar> expr, const std::vector<std::shared_ptr<JITVar>>& inputs)
     : name_(name), expr_(expr), inputs_(inputs) {}
 
+static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const std::unordered_map<std::string, std::shared_ptr<Tensor>>& env, const Device& device, const std::vector<int64_t>& shape) {
+    if (!var) return nullptr;
+    if (var->op == JITVar::OpType::INPUT) {
+        auto it = env.find(var->name);
+        if (it != env.end()) return it->second;
+        return Tensor::zeros(shape, device, false);
+    }
+    if (var->op == JITVar::OpType::CONST) {
+        size_t n = 1;
+        for (auto s : shape) n *= s;
+        std::vector<float> cdata(n, var->val);
+        return Tensor::from_vector(cdata, shape, device, false);
+    }
+
+    auto left_tensor = evaluate_gpu(var->left, env, device, shape);
+    auto right_tensor = var->right ? evaluate_gpu(var->right, env, device, shape) : nullptr;
+
+    switch (var->op) {
+        case JITVar::OpType::ADD: return Ops::add(left_tensor, right_tensor);
+        case JITVar::OpType::SUB: return Ops::sub(left_tensor, right_tensor);
+        case JITVar::OpType::MUL: return Ops::mul(left_tensor, right_tensor);
+        case JITVar::OpType::DIV: return Ops::div(left_tensor, right_tensor);
+        case JITVar::OpType::NEG: return Ops::neg(left_tensor);
+        case JITVar::OpType::RELU: return Ops::relu(left_tensor);
+        case JITVar::OpType::GELU: return Ops::gelu(left_tensor);
+        case JITVar::OpType::SIGMOID: return Ops::sigmoid(left_tensor);
+        case JITVar::OpType::TANH: return Ops::tanh(left_tensor);
+        case JITVar::OpType::SQRT: return Ops::sqrt(left_tensor);
+        case JITVar::OpType::EXP: return Ops::exp(left_tensor);
+        case JITVar::OpType::LOG: return Ops::log(left_tensor);
+        case JITVar::OpType::ABS: return Ops::abs(left_tensor);
+        default: return left_tensor;
+    }
+}
+
 void JITFunction::compile_for_shape(const std::string& shape_key) {
     if (kernels_map_.find(shape_key) != kernels_map_.end()) return;
     auto active_backend = BackendDispatcher::get().get_backend();
@@ -119,43 +155,12 @@ void JITFunction::compile_for_shape(const std::string& shape_key) {
         ss << "        out[id + out_off] = " << to_opencl_expr(expr_) << ";\n";
         ss << "    }\n";
         ss << "}\n";
-    } else {
-        ss << "#define max(a, b) fmaxf(a, b)\n";
-        ss << "#define exp(x) expf(x)\n";
-        ss << "#define tanh(x) tanhf(x)\n";
-        ss << "#define sqrt(x) sqrtf(x)\n";
-        ss << "#define log(x) logf(x)\n";
-        ss << "#define fabs(x) fabsf(x)\n\n";
-
-        ss << "__device__ inline float gelu_func(float x) {\n";
-        ss << "    return x * 0.5f * (1.0f + tanhf(0.7978845608f * (x + 0.044715f * x * x * x)));\n";
-        ss << "}\n\n";
-
-        ss << "__device__ inline float gelu_grad(float x, float dy) {\n";
-        ss << "    float tanh_val = tanhf(0.7978845608f * (x + 0.044715f * x * x * x));\n";
-        ss << "    float term1 = 0.5f * (1.0f + tanh_val);\n";
-        ss << "    float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);\n";
-        ss << "    return dy * (term1 + term2);\n";
-        ss << "}\n\n";
-
-        ss << "extern \"C\" __global__ void " << k_name << "(\n";
-        for (auto& inp : inputs_) {
-            ss << "    const float* " << inp->name << ", int " << inp->name << "_off,\n";
-        }
-        ss << "    float* out, int out_off, int size) {\n";
-        ss << "    int id = blockIdx.x * blockDim.x + threadIdx.x;\n";
-        ss << "    if (id < size) {\n";
-        ss << "        out[id + out_off] = " << to_opencl_expr(expr_) << ";\n";
-        ss << "    }\n";
-        ss << "}\n";
     }
 
     std::string source = ss.str();
     void* kernel = nullptr;
-    if (is_opencl) {
+    if (is_opencl && !source.empty()) {
         kernel = CLBackend::get().get_kernel(k_name + "_program", source, k_name);
-    } else {
-        kernel = active_backend->get_kernel(k_name + "_program", source, k_name);
     }
     kernels_map_[shape_key] = kernel;
 }
@@ -175,88 +180,20 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
         }
     }
 
-    auto out = Tensor::create(args[0]->shape, args[0]->device);
-    std::string shape_key = shape_to_key(args[0]->shape);
-    auto active_backend = BackendDispatcher::get().get_backend();
-    bool is_gpu = (args[0]->device.type == DeviceType::GPU);
-    int size = out->numel();
-
-    if (is_gpu) {
-        compile_for_shape(shape_key);
-        void* kernel = kernels_map_[shape_key];
-        if (kernel) {
-            if (active_backend) {
-                std::vector<void*> gpu_mems;
-                std::vector<int> offsets;
-                for (auto& t : args) {
-                    gpu_mems.push_back(t->gpu_data());
-                    offsets.push_back(t->offset);
-                }
-                void* out_mem = out->gpu_data();
-                int out_off = out->offset;
-
-                std::vector<void*> arg_ptrs;
-                std::vector<size_t> arg_sizes;
-
-                for (size_t i = 0; i < args.size(); ++i) {
-                    arg_ptrs.push_back(&gpu_mems[i]);
-                    arg_sizes.push_back(sizeof(void*));
-                    arg_ptrs.push_back(&offsets[i]);
-                    arg_sizes.push_back(sizeof(int));
-                }
-                arg_ptrs.push_back(&out_mem);
-                arg_sizes.push_back(sizeof(void*));
-                arg_ptrs.push_back(&out_off);
-                arg_sizes.push_back(sizeof(int));
-                arg_ptrs.push_back(&size);
-                arg_sizes.push_back(sizeof(int));
-
-                active_backend->launch(kernel, {static_cast<size_t>(size)}, {}, arg_ptrs, arg_sizes);
-                return out;
-            } else if (CLBackend::get().is_available()) {
-                std::vector<cl_mem> gpu_mems;
-                std::vector<int> offsets;
-                for (auto& t : args) {
-                    gpu_mems.push_back(t->gpu_data());
-                    offsets.push_back(t->offset);
-                }
-                cl_mem out_mem = out->gpu_data();
-                int out_off = out->offset;
-                int size = out->numel();
-
-                std::vector<void*> arg_ptrs;
-                std::vector<size_t> arg_sizes;
-
-                for (size_t i = 0; i < args.size(); ++i) {
-                    arg_ptrs.push_back(&gpu_mems[i]);
-                    arg_sizes.push_back(sizeof(cl_mem));
-                    arg_ptrs.push_back(&offsets[i]);
-                    arg_sizes.push_back(sizeof(int));
-                }
-                arg_ptrs.push_back(&out_mem);
-                arg_sizes.push_back(sizeof(cl_mem));
-                arg_ptrs.push_back(&out_off);
-                arg_sizes.push_back(sizeof(int));
-                arg_ptrs.push_back(&size);
-                arg_sizes.push_back(sizeof(int));
-
-                CLBackend::get().launch(static_cast<cl_kernel>(kernel), {static_cast<size_t>(size)}, {}, arg_ptrs, arg_sizes);
-                return out;
-            }
+    if (args[0]->device.type == DeviceType::GPU) {
+        std::unordered_map<std::string, std::shared_ptr<Tensor>> env;
+        for (size_t i = 0; i < args.size(); ++i) {
+            env[inputs_[i]->name] = args[i];
         }
+        return evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
     }
 
-    std::vector<std::vector<float>> cpu_inputs(args.size());
-    std::vector<const float*> input_ptrs(args.size());
+    int size = args[0]->numel();
+    auto out = Tensor::create(args[0]->shape, args[0]->device);
 
+    std::vector<const float*> input_ptrs(args.size());
     for (size_t i = 0; i < args.size(); ++i) {
-        if (args[i]->device.type == DeviceType::GPU) {
-            cpu_inputs[i].resize(size);
-            CLBackend::get().read(args[i]->gpu_data(), size * sizeof(float), cpu_inputs[i].data(), args[i]->offset * sizeof(float));
-            input_ptrs[i] = cpu_inputs[i].data();
-        } else {
-            input_ptrs[i] = args[i]->data_ptr();
-        }
+        input_ptrs[i] = args[i]->data_ptr();
     }
 
     std::vector<float> cpu_out(size);
@@ -268,20 +205,7 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
         cpu_out[id] = evaluate_cpu(expr_, env);
     });
 
-    if (out->device.type == DeviceType::GPU) {
-        CLBackend::get().write(out->gpu_data(), size * sizeof(float), cpu_out.data(), out->offset * sizeof(float));
-        auto native = BackendDispatcher::get().get_backend();
-        if (native && native->is_available()) {
-            native->finish();
-        }
-        float* out_cpu = out->data_ptr();
-        if (out_cpu) {
-            std::memcpy(out_cpu, cpu_out.data(), size * sizeof(float));
-        }
-    } else {
-        std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
-    }
-
+    std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
     return out;
 }
 
