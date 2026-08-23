@@ -5,10 +5,11 @@ import time
 import random
 import ctypes
 import subprocess
+import gc
 
 current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
 if hasattr(os, "add_dll_directory"):
-    for p in [current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
+    for p in [r"C:\mingw64\bin", current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
         if os.path.isdir(p):
             try:
                 os.add_dll_directory(p)
@@ -25,7 +26,11 @@ for bdir in [os.path.join(current_dir, "build"), os.path.join(os.getcwd(), "buil
             except Exception:
                 pass
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
 import litetorch as lt
 
 def find_dataset_dir():
@@ -78,66 +83,77 @@ def get_gpu_metrics():
 class ConvNetClassifier(lt.nn.Module):
     def __init__(self, num_classes=2):
         super().__init__()
+        self.training = True
         self.conv1 = lt.nn.Conv2d(3, 32, 3, 1, 1, True)
-        self.bn1 = lt.nn.BatchNorm2d(32)
         self.pool1 = lt.nn.MaxPool2d(2, 2, 0)
         self.conv2 = lt.nn.Conv2d(32, 64, 3, 1, 1, True)
-        self.bn2 = lt.nn.BatchNorm2d(64)
         self.pool2 = lt.nn.MaxPool2d(2, 2, 0)
         self.conv3 = lt.nn.Conv2d(64, 128, 3, 1, 1, True)
-        self.bn3 = lt.nn.BatchNorm2d(128)
         self.pool3 = lt.nn.MaxPool2d(2, 2, 0)
-        self.dropout = lt.nn.Dropout(0.4)
-        self.fc1 = lt.nn.Linear(128 * 8 * 8, 128, True)
+        self.pool4 = lt.nn.MaxPool2d(2, 2, 0)
+        self.dropout = lt.nn.Dropout(0.3)
+        self.fc1 = lt.nn.Linear(128 * 4 * 4, 128, True)
         self.fc2 = lt.nn.Linear(128, num_classes, True)
+
+        self.jit_relu = None
+        if hasattr(lt, "jit") and hasattr(lt.jit, "JITVar"):
+            v_x = lt.jit.JITVar(lt.jit.OpType.INPUT, "x")
+            self.jit_relu = lt.jit.JITFunction("fused_relu", lt.jit.relu(v_x), [v_x])
 
     def forward(self, x):
         b = x.shape[0]
         h = self.conv1.forward(x)
-        h = self.bn1.forward(h)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h]) if (self.jit_relu and not self.training) else lt.Ops.relu(h)
         h = self.pool1.forward(h)
 
         h = self.conv2.forward(h)
-        h = self.bn2.forward(h)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h]) if (self.jit_relu and not self.training) else lt.Ops.relu(h)
         h = self.pool2.forward(h)
 
         h = self.conv3.forward(h)
-        h = self.bn3.forward(h)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h]) if (self.jit_relu and not self.training) else lt.Ops.relu(h)
         h = self.pool3.forward(h)
+        h = self.pool4.forward(h)
 
         h = self.dropout.forward(h)
-        h_flat = h.view([b, 128 * 8 * 8])
+        h_flat = h.reshape([b, 128 * 4 * 4]) if hasattr(h, "reshape") else (h.contiguous().view([b, 128 * 4 * 4]) if not h.is_contiguous() else h.view([b, 128 * 4 * 4]))
         h_fc = self.fc1.forward(h_flat)
-        h_fc = lt.Ops.relu(h_fc)
+        h_fc = self.jit_relu([h_fc]) if (self.jit_relu and not self.training) else lt.Ops.relu(h_fc)
         out = self.fc2.forward(h_fc)
         return out
+
+    def train(self, mode=True):
+        self.training = mode
+        if mode:
+            if hasattr(self.dropout, "train"):
+                self.dropout.train()
+        else:
+            if hasattr(self.dropout, "eval"):
+                self.dropout.eval()
+        return self
+
+    def eval(self):
+        return self.train(False)
 
     def parameters(self):
         return (
             self.conv1.parameters() +
-            self.bn1.parameters() +
             self.conv2.parameters() +
-            self.bn2.parameters() +
             self.conv3.parameters() +
-            self.bn3.parameters() +
             self.fc1.parameters() +
             self.fc2.parameters()
         )
 
     def to(self, device):
         self.conv1.to(device)
-        self.bn1.to(device)
         self.conv2.to(device)
-        self.bn2.to(device)
         self.conv3.to(device)
-        self.bn3.to(device)
         self.fc1.to(device)
         self.fc2.to(device)
 
 def load_and_preprocess_image(img_path, size=IMAGE_SIZE, augment=False):
+    if Image is None:
+        return None
     try:
         with Image.open(img_path) as img:
             if img.mode in ("P", "RGBA", "LA"):
@@ -213,7 +229,9 @@ def main():
     print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     device = lt.auto_device()
-    print(f"Active Compute Device: {device}")
+    backend_name = "CUDA GPU" if "cuda" in device else ("OpenCL GPU" if "opencl" in device else "Multi-Threaded CPU")
+    jit_status = "Enabled (Runtime Kernel Fusion)" if hasattr(lt, "jit") else "Disabled"
+    print(f"Active Compute Device: {device} | Backend Driver: {backend_name} | JIT Engine: {jit_status}")
 
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:
@@ -303,6 +321,9 @@ def main():
             best_epoch = epoch
             lt.save(model, MODEL_SAVE_PATH)
             saved_marker = " *"
+
+        lt.empty_cache()
+        gc.collect()
 
         epoch_end_time = time.perf_counter()
         epoch_cpu_end = time.process_time()
