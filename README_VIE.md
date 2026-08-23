@@ -108,95 +108,77 @@ Chạy đoạn mã Python sau để xác nhận LiteTorch đã nhận diện ph�
 ```python
 import litetorch as lt
 
-device = lt.auto_device()
-print(f"LiteTorch đã sẵn sàng! Thiết bị tính toán: {device}")
 
-# Thử nghiệm tính toán Tensor
-a = lt.Tensor.from_vector([1.0, 2.0, 3.0, 4.0], [2, 2], device, requires_grad=True)
-b = a * 2.0 + 1.0
-print("Kết quả:", b.to_vector())
-```
-
----
-
-### 4. Cài Đặt Từ Mã Nguồn (Dành Cho Nhà Phát Triển)
-
+#### Bước 2: Cài đặt LiteTorch qua pip
 ```bash
-git clone https://github.com/nguyenminh20000/Litetorch-.git
-cd Litetorch-
-pip install -r requirements.txt
-pip install -e .
+pip install --upgrade pip
+pip install litetorch
+```
+
+### 2. Windows
+
+#### Bước 1: Cài đặt trình biên dịch C++
+Cài đặt [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) hoặc MinGW-w64 (`g++` >= 7.0).
+
+#### Bước 2: Cài đặt LiteTorch qua pip
+```bash
+pip install litetorch
 ```
 
 ---
 
-## Kiến Trúc Hệ Thống
+## Ví Dụ Sử Dụng Nhanh (Quick Start)
 
-```mermaid
-graph TD
-    A["Giao diện Python (import litetorch as lt)"] --> B["Cầu nối C++ Binding (pybind11)"]
-    B --> C["Động cơ Autograd DAG & Tensor Core"]
-    C --> D["Quản lý bộ nhớ (LRU Eviction, Caching Allocator, Checkpointing)"]
-    C --> E["Hạ tầng phân tán (FSDP, ZeRO-3, TP, PP, CP, NCCL/RCCL)"]
-    D --> F["Compute Backends"]
-    E --> F
-    F --> G1["NVIDIA CUDA Backend (cuBLAS, cuLt, FlashAttention, Blackwell)"]
-    F --> G2["AMD ROCm Backend (rocBLAS, MIOpen)"]
-    F --> G3["OpenCL GPU Backend"]
-    F --> G4["Multi-Threaded CPU Engine"]
-```
-
----
-
-## Ví Dụ Mã Nguồn
-
-### 1. Thao Tác Tensor & Tính Đạo Hàm Tự Động (Autograd)
+### 1. Huấn Luyện Mô Hình Tuyến Tính Đơn Giản
 
 ```python
 import litetorch as lt
 
 device = lt.auto_device()
+x = lt.Tensor.from_vector([1.0, 2.0, 3.0, 4.0], [4, 1], device, False)
+y = lt.Tensor.from_vector([2.0, 4.0, 6.0, 8.0], [4, 1], device, False)
 
-x = lt.Tensor.from_vector([1.0, 2.0, 3.0, 4.0], [2, 2], device, True)
-w = lt.Tensor.from_vector([0.5, -1.0, 2.0, 0.1], [2, 2], device, True)
+linear = lt.nn.Linear(1, 1, True)
+linear.to(device)
+optimizer = lt.optim.SGD(linear.parameters(), lr=0.01)
 
-y = lt.Ops.matmul(x, w)
-loss = lt.Ops.sum(y)
-loss.backward()
-
-print("Giá trị Loss:", loss.item())
-print("Gradient của Tensor X:", x.grad.to_vector())
+for epoch in range(100):
+    optimizer.zero_grad()
+    pred = linear.forward(x)
+    loss = lt.Ops.mse_loss(pred, y)
+    loss.backward()
+    optimizer.step()
 ```
 
-### 2. Khối Transformer Decoder Hoàn Chỉnh (Self-Attention + RMSNorm + Linear)
+### 2. Khối Transformer Decoder (FlashAttention + LayerNorm + MLP)
 
 ```python
 import litetorch as lt
 
 class TransformerDecoderBlock(lt.nn.Module):
-    def __init__(self, hidden_dim, num_heads):
+    def __init__(self, embed_dim, num_heads):
         super().__init__()
-        self.norm1 = lt.nn.RMSNorm([hidden_dim])
-        self.norm2 = lt.nn.RMSNorm([hidden_dim])
-        self.q_proj = lt.nn.Linear(hidden_dim, hidden_dim, False)
-        self.k_proj = lt.nn.Linear(hidden_dim, hidden_dim, False)
-        self.v_proj = lt.nn.Linear(hidden_dim, hidden_dim, False)
-        self.out_proj = lt.nn.Linear(hidden_dim, hidden_dim, False)
-        self.fc1 = lt.nn.Linear(hidden_dim, hidden_dim * 4, False)
-        self.fc2 = lt.nn.Linear(hidden_dim * 4, hidden_dim, False)
-        self.hidden_dim = hidden_dim
-        self.num_heads = num_heads
+        self.norm1 = lt.nn.LayerNorm([embed_dim])
+        self.norm2 = lt.nn.LayerNorm([embed_dim])
+        self.q_proj = lt.nn.Linear(embed_dim, embed_dim, False)
+        self.k_proj = lt.nn.Linear(embed_dim, embed_dim, False)
+        self.v_proj = lt.nn.Linear(embed_dim, embed_dim, False)
+        self.out_proj = lt.nn.Linear(embed_dim, embed_dim, False)
+        self.fc1 = lt.nn.Linear(embed_dim, embed_dim * 4, True)
+        self.fc2 = lt.nn.Linear(embed_dim * 4, embed_dim, True)
 
     def forward(self, x):
-        h = self.norm1.forward(x)
-        q = self.q_proj.forward(h)
-        k = self.k_proj.forward(h)
-        v = self.v_proj.forward(h)
-        attn_out = lt.Ops.flash_attention(q, k, v, self.num_heads, self.num_heads, True)
-        x = lt.Ops.add(x, self.out_proj.forward(attn_out))
-        
-        h2 = self.norm2.forward(x)
-        mlp_out = self.fc2.forward(lt.Ops.silu(self.fc1.forward(h2)))
+        norm_x = self.norm1.forward(x)
+        q = self.q_proj.forward(norm_x)
+        k = self.k_proj.forward(norm_x)
+        v = self.v_proj.forward(norm_x)
+        attn_out = lt.Ops.flash_attention(q, k, v, is_causal=True)
+        attn_out = self.out_proj.forward(attn_out)
+        x = lt.Ops.add(x, attn_out)
+
+        norm_x2 = self.norm2.forward(x)
+        mlp_h = lt.Ops.gelu(self.fc1.forward(norm_x2))
+        mlp_out = self.fc2.forward(mlp_h)
         out = lt.Ops.add(x, mlp_out)
         return out
 
@@ -255,6 +237,28 @@ class LargeModel(lt.nn.Module):
 
 model = LargeModel()
 lt.distributed.FSDP.fully_shard(model)
+```
+
+### 5. Tăng Tốc JIT Kernel Fusion & Quản Lý Bộ Nhớ
+
+```python
+import litetorch as lt
+
+device = lt.auto_device()
+
+# Định nghĩa và truy vết hàm kích hoạt hợp nhất (JIT Fused Kernel)
+def fused_block(args):
+    return lt.Ops.gelu(lt.Ops.add(args[0], args[1]))
+
+t1 = lt.Tensor.from_vector([1.0, -2.0, 3.0], [3], device, False)
+t2 = lt.Tensor.from_vector([0.5, 1.5, -2.0], [3], device, False)
+
+jitted_fn = lt.jit.Tracer.trace([t1, t2], fused_block, "fused_gelu_add")
+out = jitted_fn([t1, t2])
+print("Kết quả JIT Fused:", out.to_vector())
+
+# Dọn dẹp và giải phóng bộ đệm RAM/VRAM
+lt.empty_cache()
 ```
 
 ---
