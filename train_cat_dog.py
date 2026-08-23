@@ -75,16 +75,22 @@ class TransformerBlock(lt.nn.Module):
         self.fc1 = lt.nn.Linear(embed_dim, mlp_dim, True)
         self.fc2 = lt.nn.Linear(mlp_dim, embed_dim, True)
         self.ln2 = lt.nn.LayerNorm([embed_dim])
+        
+        self.jit_add = None
+        if hasattr(lt, "jit") and hasattr(lt.jit, "JITVar"):
+            v_a = lt.jit.JITVar(lt.jit.OpType.INPUT, "a")
+            v_b = lt.jit.JITVar(lt.jit.OpType.INPUT, "b")
+            self.jit_add = lt.jit.JITFunction("fused_residual_add", v_a + v_b, [v_a, v_b])
 
     def forward(self, x):
         norm1 = self.ln1.forward(x)
         attn_out = self.attn.forward(norm1)
-        x = lt.Ops.add(x, attn_out)
+        x = self.jit_add([x, attn_out]) if (self.jit_add and not self.training) else lt.Ops.add(x, attn_out)
         norm2 = self.ln2.forward(x)
         mlp_h = self.fc1.forward(norm2)
         mlp_h = lt.Ops.gelu(mlp_h)
         mlp_out = self.fc2.forward(mlp_h)
-        x = lt.Ops.add(x, mlp_out)
+        x = self.jit_add([x, mlp_out]) if (self.jit_add and not self.training) else lt.Ops.add(x, mlp_out)
         return x
 
     def parameters(self):
@@ -113,7 +119,7 @@ class VisionTransformerClassifier(lt.nn.Module):
         b = x.shape[0]
         h = self.patch_proj.forward(x)
         pos = self.pos_proj.forward(h)
-        h = lt.Ops.add(h, pos)
+        h = self.block1.jit_add([h, pos]) if (self.block1.jit_add and not self.training) else lt.Ops.add(h, pos)
         h = self.block1.forward(h)
         h = self.block2.forward(h)
         h = self.ln_f.forward(h)
@@ -212,7 +218,8 @@ def main():
 
     device = lt.auto_device()
     backend_name = lt.get_backend_name() if hasattr(lt, "get_backend_name") else ("CUDA (Native)" if (hasattr(lt, "cuda") and lt.cuda.is_available()) else ("OpenCL" if lt.is_gpu_available() else "CPU"))
-    print(f"Active Compute Device: {device} | Backend Driver: {backend_name}")
+    jit_status = "Enabled (Kernel Fusion)" if (hasattr(lt, "jit") and hasattr(lt.jit, "JITFunction")) else "Disabled"
+    print(f"Active Compute Device: {device} | Backend Driver: {backend_name} | JIT Engine: {jit_status}")
     
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:

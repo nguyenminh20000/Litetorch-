@@ -870,4 +870,70 @@ PYBIND11_MODULE(litetorch, m) {
     m.def("get_cached_gpu_bytes", []() -> size_t {
         return CachingAllocator::get().get_cached_gpu_bytes();
     });
+
+    py::module_ jit_mod = m.def_submodule("jit");
+
+    py::enum_<JITVar::OpType>(jit_mod, "OpType")
+        .value("INPUT", JITVar::OpType::INPUT)
+        .value("CONST", JITVar::OpType::CONST)
+        .value("ADD", JITVar::OpType::ADD)
+        .value("SUB", JITVar::OpType::SUB)
+        .value("MUL", JITVar::OpType::MUL)
+        .value("DIV", JITVar::OpType::DIV)
+        .value("RELU", JITVar::OpType::RELU)
+        .value("GELU", JITVar::OpType::GELU)
+        .value("SIGMOID", JITVar::OpType::SIGMOID)
+        .value("TANH", JITVar::OpType::TANH)
+        .value("SQRT", JITVar::OpType::SQRT)
+        .value("EXP", JITVar::OpType::EXP)
+        .value("LOG", JITVar::OpType::LOG)
+        .value("ABS", JITVar::OpType::ABS)
+        .value("NEG", JITVar::OpType::NEG)
+        .export_values();
+
+    py::class_<JITVar, std::shared_ptr<JITVar>>(jit_mod, "JITVar")
+        .def(py::init<JITVar::OpType, const std::string&>(), py::arg("op"), py::arg("name") = "")
+        .def(py::init<float>(), py::arg("val"))
+        .def_readwrite("op", &JITVar::op)
+        .def_readwrite("name", &JITVar::name)
+        .def_readwrite("val", &JITVar::val)
+        .def("__add__", [](std::shared_ptr<JITVar> a, std::shared_ptr<JITVar> b) { return a + b; })
+        .def("__add__", [](std::shared_ptr<JITVar> a, float b) { return a + b; })
+        .def("__radd__", [](std::shared_ptr<JITVar> a, float b) { return a + b; })
+        .def("__sub__", [](std::shared_ptr<JITVar> a, std::shared_ptr<JITVar> b) { return a - b; })
+        .def("__sub__", [](std::shared_ptr<JITVar> a, float b) { return a - b; })
+        .def("__rsub__", [](std::shared_ptr<JITVar> a, float b) { return std::make_shared<JITVar>(b) - a; })
+        .def("__mul__", [](std::shared_ptr<JITVar> a, std::shared_ptr<JITVar> b) { return a * b; })
+        .def("__mul__", [](std::shared_ptr<JITVar> a, float b) { return a * b; })
+        .def("__rmul__", [](std::shared_ptr<JITVar> a, float b) { return a * b; })
+        .def("__truediv__", [](std::shared_ptr<JITVar> a, std::shared_ptr<JITVar> b) { return a / b; })
+        .def("__truediv__", [](std::shared_ptr<JITVar> a, float b) { return a / b; })
+        .def("__neg__", [](std::shared_ptr<JITVar> a) { return -a; });
+
+    jit_mod.def("relu", &JIT::relu, py::arg("a"));
+    jit_mod.def("gelu", &JIT::gelu, py::arg("a"));
+    jit_mod.def("sigmoid", &JIT::sigmoid, py::arg("a"));
+    jit_mod.def("tanh", &JIT::tanh, py::arg("a"));
+    jit_mod.def("sqrt", &JIT::sqrt, py::arg("a"));
+    jit_mod.def("exp", &JIT::exp, py::arg("a"));
+    jit_mod.def("log", &JIT::log, py::arg("a"));
+    jit_mod.def("abs", &JIT::abs, py::arg("a"));
+
+    py::class_<JITFunction, std::shared_ptr<JITFunction>>(jit_mod, "JITFunction")
+        .def(py::init<const std::string&, std::shared_ptr<JITVar>, const std::vector<std::shared_ptr<JITVar>>&>(),
+             py::arg("name"), py::arg("expr"), py::arg("inputs"))
+        .def("__call__", &JITFunction::operator(), py::arg("args"))
+        .def("forward", &JITFunction::operator(), py::arg("args"))
+        .def("save", &JITFunction::save, py::arg("filepath"))
+        .def_static("load", &JITFunction::load, py::arg("filepath"));
+
+    jit_mod.def("trace", [](py::object py_fn, const std::vector<std::shared_ptr<Tensor>>& inputs, const std::string& name) {
+        auto func = [py_fn](const std::vector<std::shared_ptr<Tensor>>& args) -> std::shared_ptr<Tensor> {
+            py::list py_args;
+            for (auto& a : args) py_args.append(a);
+            py::object res = py_fn(*py_args);
+            return res.cast<std::shared_ptr<Tensor>>();
+        };
+        return Tracer::trace(inputs, func, name);
+    }, py::arg("func"), py::arg("inputs"), py::arg("name") = "traced_fn");
 }
