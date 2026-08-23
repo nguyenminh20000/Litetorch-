@@ -268,6 +268,3 @@ tests/stage4_test.cpp
 tests/stress_test.cpp
 tests/test_litetorch.py
 tests/transformer_test.cpp
-tests/__pycache__/demo_run.cpython-312.pyc
-tests/__pycache__/test_litetorch.cpython-312.pyc
-tests/__pycache__/test_litetorch.cpython-314.pyc

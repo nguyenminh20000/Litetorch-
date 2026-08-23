@@ -6,6 +6,7 @@
 #include <sstream>
 #include <fstream>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <algorithm>
 
@@ -178,6 +179,7 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
     std::string shape_key = shape_to_key(args[0]->shape);
     auto active_backend = BackendDispatcher::get().get_backend();
     bool is_gpu = (args[0]->device.type == DeviceType::GPU);
+    int size = out->numel();
 
     if (is_gpu) {
         compile_for_shape(shape_key);
@@ -192,7 +194,6 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
                 }
                 void* out_mem = out->gpu_data();
                 int out_off = out->offset;
-                int size = out->numel();
 
                 std::vector<void*> arg_ptrs;
                 std::vector<size_t> arg_sizes;
@@ -245,23 +246,33 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
         }
     }
 
-    float* out_ptr = out->data_ptr();
-    int size = out->numel();
+    std::vector<std::vector<float>> cpu_inputs(args.size());
+    std::vector<const float*> input_ptrs(args.size());
 
-    std::vector<float*> input_ptrs;
-    std::vector<int> input_offsets;
-    for (auto& t : args) {
-        input_ptrs.push_back(t->data_ptr());
-        input_offsets.push_back(t->offset);
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i]->device.type == DeviceType::GPU) {
+            cpu_inputs[i].resize(size);
+            CLBackend::get().read(args[i]->gpu_data(), size * sizeof(float), cpu_inputs[i].data(), args[i]->offset * sizeof(float));
+            input_ptrs[i] = cpu_inputs[i].data();
+        } else {
+            input_ptrs[i] = args[i]->data_ptr();
+        }
     }
 
+    std::vector<float> cpu_out(size);
     ThreadPool::get().parallel_for(0, size, [&](int64_t id) {
         std::unordered_map<std::string, float> env;
         for (size_t i = 0; i < args.size(); ++i) {
-            env[inputs_[i]->name] = input_ptrs[i][id + input_offsets[i]];
+            env[inputs_[i]->name] = input_ptrs[i][id];
         }
-        out_ptr[id] = evaluate_cpu(expr_, env);
+        cpu_out[id] = evaluate_cpu(expr_, env);
     });
+
+    if (out->device.type == DeviceType::GPU) {
+        CLBackend::get().write(out->gpu_data(), size * sizeof(float), cpu_out.data(), out->offset * sizeof(float));
+    } else {
+        std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
+    }
 
     return out;
 }
@@ -497,43 +508,31 @@ std::shared_ptr<JITFunction> JITFunction::load(const std::string& filepath) {
 std::string Tracer::serialize_var(std::shared_ptr<JITVar> var) {
     if (!var) return "N";
     std::stringstream ss;
-    ss << "(" << static_cast<int>(var->op) << "," << var->name << "," << var->val << ",";
-    ss << serialize_var(var->left) << "," << serialize_var(var->right) << ")";
+    ss << static_cast<int>(var->op) << " " << (var->name.empty() ? "_" : var->name) << " " << var->val << " ";
+    ss << serialize_var(var->left) << " " << serialize_var(var->right);
     return ss.str();
 }
 
+static std::shared_ptr<JITVar> deserialize_helper(std::istringstream& iss) {
+    std::string token;
+    if (!(iss >> token)) return nullptr;
+    if (token == "N") return nullptr;
+    int op_val = std::stoi(token);
+    std::string name;
+    iss >> name;
+    if (name == "_") name = "";
+    float val = 0.0f;
+    iss >> val;
+    auto var = std::make_shared<JITVar>(static_cast<JITVar::OpType>(op_val), name);
+    var->val = val;
+    var->left = deserialize_helper(iss);
+    var->right = deserialize_helper(iss);
+    return var;
+}
+
 std::shared_ptr<JITVar> Tracer::deserialize_var(const std::string& str, size_t& pos) {
-    if (pos >= str.size()) return nullptr;
-    if (str[pos] == 'N') {
-        pos += 1;
-        return nullptr;
-    }
-    if (str[pos] == '(') {
-        pos += 1;
-        
-        size_t comma1 = str.find(',', pos);
-        int op_val = std::stoi(str.substr(pos, comma1 - pos));
-        pos = comma1 + 1;
-
-        size_t comma2 = str.find(',', pos);
-        std::string name = str.substr(pos, comma2 - pos);
-        pos = comma2 + 1;
-
-        size_t comma3 = str.find(',', pos);
-        float val = std::stof(str.substr(pos, comma3 - pos));
-        pos = comma3 + 1;
-
-        auto var = std::make_shared<JITVar>(static_cast<JITVar::OpType>(op_val), name);
-        var->val = val;
-
-        var->left = deserialize_var(str, pos);
-        pos += 1;
-
-        var->right = deserialize_var(str, pos);
-        pos += 1;
-        return var;
-    }
-    return nullptr;
+    std::istringstream iss(str);
+    return deserialize_helper(iss);
 }
 
 }
