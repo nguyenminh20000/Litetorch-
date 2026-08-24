@@ -118,9 +118,99 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
         case JITVar::OpType::EXP: return Ops::exp(left_tensor);
         case JITVar::OpType::LOG: return Ops::log(left_tensor);
         case JITVar::OpType::ABS: return Ops::abs(left_tensor);
+        case JITVar::OpType::RELU_GRAD: {
+            auto out = Tensor::create(shape, device);
+            float* in_ptr = left_tensor->data_ptr();
+            float* gout_ptr = right_tensor->data_ptr();
+            float* out_ptr = out->data_ptr();
+            size_t size = out->numel();
+            ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : 0.0f;
+            });
+            if (device.type == DeviceType::GPU) {
+                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            }
+            return out;
+        }
+        case JITVar::OpType::GELU_GRAD: {
+            auto out = Tensor::create(shape, device);
+            float* in_ptr = left_tensor->data_ptr();
+            float* gout_ptr = right_tensor->data_ptr();
+            float* out_ptr = out->data_ptr();
+            size_t size = out->numel();
+            ThreadPool::get().parallel_for(0, size, [&](int64_t idx) {
+                float x = in_ptr[idx];
+                float tanh_val = std::tanh(0.7978845608f * (x + 0.044715f * x * x * x));
+                float term1 = 0.5f * (1.0f + tanh_val);
+                float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);
+                out_ptr[idx] = gout_ptr[idx] * (term1 + term2);
+            });
+            if (device.type == DeviceType::GPU) {
+                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            }
+            return out;
+        }
+        case JITVar::OpType::ABS_GRAD: {
+            auto out = Tensor::create(shape, device);
+            float* in_ptr = left_tensor->data_ptr();
+            float* gout_ptr = right_tensor->data_ptr();
+            float* out_ptr = out->data_ptr();
+            size_t size = out->numel();
+            ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : (in_ptr[i] < 0.0f ? -gout_ptr[i] : 0.0f);
+            });
+            if (device.type == DeviceType::GPU) {
+                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            }
+            return out;
+        }
         default: return left_tensor;
     }
 }
+
+class JITNode : public Node {
+public:
+    std::shared_ptr<JITVar> expr_;
+    std::vector<std::shared_ptr<JITVar>> input_vars_;
+    std::vector<std::shared_ptr<Tensor>> saved_inputs_;
+    std::vector<bool> inputs_need_grad_;
+
+    JITNode(
+        std::shared_ptr<JITVar> expr,
+        const std::vector<std::shared_ptr<JITVar>>& input_vars,
+        const std::vector<std::shared_ptr<Tensor>>& saved_inputs,
+        const std::vector<bool>& inputs_need_grad
+    ) : Node("JITNode"), expr_(expr), input_vars_(input_vars), saved_inputs_(saved_inputs), inputs_need_grad_(inputs_need_grad) {}
+
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::vector<std::shared_ptr<Tensor>> grads;
+        grads.reserve(saved_inputs_.size());
+
+        auto grad_var = std::make_shared<JITVar>(JITVar::OpType::INPUT, "__grad_output__");
+
+        for (size_t i = 0; i < saved_inputs_.size(); ++i) {
+            if (!inputs_need_grad_[i]) {
+                grads.push_back(nullptr);
+                continue;
+            }
+
+            auto deriv_expr = Tracer::derivative(expr_, input_vars_[i]);
+            auto bwd_expr = deriv_expr * grad_var;
+
+            std::vector<std::shared_ptr<JITVar>> bwd_inputs = input_vars_;
+            bwd_inputs.push_back(grad_var);
+
+            JITFunction bwd_fn("jit_bwd_" + std::to_string(i), bwd_expr, bwd_inputs);
+
+            std::vector<std::shared_ptr<Tensor>> bwd_args = saved_inputs_;
+            bwd_args.push_back(grad_output);
+
+            auto in_grad = bwd_fn(bwd_args);
+            grads.push_back(in_grad);
+        }
+        return grads;
+    }
+};
 
 void JITFunction::compile_for_shape(const std::string& shape_key) {
     if (kernels_map_.find(shape_key) != kernels_map_.end()) return;
@@ -138,21 +228,28 @@ void JITFunction::compile_for_shape(const std::string& shape_key) {
         ss << "    return x * 0.5f * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)));\n";
         ss << "}\n\n";
 
-        ss << "inline float gelu_grad(float x, float dy) {\n";
+        ss << "inline float gelu_grad(float x, float grad_out) {\n";
         ss << "    float tanh_val = tanh(0.7978845608f * (x + 0.044715f * x * x * x));\n";
         ss << "    float term1 = 0.5f * (1.0f + tanh_val);\n";
         ss << "    float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);\n";
-        ss << "    return dy * (term1 + term2);\n";
+        ss << "    return grad_out * (term1 + term2);\n";
         ss << "}\n\n";
 
         ss << "__kernel void " << k_name << "(\n";
-        for (auto& inp : inputs_) {
-            ss << "    __global const float* " << inp->name << ", int " << inp->name << "_off,\n";
+        for (size_t i = 0; i < inputs_.size(); ++i) {
+            ss << "    __global const float* " << inputs_[i]->name << ",\n";
+            ss << "    int " << inputs_[i]->name << "_off,\n";
         }
-        ss << "    __global float* out, int out_off, int size) {\n";
-        ss << "    int id = get_global_id(0);\n";
-        ss << "    if (id < size) {\n";
-        ss << "        out[id + out_off] = " << to_opencl_expr(expr_) << ";\n";
+        ss << "    __global float* out,\n";
+        ss << "    int out_off,\n";
+        ss << "    int size\n";
+        ss << ") {\n";
+        ss << "    int idx = get_global_id(0);\n";
+        ss << "    if (idx < size) {\n";
+        for (size_t i = 0; i < inputs_.size(); ++i) {
+            ss << "        float " << inputs_[i]->name << "_val = " << inputs_[i]->name << "[idx + " << inputs_[i]->name << "_off];\n";
+        }
+        ss << "        out[idx + out_off] = " << to_opencl_expr(expr_) << ";\n";
         ss << "    }\n";
         ss << "}\n";
     }
@@ -180,32 +277,55 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
         }
     }
 
+    std::shared_ptr<Tensor> out = nullptr;
     if (args[0]->device.type == DeviceType::GPU) {
         std::unordered_map<std::string, std::shared_ptr<Tensor>> env;
         for (size_t i = 0; i < args.size(); ++i) {
             env[inputs_[i]->name] = args[i];
         }
-        return evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
-    }
+        out = evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
+    } else {
+        int size = args[0]->numel();
+        out = Tensor::create(args[0]->shape, args[0]->device);
 
-    int size = args[0]->numel();
-    auto out = Tensor::create(args[0]->shape, args[0]->device);
-
-    std::vector<const float*> input_ptrs(args.size());
-    for (size_t i = 0; i < args.size(); ++i) {
-        input_ptrs[i] = args[i]->data_ptr();
-    }
-
-    std::vector<float> cpu_out(size);
-    ThreadPool::get().parallel_for(0, size, [&](int64_t id) {
-        std::unordered_map<std::string, float> env;
+        std::vector<const float*> input_ptrs(args.size());
         for (size_t i = 0; i < args.size(); ++i) {
-            env[inputs_[i]->name] = input_ptrs[i][id];
+            input_ptrs[i] = args[i]->data_ptr();
         }
-        cpu_out[id] = evaluate_cpu(expr_, env);
-    });
 
-    std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
+        std::vector<float> cpu_out(size);
+        ThreadPool::get().parallel_for(0, size, [&](int64_t id) {
+            std::unordered_map<std::string, float> env;
+            for (size_t i = 0; i < args.size(); ++i) {
+                env[inputs_[i]->name] = input_ptrs[i][id];
+            }
+            cpu_out[id] = evaluate_cpu(expr_, env);
+        });
+
+        std::memcpy(out->data_ptr(), cpu_out.data(), size * sizeof(float));
+    }
+
+    bool any_requires_grad = false;
+    std::vector<bool> inputs_need_grad(args.size(), false);
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i]->requires_grad) {
+            any_requires_grad = true;
+            inputs_need_grad[i] = true;
+        }
+    }
+
+    if (any_requires_grad) {
+        auto node = std::make_shared<JITNode>(expr_, inputs_, args, inputs_need_grad);
+        for (size_t i = 0; i < args.size(); ++i) {
+            node->inputs.push_back({ args[i], inputs_need_grad[i] });
+            node->next_nodes.push_back(args[i]->creator);
+        }
+        node->saved_tensors = args;
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+
     return out;
 }
 

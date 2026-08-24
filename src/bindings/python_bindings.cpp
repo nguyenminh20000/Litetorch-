@@ -207,6 +207,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("cast", &Tensor::cast, py::arg("target_dtype"))
         .def("copy_", &Tensor::copy_)
         .def("add_", &Tensor::add_)
+        .def("register_hook", &Tensor::register_hook)
         .def("__repr__", [](const Tensor& self) {
             return "<litetorch.Tensor shape=" + std::to_string(self.numel()) + " device=" + self.device.to_string() + ">";
         });
@@ -793,6 +794,34 @@ PYBIND11_MODULE(litetorch, m) {
     jit_mod.def("exp", &JIT::exp, py::arg("a"));
     jit_mod.def("log", &JIT::log, py::arg("a"));
     jit_mod.def("abs", &JIT::abs, py::arg("a"));
+    jit_mod.def("fused_bias_relu", [](std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> bias) {
+        auto v_x = std::make_shared<JITVar>(JITVar::OpType::INPUT, "x");
+        auto v_b = std::make_shared<JITVar>(JITVar::OpType::INPUT, "b");
+        auto expr = JIT::relu(v_x + v_b);
+        JITFunction fn("fused_bias_relu", expr, {v_x, v_b});
+        return fn({x, bias});
+    }, py::arg("x"), py::arg("bias"));
+    jit_mod.def("fused_bias_gelu", [](std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> bias) {
+        auto v_x = std::make_shared<JITVar>(JITVar::OpType::INPUT, "x");
+        auto v_b = std::make_shared<JITVar>(JITVar::OpType::INPUT, "b");
+        auto expr = JIT::gelu(v_x + v_b);
+        JITFunction fn("fused_bias_gelu", expr, {v_x, v_b});
+        return fn({x, bias});
+    }, py::arg("x"), py::arg("bias"));
+    jit_mod.def("fused_residual_add", [](std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> residual) {
+        auto v_x = std::make_shared<JITVar>(JITVar::OpType::INPUT, "x");
+        auto v_r = std::make_shared<JITVar>(JITVar::OpType::INPUT, "r");
+        auto expr = v_x + v_r;
+        JITFunction fn("fused_residual_add", expr, {v_x, v_r});
+        return fn({x, residual});
+    }, py::arg("x"), py::arg("residual"));
+    jit_mod.def("fused_residual_gelu", [](std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> residual) {
+        auto v_x = std::make_shared<JITVar>(JITVar::OpType::INPUT, "x");
+        auto v_r = std::make_shared<JITVar>(JITVar::OpType::INPUT, "r");
+        auto expr = JIT::gelu(v_x + v_r);
+        JITFunction fn("fused_residual_gelu", expr, {v_x, v_r});
+        return fn({x, residual});
+    }, py::arg("x"), py::arg("residual"));
 
     py::class_<JITFunction, std::shared_ptr<JITFunction>>(jit_mod, "JITFunction")
         .def(py::init<const std::string&, std::shared_ptr<JITVar>, const std::vector<std::shared_ptr<JITVar>>&>(),

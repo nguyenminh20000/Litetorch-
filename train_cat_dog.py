@@ -96,12 +96,12 @@ class TransformerBlock(lt.nn.Module):
     def forward(self, x):
         norm1 = self.ln1.forward(x)
         attn_out = self.attn.forward(norm1)
-        x = self.jit_add([x, attn_out]) if (self.jit_add and not self.training) else lt.Ops.add(x, attn_out)
+        x = self.jit_add([x, attn_out]) if self.jit_add else lt.Ops.add(x, attn_out)
         norm2 = self.ln2.forward(x)
         mlp_h = self.fc1.forward(norm2)
         mlp_h = lt.Ops.gelu(mlp_h)
         mlp_out = self.fc2.forward(mlp_h)
-        x = self.jit_add([x, mlp_out]) if (self.jit_add and not self.training) else lt.Ops.add(x, mlp_out)
+        x = self.jit_add([x, mlp_out]) if self.jit_add else lt.Ops.add(x, mlp_out)
         return x
 
     def train(self, mode=True):
