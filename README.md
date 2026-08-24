@@ -309,7 +309,6 @@ lt.empty_cache()
 | **ViT Single-Image Inference** | NVIDIA T4 GPU | **10.01ms / image** | 11.20ms / image | **1.12x Faster** |
 | **Dataset VRAM Footprint** | NVIDIA T4 GPU | **72.0 MB** | 165.0 MB | **2.29x More Compact** |
 | **100B LLM Training** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Comfortable Single-Node (8-GPU)** |
-| **500B - 1T LLM Training** | 64x NVIDIA Rubin R100 Cluster | **~85 GB VRAM/GPU (4D Parallel)** | N/A | **Ultra-High Scalability (NVLink 6)** |
 
 ---
 
