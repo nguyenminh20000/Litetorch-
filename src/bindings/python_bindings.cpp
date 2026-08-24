@@ -24,6 +24,7 @@
 #include "litetorch/device_mesh.h"
 #include "litetorch/jit.h"
 #include "litetorch/allocator.h"
+#include "litetorch/tpu.h"
 
 namespace py = pybind11;
 using namespace litetorch;
@@ -90,10 +91,32 @@ PYBIND11_MODULE(litetorch, m) {
         .value("CPU", DeviceType::CPU)
         .value("GPU", DeviceType::GPU)
         .value("META", DeviceType::META)
+        .value("TPU", DeviceType::TPU)
         .export_values();
 
     py::class_<Device>(m, "Device")
         .def(py::init<DeviceType, int>(), py::arg("type") = DeviceType::CPU, py::arg("index") = 0)
+        .def(py::init([](const std::string& dev_str) {
+            std::string s = dev_str;
+            for (auto& c : s) c = tolower(c);
+            if (s == "meta") return Device(DeviceType::META, 0);
+            if (s.rfind("tpu", 0) == 0) {
+                int idx = 0;
+                if (s.size() > 4 && s[3] == ':') {
+                    try { idx = std::stoi(s.substr(4)); } catch (...) { idx = 0; }
+                }
+                return Device(DeviceType::TPU, idx);
+            }
+            if (s.rfind("gpu", 0) == 0 || s.rfind("cuda", 0) == 0) {
+                int idx = 0;
+                size_t colon = s.find(':');
+                if (colon != std::string::npos && colon + 1 < s.size()) {
+                    try { idx = std::stoi(s.substr(colon + 1)); } catch (...) { idx = 0; }
+                }
+                return Device(DeviceType::GPU, idx);
+            }
+            return Device(DeviceType::CPU, 0);
+        }), py::arg("device_str"))
         .def_readwrite("type", &Device::type)
         .def_readwrite("index", &Device::index)
         .def("to_string", &Device::to_string)
@@ -110,7 +133,12 @@ PYBIND11_MODULE(litetorch, m) {
         return litetorch::CLBackend::get().is_available();
     });
 
+    m.def("is_tpu_available", &litetorch::tpu::is_available);
+
     m.def("auto_device", []() {
+        if (litetorch::tpu::is_available()) {
+            return Device(DeviceType::TPU, 0);
+        }
         if (std::getenv("LITETORCH_NO_NATIVE_GPU")) {
             if (litetorch::CLBackend::get().is_available()) {
                 return Device(DeviceType::GPU, 0);
@@ -128,6 +156,9 @@ PYBIND11_MODULE(litetorch, m) {
     });
 
     m.def("get_backend_name", []() -> std::string {
+        if (litetorch::tpu::is_available()) {
+            return "TPU (Google Systolic Array)";
+        }
         if (!std::getenv("LITETORCH_NO_NATIVE_GPU")) {
             auto backend = litetorch::BackendDispatcher::get().get_backend();
             if (backend && backend->is_available()) {
@@ -165,6 +196,14 @@ PYBIND11_MODULE(litetorch, m) {
         }
         return false;
     });
+
+    auto tpu_mod = m.def_submodule("tpu");
+    tpu_mod.def("is_available", &litetorch::tpu::is_available);
+    tpu_mod.def("device_count", &litetorch::tpu::device_count);
+    tpu_mod.def("current_device", &litetorch::tpu::current_device);
+    tpu_mod.def("set_device", &litetorch::tpu::set_device, py::arg("device_id") = 0);
+    tpu_mod.def("synchronize", &litetorch::tpu::synchronize);
+    tpu_mod.def("get_device_name", &litetorch::tpu::get_device_name, py::arg("device_id") = 0);
 
     py::enum_<DataType>(m, "DataType")
         .value("FP64", DataType::FP64)

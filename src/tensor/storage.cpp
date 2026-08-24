@@ -30,6 +30,19 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
             this->device = Device(DeviceType::CPU, 0);
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
         }
+    } else if (device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && tpu->is_available()) {
+            tpu->set_device(device.index);
+            gpu_data = (cl_mem)tpu->allocate(size * element_size());
+            if (!gpu_data) {
+                this->device = Device(DeviceType::CPU, 0);
+                cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+            }
+        } else {
+            this->device = Device(DeviceType::CPU, 0);
+            cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+        }
     } else {
         cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
     }
@@ -43,10 +56,17 @@ StorageImpl::~StorageImpl() {
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     MemoryManager::get().unregister_gpu_impl(this);
     if (gpu_data) {
-        CLBackend::get().free(gpu_data);
+        if (device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->free(gpu_data);
+        } else {
+            CLBackend::get().free(gpu_data);
+        }
+        gpu_data = nullptr;
     }
     if (cpu_data) {
         CachingAllocator::get().free_cpu(cpu_data);
+        cpu_data = nullptr;
     }
 }
 
@@ -63,13 +83,19 @@ float* StorageImpl::get_cpu_ptr() {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
             CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
         }
+    } else if (device.type == DeviceType::TPU && gpu_data) {
+        if (!cpu_data) {
+            cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->read(gpu_data, size * element_size(), cpu_data);
+        }
     }
     return cpu_data;
 }
 
 cl_mem StorageImpl::get_gpu_ptr() {
     if (device.type == DeviceType::META) {
-        throw std::runtime_error("[litetorch Error] Cannot access GPU pointer for a Tensor on META device");
+        throw std::runtime_error("[litetorch Error] Cannot access GPU/TPU pointer for a Tensor on META device");
     }
     std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
@@ -82,7 +108,9 @@ cl_mem StorageImpl::get_gpu_ptr() {
     if (device.type == DeviceType::CPU) {
         return nullptr;
     }
-    MemoryManager::get().touch_impl(this);
+    if (device.type == DeviceType::GPU) {
+        MemoryManager::get().touch_impl(this);
+    }
     if (cpu_data) {
         CachingAllocator::get().free_cpu(cpu_data);
         cpu_data = nullptr;
@@ -103,17 +131,47 @@ void StorageImpl::to(const Device& new_device) {
             native->set_device(new_device.index);
         }
         MemoryManager::get().register_gpu_impl(this);
-        gpu_data = CLBackend::get().allocate(size * element_size());
-        if (!gpu_data) {
+        cl_mem new_gpu_data = CLBackend::get().allocate(size * element_size());
+        if (!new_gpu_data) {
             MemoryManager::get().unregister_gpu_impl(this);
             return;
         }
 
         if (cpu_data) {
-            CLBackend::get().write(gpu_data, size * element_size(), cpu_data);
+            CLBackend::get().write(new_gpu_data, size * element_size(), cpu_data);
             CachingAllocator::get().free_cpu(cpu_data);
             cpu_data = nullptr;
+        } else if (gpu_data && device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            float* tmp = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+            if (tpu) tpu->read(gpu_data, size * element_size(), tmp);
+            CLBackend::get().write(new_gpu_data, size * element_size(), tmp);
+            if (tpu) tpu->free(gpu_data);
+            CachingAllocator::get().free_cpu(tmp);
         }
+        gpu_data = new_gpu_data;
+        device = new_device;
+        is_swapped = false;
+    } else if (new_device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (!tpu || !tpu->is_available()) return;
+        tpu->set_device(new_device.index);
+        cl_mem new_tpu_data = (cl_mem)tpu->allocate(size * element_size());
+        if (!new_tpu_data) return;
+
+        if (cpu_data) {
+            tpu->write(new_tpu_data, size * element_size(), cpu_data);
+            CachingAllocator::get().free_cpu(cpu_data);
+            cpu_data = nullptr;
+        } else if (gpu_data && device.type == DeviceType::GPU) {
+            float* tmp = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+            CLBackend::get().read(gpu_data, size * element_size(), tmp);
+            tpu->write(new_tpu_data, size * element_size(), tmp);
+            CLBackend::get().free(gpu_data);
+            MemoryManager::get().unregister_gpu_impl(this);
+            CachingAllocator::get().free_cpu(tmp);
+        }
+        gpu_data = new_tpu_data;
         device = new_device;
         is_swapped = false;
     } else {
@@ -127,11 +185,17 @@ void StorageImpl::to(const Device& new_device) {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
         }
         if (gpu_data) {
-            CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
-            CLBackend::get().free(gpu_data);
+            if (device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->read(gpu_data, size * element_size(), cpu_data);
+                if (tpu) tpu->free(gpu_data);
+            } else {
+                CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
+                CLBackend::get().free(gpu_data);
+                MemoryManager::get().unregister_gpu_impl(this);
+            }
             gpu_data = nullptr;
         }
-        MemoryManager::get().unregister_gpu_impl(this);
         device = new_device;
     }
 }

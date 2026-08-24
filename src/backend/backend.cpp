@@ -1,5 +1,6 @@
 #include "litetorch/backend.h"
 #include "litetorch/platform.h"
+#include "tpu/tpu_backend.h"
 #include <iostream>
 #include <unordered_set>
 
@@ -350,14 +351,44 @@ BackendDispatcher::BackendDispatcher() {
     } else {
         gpu_backend_ = nullptr;
     }
+
+    auto tpu = std::make_shared<TPUBackend>();
+    if (tpu->is_available()) {
+        std::cout << "[litetorch Info] Google TPU (Systolic Array) successfully initialized.\n";
+        tpu_backend_ = tpu;
+    } else {
+        tpu_backend_ = nullptr;
+    }
 }
 
 std::shared_ptr<DeviceBackend> BackendDispatcher::get_backend() {
     return gpu_backend_;
 }
 
+std::shared_ptr<DeviceBackend> BackendDispatcher::get_cpu_backend() {
+    return cpu_backend_;
+}
+
+std::shared_ptr<DeviceBackend> BackendDispatcher::get_tpu_backend() {
+    return tpu_backend_;
+}
+
+std::shared_ptr<DeviceBackend> BackendDispatcher::get_backend_for_device(const Device& dev) {
+    if (dev.type == DeviceType::TPU) {
+        return tpu_backend_;
+    }
+    if (dev.type == DeviceType::GPU) {
+        return gpu_backend_;
+    }
+    return cpu_backend_;
+}
+
 void BackendDispatcher::set_gpu_backend(std::shared_ptr<DeviceBackend> backend) {
     gpu_backend_ = backend;
+}
+
+void BackendDispatcher::set_tpu_backend(std::shared_ptr<DeviceBackend> backend) {
+    tpu_backend_ = backend;
 }
 
 }

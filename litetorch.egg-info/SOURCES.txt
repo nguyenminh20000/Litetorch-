@@ -18,6 +18,7 @@ H:/Litetorch/src/autograd/autograd_engine.cpp
 H:/Litetorch/src/autograd/checkpoint.cpp
 H:/Litetorch/src/autograd/saved_tensor.cpp
 H:/Litetorch/src/backend/backend.cpp
+H:/Litetorch/src/backend/tpu/tpu_backend.cpp
 H:/Litetorch/src/bindings/python_bindings.cpp
 H:/Litetorch/src/cl_backend/cl_backend.cpp
 H:/Litetorch/src/cl_backend/cl_functions.cpp
@@ -138,6 +139,7 @@ include/litetorch/quantization.h
 include/litetorch/serialization.h
 include/litetorch/tensor.h
 include/litetorch/thread_pool.h
+include/litetorch/tpu.h
 include/litetorch/zero3_optimizer.h
 litetorch.egg-info/PKG-INFO
 litetorch.egg-info/SOURCES.txt
@@ -168,6 +170,8 @@ src/backend/gpu_native/math/reduction.cu
 src/backend/gpu_native/nn/flash_attention.cu
 src/backend/gpu_native/nn/nn_kernels.cu
 src/backend/gpu_native/optim/optimizers.cu
+src/backend/tpu/tpu_backend.cpp
+src/backend/tpu/tpu_backend.h
 src/bindings/python_bindings.cpp
 src/cl_backend/cl_backend.cpp
 src/cl_backend/cl_functions.cpp

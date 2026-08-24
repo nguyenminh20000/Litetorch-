@@ -75,11 +75,15 @@ public:
     static BackendDispatcher& get();
     std::shared_ptr<DeviceBackend> get_backend();
     std::shared_ptr<DeviceBackend> get_cpu_backend();
+    std::shared_ptr<DeviceBackend> get_tpu_backend();
+    std::shared_ptr<DeviceBackend> get_backend_for_device(const Device& dev);
     void set_gpu_backend(std::shared_ptr<DeviceBackend> backend);
+    void set_tpu_backend(std::shared_ptr<DeviceBackend> backend);
 private:
     BackendDispatcher();
     std::shared_ptr<DeviceBackend> cpu_backend_;
     std::shared_ptr<DeviceBackend> gpu_backend_;
+    std::shared_ptr<DeviceBackend> tpu_backend_;
 };
 
 }
