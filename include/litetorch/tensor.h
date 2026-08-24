@@ -92,6 +92,7 @@ public:
         Tensor* parent = nullptr;
         CreatorWrapper() = default;
         CreatorWrapper(std::nullptr_t) : ptr(nullptr) {}
+        CreatorWrapper& operator=(std::nullptr_t) { ptr = nullptr; return *this; }
         CreatorWrapper& operator=(std::shared_ptr<Node> p);
         operator std::shared_ptr<Node>() const { return ptr; }
         std::shared_ptr<Node> operator->() const { return ptr; }
