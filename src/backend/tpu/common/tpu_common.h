@@ -43,7 +43,8 @@ void tpu_flash_attention_forward(const float* Q, const float* K, const float* V,
                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale);
 
 void tpu_adamw_update(float* p, const float* g, float* m, float* v, int64_t size,
-                      float lr_t, float beta1, float beta2, float eps, float weight_decay);
+                      float lr, float beta1, float beta2, float eps, float weight_decay,
+                      float bias_correction1, float bias_correction2);
 
 }
 }

@@ -29,7 +29,7 @@ typedef void (*gpu_matmul_fp8_t)(void*, int64_t, void*, int64_t, void*, int64_t,
 typedef void (*gpu_matmul_bf16_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_sum_t)(void*, int64_t, void*, int64_t, int64_t);
 typedef void (*gpu_max_t)(void*, int64_t, void*, int64_t, int64_t);
-typedef void (*gpu_adamw_step_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, float, float, float, float, float);
+typedef void (*gpu_adamw_step_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, float, float, float, float, float, float, float);
 typedef void (*gpu_flash_attention_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
 typedef void (*gpu_flash_attention_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
 typedef void (*gpu_flash_attention_backward_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
@@ -255,8 +255,8 @@ public:
             gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K);
         }
     }
-    void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M_state, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr_t, float beta1, float beta2, float eps, float weight_decay) override {
-        if (gpu_adamw_step_fn) gpu_adamw_step_fn(P, p_off, G, g_off, M_state, m_off, V, v_off, size, lr_t, beta1, beta2, eps, weight_decay);
+    void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M_state, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {
+        if (gpu_adamw_step_fn) gpu_adamw_step_fn(P, p_off, G, g_off, M_state, m_off, V, v_off, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
     }
     void flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
         if (gpu_flash_attention_fn) gpu_flash_attention_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);

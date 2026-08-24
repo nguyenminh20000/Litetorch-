@@ -66,7 +66,7 @@ void AdamW::step() {
             if (native && native->is_available()) {
                 native->adamw_step(p->gpu_data(), p->offset, g_c->gpu_data(), g_c->offset,
                                    m[i]->gpu_data(), m[i]->offset, v[i]->gpu_data(), v[i]->offset,
-                                   p->numel(), lr, beta1, beta2, eps, weight_decay);
+                                   p->numel(), lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
             } else {
                 cl_mem p_mem = p->gpu_data();
                 int p_off = p->offset;
@@ -90,7 +90,7 @@ void AdamW::step() {
             if (tpu && tpu->is_available()) {
                 tpu->adamw_step(p->gpu_data(), p->offset, g_c->gpu_data(), g_c->offset,
                                 m[i]->gpu_data(), m[i]->offset, v[i]->gpu_data(), v[i]->offset,
-                                p->numel(), lr, beta1, beta2, eps, weight_decay);
+                                p->numel(), lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
             }
         } else {
             float* p_ptr = p->data_ptr();

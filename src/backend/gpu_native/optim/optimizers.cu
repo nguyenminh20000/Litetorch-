@@ -75,12 +75,12 @@ extern "C" __global__ void adamw_step_kernel(
     }
 }
 
-extern "C" void gpu_adamw_step(void* P, int p_off, void* G, int g_off, void* M_state, int m_off, void* V, int v_off, int size, float lr_t, float beta1, float beta2, float eps, float weight_decay) {
+extern "C" void gpu_adamw_step(void* P, int p_off, void* G, int g_off, void* M_state, int m_off, void* V, int v_off, int size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1, float bias_correction2) {
     int blocks = (size + 255) / 256;
 #ifndef __HIP_PLATFORM_AMD__
-    adamw_step_kernel_native<<<blocks, 256, 0, g_compute_stream>>>((float*)P, p_off, (const float*)G, g_off, (float*)M_state, m_off, (float*)V, v_off, size, lr_t, beta1, beta2, eps, weight_decay);
+    adamw_step_kernel<<<blocks, 256, 0, g_compute_stream>>>((float*)P, p_off, (const float*)G, g_off, (float*)M_state, m_off, (float*)V, v_off, beta1, beta2, lr, eps, weight_decay, bias_correction1, bias_correction2, size);
 #else
-    hipLaunchKernelGGL(adamw_step_kernel_native, dim3(blocks), dim3(256), 0, g_compute_stream, (float*)P, p_off, (const float*)G, g_off, (float*)M_state, m_off, (float*)V, v_off, size, lr_t, beta1, beta2, eps, weight_decay);
+    hipLaunchKernelGGL(adamw_step_kernel, dim3(blocks), dim3(256), 0, g_compute_stream, (float*)P, p_off, (const float*)G, g_off, (float*)M_state, m_off, (float*)V, v_off, beta1, beta2, lr, eps, weight_decay, bias_correction1, bias_correction2, size);
 #endif
 }
 
