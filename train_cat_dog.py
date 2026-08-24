@@ -136,25 +136,27 @@ class VisionTransformerClassifier(lt.nn.Module):
         self.num_patches = num_patches
         self.embed_dim = embed_dim
         self.patch_proj = lt.nn.Linear(patch_dim, embed_dim, True)
-        self.pos_proj = lt.nn.Linear(embed_dim, embed_dim, True)
+        
+        pos_data = [random.gauss(0.0, 0.02) for _ in range(num_patches * embed_dim)]
+        self.pos_embed = lt.Tensor.from_vector(pos_data, [1, num_patches, embed_dim], lt.Device("cpu"), True)
+        
         self.block1 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
         self.block2 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
         self.ln_f = lt.nn.LayerNorm([embed_dim])
-        self.head = lt.nn.Linear(num_patches * embed_dim, num_classes, True)
-
-        v_h = lt.jit.JITVar(lt.jit.OpType.INPUT, "h")
-        v_pos = lt.jit.JITVar(lt.jit.OpType.INPUT, "pos")
-        self.jit_pos_add = lt.jit.JITFunction("fused_pos_add", v_h + v_pos, [v_h, v_pos])
+        self.pool = lt.nn.Linear(num_patches, 1, False)
+        self.head = lt.nn.Linear(embed_dim, num_classes, True)
 
     def forward(self, x):
         b = x.shape[0]
         h = self.patch_proj.forward(x)
-        pos = self.pos_proj.forward(h)
-        h = self.jit_pos_add([h, pos])
+        h = lt.Ops.add(h, self.pos_embed)
         h = self.block1.forward(h)
         h = self.block2.forward(h)
         h = self.ln_f.forward(h)
-        h_flat = h.reshape([b, self.num_patches * self.embed_dim]) if hasattr(h, "reshape") else (h.contiguous().view([b, self.num_patches * self.embed_dim]) if not h.is_contiguous() else h.view([b, self.num_patches * self.embed_dim]))
+        
+        h_t = h.transpose(1, 2)
+        h_pool = self.pool.forward(h_t)
+        h_flat = h_pool.contiguous().view([b, self.embed_dim]) if not h_pool.is_contiguous() else h_pool.view([b, self.embed_dim])
         out = self.head.forward(h_flat)
         return out
 
@@ -168,14 +170,15 @@ class VisionTransformerClassifier(lt.nn.Module):
         return self.train(False)
 
     def parameters(self):
-        return self.patch_proj.parameters() + self.pos_proj.parameters() + self.block1.parameters() + self.block2.parameters() + self.ln_f.parameters() + self.head.parameters()
+        return [self.pos_embed] + self.patch_proj.parameters() + self.block1.parameters() + self.block2.parameters() + self.ln_f.parameters() + self.pool.parameters() + self.head.parameters()
 
     def to(self, device):
+        self.pos_embed = self.pos_embed.to(device)
         self.patch_proj.to(device)
-        self.pos_proj.to(device)
         self.block1.to(device)
         self.block2.to(device)
         self.ln_f.to(device)
+        self.pool.to(device)
         self.head.to(device)
 
 def load_and_preprocess_image(img_path, size=IMAGE_SIZE, patch_size=PATCH_SIZE, augment=False):
@@ -241,19 +244,25 @@ def main():
         print("No images found in dataset/data/Cat or dataset/data/Dog.")
         return
 
+    val_split = int(len(samples) * 0.8)
+    train_samples = samples[:val_split]
+    val_samples = samples[val_split:]
+
     print("Pre-caching dataset images into system RAM...")
     t_cache_start = time.perf_counter()
-    cached_dataset = []
-    for path, label in samples:
+    train_data = []
+    for path, label in train_samples:
         feat = load_and_preprocess_image(path, augment=True)
         if feat is not None:
-            cached_dataset.append((feat, float(label)))
-    t_cache_end = time.perf_counter()
-    print(f"Pre-cached {len(cached_dataset)} images into RAM in {t_cache_end - t_cache_start:.2f}s | RAM: {get_ram_usage_mb():.1f} MB")
+            train_data.append((feat, float(label)))
 
-    val_split = int(len(cached_dataset) * 0.8)
-    train_data = cached_dataset[:val_split]
-    val_data = cached_dataset[val_split:]
+    val_data = []
+    for path, label in val_samples:
+        feat = load_and_preprocess_image(path, augment=False)
+        if feat is not None:
+            val_data.append((feat, float(label)))
+    t_cache_end = time.perf_counter()
+    print(f"Pre-cached {len(train_data) + len(val_data)} images into RAM in {t_cache_end - t_cache_start:.2f}s | RAM: {get_ram_usage_mb():.1f} MB")
     print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     device = lt.auto_device()
@@ -292,7 +301,6 @@ def main():
         model.train()
         random.shuffle(train_gpu_batches)
         total_loss = 0.0
-        correct = 0
         total = 0
         epoch_gpu_compute_time = 0.0
 
@@ -307,6 +315,7 @@ def main():
 
             gpu_step_time = (t_gpu_end - t_gpu_start)
             epoch_gpu_compute_time += gpu_step_time
+            total_loss += loss.item() * actual_batch_size
             total += actual_batch_size
 
             ram_mb = get_ram_usage_mb()
@@ -325,7 +334,7 @@ def main():
             )
             sys.stdout.flush()
 
-        avg_loss = loss.item()
+        avg_loss = (total_loss / total) if total > 0 else loss.item()
 
         model.eval()
         val_correct = 0
