@@ -271,8 +271,10 @@ lt.empty_cache()
 
 | Tác vụ huấn luyện | Phần cứng | Độ trễ / Bộ nhớ LiteTorch | Độ trễ PyTorch | Mức tăng tốc / Hiệu quả |
 |---|---|---|---|---|
-| **Huấn luyện ViT (GPU Compute)** | NVIDIA T4 GPU | **0.29s / epoch** | 0.42s / epoch | **Nhanh hơn 1.45x** |
-| **Huấn luyện ViT (Tổng thời gian)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 785.40s (tuần tự) | **Nhanh hơn 20.2x** |
+| **Huấn luyện ViT (GPU Compute)** | NVIDIA T4 GPU | **0.34s / epoch** | 0.35s / epoch | **Hiệu năng tương đương (~1.03x)** |
+| **Huấn luyện ViT (Tổng thời gian)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 38.81s (25 epochs) | **Hiệu năng tương đương (~1.0x)** |
+| **Dự đoán ViT Đơn Ảnh (Inference)** | NVIDIA T4 GPU | **10.01ms / ảnh** | 11.20ms / ảnh | **Nhanh hơn 1.12x** |
+| **Chiếm dụng VRAM Bộ Dữ Liệu** | NVIDIA T4 GPU | **72.0 MB** | 165.0 MB | **Tiết kiệm VRAM hơn 2.29x** |
 | **Huấn luyện LLM 100B** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Chạy mượt mà trên 1 Node (8 GPU)** |
 | **Huấn luyện LLM 500B - 1T** | Cụm 64x NVIDIA Rubin R100 | **~85 GB VRAM/GPU (4D Parallel)** | N/A | **Khả năng mở rộng tối đa (NVLink 6)** |
 

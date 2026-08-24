@@ -304,9 +304,9 @@ lt.empty_cache()
 
 | Workload | Hardware | LiteTorch Latency / Memory | PyTorch Latency | Speedup / Efficiency |
 |---|---|---|---|---|
-| **ViT Training (Pure Compute)** | NVIDIA T4 GPU | **0.34s / epoch** | 0.45s / epoch | **1.32x Faster** |
-| **ViT Training (Total Wall Time)** | NVIDIA T4 GPU | **38.81s (25 epochs)** | 49.50s (25 epochs) | **1.28x Faster** |
-| **ViT Single-Image Inference** | NVIDIA T4 GPU | **10.01ms / image** | 14.80ms / image | **1.48x Faster** |
+| **ViT Training (Pure Compute)** | NVIDIA T4 GPU | **0.34s / epoch** | 0.35s / epoch | **Competitive Baseline (~1.03x)** |
+| **ViT Training (Total Wall Time)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 38.81s (25 epochs) | **Competitive Baseline (~1.0x)** |
+| **ViT Single-Image Inference** | NVIDIA T4 GPU | **10.01ms / image** | 11.20ms / image | **1.12x Faster** |
 | **Dataset VRAM Footprint** | NVIDIA T4 GPU | **72.0 MB** | 165.0 MB | **2.29x More Compact** |
 | **100B LLM Training** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Comfortable Single-Node (8-GPU)** |
 | **500B - 1T LLM Training** | 64x NVIDIA Rubin R100 Cluster | **~85 GB VRAM/GPU (4D Parallel)** | N/A | **Ultra-High Scalability (NVLink 6)** |
