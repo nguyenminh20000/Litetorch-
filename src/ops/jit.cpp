@@ -195,11 +195,40 @@ public:
         std::vector<std::shared_ptr<Tensor>> grads;
         grads.reserve(saved_inputs_.size());
 
-        auto grad_var = std::make_shared<JITVar>(JITVar::OpType::INPUT, "__grad_output__");
-
         for (size_t i = 0; i < saved_inputs_.size(); ++i) {
             if (!inputs_need_grad_[i]) {
                 grads.push_back(nullptr);
+                continue;
+            }
+
+            if (expr_->op == JITVar::OpType::ADD) {
+                grads.push_back(grad_output);
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::SUB) {
+                if (i == 0) grads.push_back(grad_output);
+                else grads.push_back(Ops::neg(grad_output));
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::NEG) {
+                grads.push_back(Ops::neg(grad_output));
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::RELU && saved_inputs_.size() == 1) {
+                grads.push_back(Ops::relu(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::GELU && saved_inputs_.size() == 1) {
+                grads.push_back(Ops::gelu(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::ABS && saved_inputs_.size() == 1) {
+                grads.push_back(Ops::abs(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                continue;
+            }
+            if (expr_->op == JITVar::OpType::MUL && saved_inputs_.size() == 2) {
+                size_t other_idx = (i == 0) ? 1 : 0;
+                grads.push_back(Ops::mul(saved_inputs_[other_idx], grad_output));
                 continue;
             }
 
@@ -214,6 +243,7 @@ public:
                 }
             }
 
+            auto grad_var = std::make_shared<JITVar>(JITVar::OpType::INPUT, "__grad_output__");
             auto bwd_expr = deriv_expr * grad_var;
             std::vector<std::shared_ptr<JITVar>> bwd_inputs = input_vars_;
             bwd_inputs.push_back(grad_var);
@@ -313,11 +343,29 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
 
     std::shared_ptr<Tensor> out = nullptr;
     if (args[0]->device.type == DeviceType::GPU) {
-        std::unordered_map<std::string, std::shared_ptr<Tensor>> env;
-        for (size_t i = 0; i < args.size(); ++i) {
-            env[inputs_[i]->name] = args[i];
+        if (expr_->op == JITVar::OpType::ADD && args.size() == 2) {
+            out = Ops::add(args[0], args[1]);
+        } else if (expr_->op == JITVar::OpType::SUB && args.size() == 2) {
+            out = Ops::sub(args[0], args[1]);
+        } else if (expr_->op == JITVar::OpType::MUL && args.size() == 2) {
+            out = Ops::mul(args[0], args[1]);
+        } else if (expr_->op == JITVar::OpType::DIV && args.size() == 2) {
+            out = Ops::div(args[0], args[1]);
+        } else if (expr_->op == JITVar::OpType::RELU && args.size() == 1) {
+            out = Ops::relu(args[0]);
+        } else if (expr_->op == JITVar::OpType::GELU && args.size() == 1) {
+            out = Ops::gelu(args[0]);
+        } else if (expr_->op == JITVar::OpType::NEG && args.size() == 1) {
+            out = Ops::neg(args[0]);
+        } else if (expr_->op == JITVar::OpType::ABS && args.size() == 1) {
+            out = Ops::abs(args[0]);
+        } else {
+            std::unordered_map<std::string, std::shared_ptr<Tensor>> env;
+            for (size_t i = 0; i < args.size(); ++i) {
+                env[inputs_[i]->name] = args[i];
+            }
+            out = evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
         }
-        out = evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
     } else {
         int size = args[0]->numel();
         out = Tensor::create(args[0]->shape, args[0]->device);
