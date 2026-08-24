@@ -25,6 +25,15 @@ bool init_tpu_runtime() {
 
     std::vector<std::string> search_paths = {
         "libtpu.so",
+        "/usr/local/lib/python3.10/dist-packages/libtpu/libtpu.so",
+        "/usr/local/lib/python3.11/dist-packages/libtpu/libtpu.so",
+        "/usr/local/lib/python3.12/dist-packages/libtpu/libtpu.so",
+        "/usr/local/lib/python3.10/site-packages/libtpu/libtpu.so",
+        "/usr/local/lib/python3.11/site-packages/libtpu/libtpu.so",
+        "/usr/local/lib/python3.12/site-packages/libtpu/libtpu.so",
+        "/opt/conda/lib/python3.10/site-packages/libtpu/libtpu.so",
+        "/opt/conda/lib/python3.11/site-packages/libtpu/libtpu.so",
+        "/opt/conda/lib/python3.12/site-packages/libtpu/libtpu.so",
         "/usr/lib/libtpu.so",
         "/usr/local/lib/libtpu.so",
         "/lib/libtpu.so",
