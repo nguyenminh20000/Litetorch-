@@ -43,6 +43,10 @@ LiteTorch tích hợp toàn bộ sức mạnh huấn luyện cốt lõi của **
 - **Mixed Precision (AMP) & Lượng Tử Hóa**: Tự động huấn luyện FP16/BF16/FP8/FP4 chống tràn số qua `GradScaler` và chế độ TF32.
 - **CUDA Graph Capture**: Ghi luồng tính toán GPU để loại bỏ độ trễ phát lệnh từ CPU.
 
+### 5. Động Cơ JIT Kernel Fusion & Autograd Tích Hợp
+- **Hỗ trợ Autograd toàn diện cho JIT**: Tự động sinh đạo hàm giải tích (`Tracer::derivative`) và lan truyền gradient ngược qua `JITNode` trong cả quá trình Train và Inference.
+- **Hợp nhất đa toán tử (Multi-Op Fusion)**: Cung cấp sẵn các nhân gộp bộ nhớ (`lt.jit.fused_bias_relu`, `lt.jit.fused_bias_gelu`, `lt.jit.fused_residual_add`, `lt.jit.fused_residual_gelu`) giúp tối ưu triệt để băng thông VRAM.
+
 ---
 
 ## Hướng Dẫn Cài Đặt Chi Tiết

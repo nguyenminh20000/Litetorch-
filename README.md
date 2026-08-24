@@ -43,6 +43,10 @@ LiteTorch delivers the core training capabilities of **PyTorch + Megatron-LM + D
 - **Mixed Precision (AMP) & Quantization**: Automatic FP16/BF16/FP8/FP4 training with dynamic loss scaling via `GradScaler` and TF32 execution.
 - **CUDA Graph Capture**: Stream recording to eliminate host-device launch latency.
 
+### 5. JIT Kernel Fusion & Autograd Engine
+- **Full JIT Autograd Support**: Automatic symbolic differentiation (`Tracer::derivative`) and gradient backpropagation through `JITNode` across training and inference.
+- **Multi-Operator Fusion**: Fused elementwise, activation, and normalization kernels (`lt.jit.fused_bias_relu`, `lt.jit.fused_bias_gelu`, `lt.jit.fused_residual_add`, `lt.jit.fused_residual_gelu`) eliminating intermediate VRAM allocations.
+
 ---
 
 ## Installation & Setup Guide
