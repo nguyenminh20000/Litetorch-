@@ -51,10 +51,9 @@ bool init_tpu_runtime() {
     }
 
     const char* tpu_name = getenv("TPU_NAME");
-    const char* colab_tpu = getenv("COLAB_TPU_ADDR");
     const char* tpu_accelerator = getenv("TPU_ACCELERATOR_TYPE");
 
-    if (g_driver_state.handle || tpu_name || colab_tpu || tpu_accelerator) {
+    if (g_driver_state.handle) {
         g_driver_state.is_available = true;
         g_driver_state.num_devices = 8;
         if (tpu_accelerator) {
@@ -62,7 +61,7 @@ bool init_tpu_runtime() {
         } else if (tpu_name) {
             g_driver_state.device_name = std::string("Google TPU (") + tpu_name + ")";
         } else {
-            g_driver_state.device_name = "Google TPU (Systolic Array MXU Engine)";
+            g_driver_state.device_name = "Google TPU (libtpu.so / PJRT Engine)";
         }
         return true;
     }

@@ -3,10 +3,7 @@ import sys
 import glob
 import time
 import random
-import queue
-import threading
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 try:
     from PIL import Image
 except ImportError:
@@ -46,15 +43,12 @@ CHANNELS = 3
 PATCH_SIZE = 4
 NUM_PATCHES = (IMAGE_SIZE // PATCH_SIZE) * (IMAGE_SIZE // PATCH_SIZE)
 PATCH_DIM = PATCH_SIZE * PATCH_SIZE * CHANNELS
-EMBED_DIM = 192
-NUM_HEADS = 6
-NUM_LAYERS = 4
+EMBED_DIM = 128
+NUM_HEADS = 4
 NUM_CLASSES = 2
-BATCH_SIZE = 64
-EPOCHS = 20
+BATCH_SIZE = 32
+EPOCHS = 25
 LEARNING_RATE = 0.0003
-NUM_WORKERS = 4
-PREFETCH_BATCHES = 4
 
 def get_ram_usage_mb():
     try:
@@ -136,14 +130,15 @@ class TransformerBlock(lt.nn.Module):
         self.ln2.to(device)
 
 class VisionTransformerClassifier(lt.nn.Module):
-    def __init__(self, num_patches, patch_dim, embed_dim=EMBED_DIM, num_heads=NUM_HEADS, num_classes=NUM_CLASSES, num_layers=NUM_LAYERS):
+    def __init__(self, num_patches, patch_dim, embed_dim, num_heads, num_classes):
         super().__init__()
         self.training = True
         self.num_patches = num_patches
         self.embed_dim = embed_dim
         self.patch_proj = lt.nn.Linear(patch_dim, embed_dim, True)
         self.pos_proj = lt.nn.Linear(embed_dim, embed_dim, True)
-        self.blocks = [TransformerBlock(embed_dim, num_heads, embed_dim * 2) for _ in range(num_layers)]
+        self.block1 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
+        self.block2 = TransformerBlock(embed_dim, num_heads, embed_dim * 2)
         self.ln_f = lt.nn.LayerNorm([embed_dim])
         self.head = lt.nn.Linear(num_patches * embed_dim, num_classes, True)
 
@@ -156,8 +151,8 @@ class VisionTransformerClassifier(lt.nn.Module):
         h = self.patch_proj.forward(x)
         pos = self.pos_proj.forward(h)
         h = self.jit_pos_add([h, pos])
-        for block in self.blocks:
-            h = block.forward(h)
+        h = self.block1.forward(h)
+        h = self.block2.forward(h)
         h = self.ln_f.forward(h)
         h_flat = h.reshape([b, self.num_patches * self.embed_dim]) if hasattr(h, "reshape") else (h.contiguous().view([b, self.num_patches * self.embed_dim]) if not h.is_contiguous() else h.view([b, self.num_patches * self.embed_dim]))
         out = self.head.forward(h_flat)
@@ -165,25 +160,21 @@ class VisionTransformerClassifier(lt.nn.Module):
 
     def train(self, mode=True):
         self.training = mode
-        for block in self.blocks:
-            block.train(mode)
+        self.block1.train(mode)
+        self.block2.train(mode)
         return self
 
     def eval(self):
         return self.train(False)
 
     def parameters(self):
-        params = self.patch_proj.parameters() + self.pos_proj.parameters()
-        for block in self.blocks:
-            params += block.parameters()
-        params += self.ln_f.parameters() + self.head.parameters()
-        return params
+        return self.patch_proj.parameters() + self.pos_proj.parameters() + self.block1.parameters() + self.block2.parameters() + self.ln_f.parameters() + self.head.parameters()
 
     def to(self, device):
         self.patch_proj.to(device)
         self.pos_proj.to(device)
-        for block in self.blocks:
-            block.to(device)
+        self.block1.to(device)
+        self.block2.to(device)
         self.ln_f.to(device)
         self.head.to(device)
 
@@ -208,74 +199,33 @@ def load_and_preprocess_image(img_path, size=IMAGE_SIZE, patch_size=PATCH_SIZE, 
     except Exception:
         return None
 
-def process_single_task(args):
-    img_path, label, size, patch_size, augment = args
-    feat = load_and_preprocess_image(img_path, size, patch_size, augment)
-    return (feat, label) if feat is not None else None
-
-class StreamingDataLoader:
-    def __init__(self, samples, batch_size, num_patches, patch_dim, device, shuffle=True, augment=True, num_workers=NUM_WORKERS, prefetch_batches=PREFETCH_BATCHES):
-        self.samples = list(samples)
-        self.batch_size = batch_size
-        self.num_patches = num_patches
-        self.patch_dim = patch_dim
-        self.device = device
-        self.shuffle = shuffle
-        self.augment = augment
-        self.num_workers = num_workers
-        self.prefetch_batches = prefetch_batches
-        self.total_samples = len(self.samples)
-        self.total_batches = (self.total_samples + batch_size - 1) // batch_size
-
-    def __len__(self):
-        return self.total_batches
-
-    def __iter__(self):
-        if self.shuffle:
-            random.shuffle(self.samples)
-
-        batch_queue = queue.Queue(maxsize=self.prefetch_batches)
-        stop_token = object()
-
-        def producer():
-            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-                for i in range(0, self.total_samples, self.batch_size):
-                    batch_samples = self.samples[i:i + self.batch_size]
-                    tasks = [(p, lbl, IMAGE_SIZE, PATCH_SIZE, self.augment) for p, lbl in batch_samples]
-                    results = list(executor.map(process_single_task, tasks))
-                    valid_items = [r for r in results if r is not None]
-                    if not valid_items:
-                        continue
-                    actual_b = len(valid_items)
-                    batch_x = [v for item in valid_items for v in item[0]]
-                    batch_y = [float(item[1]) for item in valid_items]
-                    x_tensor = lt.Tensor.from_vector(batch_x, [actual_b, self.num_patches, self.patch_dim], self.device, False)
-                    y_tensor = lt.Tensor.from_vector(batch_y, [actual_b], self.device, False)
-                    batch_queue.put((x_tensor, y_tensor, actual_b))
-            batch_queue.put(stop_token)
-
-        producer_thread = threading.Thread(target=producer, daemon=True)
-        producer_thread.start()
-
-        while True:
-            item = batch_queue.get()
-            if item is stop_token:
-                break
-            yield item
-
 def load_dataset():
     samples = []
     cat_files = glob.glob(os.path.join(CAT_DIR, "*.*"))
     for p in cat_files:
-        if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        if p.lower().endswith((".jpg", ".jpeg", ".png")):
             samples.append((p, 0))
     dog_files = glob.glob(os.path.join(DOG_DIR, "*.*"))
     for p in dog_files:
-        if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        if p.lower().endswith((".jpg", ".jpeg", ".png")):
             samples.append((p, 1))
     random.seed(42)
     random.shuffle(samples)
     return samples
+
+def build_gpu_batches(dataset_list, batch_size, num_patches, patch_dim, device):
+    batches = []
+    for i in range(0, len(dataset_list), batch_size):
+        batch = dataset_list[i:i + batch_size]
+        actual_batch_size = len(batch)
+        if actual_batch_size == 0:
+            continue
+        batch_x = [v for item in batch for v in item[0]]
+        batch_y = [item[1] for item in batch]
+        x_tensor = lt.Tensor.from_vector(batch_x, [actual_batch_size, num_patches, patch_dim], device, False)
+        y_tensor = lt.Tensor.from_vector(batch_y, [actual_batch_size], device, False)
+        batches.append((x_tensor, y_tensor, actual_batch_size))
+    return batches
 
 def main():
     if not os.path.exists(CAT_DIR) or not os.path.exists(DOG_DIR):
@@ -284,41 +234,53 @@ def main():
 
     samples = load_dataset()
     print("================================================================================")
-    print("                 LITETORCH HIGH-SCALE STREAMING DEEP LEARNING")
+    print("                 LITETORCH DEEP LEARNING SYSTEM MONITOR")
     print("================================================================================")
     print(f"Total dataset images found: {len(samples)}")
     if len(samples) == 0:
         print("No images found in dataset/data/Cat or dataset/data/Dog.")
         return
 
-    val_split = int(len(samples) * 0.8)
-    train_samples = samples[:val_split]
-    val_samples = samples[val_split:]
-    print(f"Train samples: {len(train_samples)}, Validation samples: {len(val_samples)}")
+    print("Pre-caching dataset images into system RAM...")
+    t_cache_start = time.perf_counter()
+    cached_dataset = []
+    for path, label in samples:
+        feat = load_and_preprocess_image(path, augment=True)
+        if feat is not None:
+            cached_dataset.append((feat, float(label)))
+    t_cache_end = time.perf_counter()
+    print(f"Pre-cached {len(cached_dataset)} images into RAM in {t_cache_end - t_cache_start:.2f}s | RAM: {get_ram_usage_mb():.1f} MB")
+
+    val_split = int(len(cached_dataset) * 0.8)
+    train_data = cached_dataset[:val_split]
+    val_data = cached_dataset[val_split:]
+    print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     device = lt.auto_device()
     backend_name = lt.get_backend_name() if hasattr(lt, "get_backend_name") else ("CUDA (Native)" if (hasattr(lt, "cuda") and lt.cuda.is_available()) else ("OpenCL" if lt.is_gpu_available() else "CPU"))
-    jit_status = "Enabled (Kernel Fusion & JIT Autograd)" if (hasattr(lt, "jit") and hasattr(lt.jit, "JITFunction")) else "Disabled"
+    jit_status = "Enabled (Kernel Fusion)" if (hasattr(lt, "jit") and hasattr(lt.jit, "JITFunction")) else "Disabled"
     print(f"Active Compute Device: {device} | Backend Driver: {backend_name} | JIT Engine: {jit_status}")
     
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:
         print(f"GPU Hardware: NVIDIA GPU | Initial VRAM: {vram_used:.1f} MB / {vram_total:.1f} MB")
     print(f"Host System RAM: {get_ram_usage_mb():.1f} MB")
-    print(f"Model Configuration: ViT-{NUM_LAYERS}L | Embed Dim: {EMBED_DIM} | Heads: {NUM_HEADS} | Batch Size: {BATCH_SIZE}")
-    print("Data Pipeline: Streaming Multi-Threaded Prefetching (Constant RAM & VRAM Footprint)")
+
+    print(f"Pre-loading entire dataset into GPU VRAM (Num Patches: {NUM_PATCHES}, Embed Dim: {EMBED_DIM})...")
+    train_gpu_batches = build_gpu_batches(train_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
+    val_gpu_batches = build_gpu_batches(val_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
+    gpu_util, vram_used_after, _ = get_gpu_metrics()
+    if vram_used_after is not None and vram_used is not None:
+        print(f"Dataset VRAM Footprint: {vram_used_after - vram_used:.2f} MB | Current VRAM: {vram_used_after:.1f} MB")
     print("================================================================================\n")
 
-    train_loader = StreamingDataLoader(train_samples, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device, shuffle=True, augment=True)
-    val_loader = StreamingDataLoader(val_samples, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device, shuffle=False, augment=False)
-
     random.seed(42)
-    model = VisionTransformerClassifier(NUM_PATCHES, PATCH_DIM, EMBED_DIM, NUM_HEADS, NUM_CLASSES, NUM_LAYERS)
+    model = VisionTransformerClassifier(NUM_PATCHES, PATCH_DIM, EMBED_DIM, NUM_HEADS, NUM_CLASSES)
     model.to(device)
     optimizer = lt.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
 
-    total_train_batches = len(train_loader)
-    print("Beginning Scaled Model Training Pipeline:")
+    total_train_batches = len(train_gpu_batches)
+    print("Beginning Model Training Pipeline:")
     total_training_start = time.perf_counter()
     best_val_acc = 0.0
     best_epoch = 0
@@ -328,12 +290,13 @@ def main():
         epoch_cpu_start = time.process_time()
 
         model.train()
+        random.shuffle(train_gpu_batches)
         total_loss = 0.0
-        total_samples_processed = 0
+        correct = 0
+        total = 0
         epoch_gpu_compute_time = 0.0
-        last_loss = 0.0
 
-        for batch_idx, (x_tensor, y_tensor, actual_batch_size) in enumerate(train_loader, start=1):
+        for batch_idx, (x_tensor, y_tensor, actual_batch_size) in enumerate(train_gpu_batches, start=1):
             t_gpu_start = time.perf_counter()
             optimizer.zero_grad()
             logits = model.forward(x_tensor)
@@ -344,9 +307,7 @@ def main():
 
             gpu_step_time = (t_gpu_end - t_gpu_start)
             epoch_gpu_compute_time += gpu_step_time
-            total_samples_processed += actual_batch_size
-            last_loss = loss.item()
-            total_loss += last_loss * actual_batch_size
+            total += actual_batch_size
 
             ram_mb = get_ram_usage_mb()
             g_util, v_used, v_tot = get_gpu_metrics()
@@ -358,20 +319,19 @@ def main():
             filled_len = int(bar_len * batch_idx // total_train_batches)
             bar = "=" * filled_len + ">" + "." * (bar_len - filled_len - 1) if filled_len < bar_len else "=" * bar_len
 
-            throughput = total_samples_processed / (time.perf_counter() - epoch_start_time + 1e-6)
             sys.stdout.write(
                 f"\rEpoch [{epoch:2d}/{EPOCHS}] [{bar}] {batch_idx}/{total_train_batches} | "
-                f"{throughput:5.1f} img/s | GPU: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
+                f"GPU Time: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
             )
             sys.stdout.flush()
 
-        avg_loss = (total_loss / total_samples_processed) if total_samples_processed > 0 else last_loss
+        avg_loss = loss.item()
 
         model.eval()
         val_correct = 0
         val_total = 0
 
-        for x_tensor, y_tensor, actual_batch_size in val_loader:
+        for x_tensor, y_tensor, actual_batch_size in val_gpu_batches:
             logits = model.forward(x_tensor)
             logits_vec = logits.to_vector()
             y_vec = y_tensor.to_vector()
@@ -392,6 +352,8 @@ def main():
 
         if hasattr(lt, "empty_cache"):
             lt.empty_cache()
+        import gc
+        gc.collect()
 
         epoch_end_time = time.perf_counter()
         epoch_cpu_end = time.process_time()

@@ -136,29 +136,22 @@ PYBIND11_MODULE(litetorch, m) {
     m.def("is_tpu_available", &litetorch::tpu::is_available);
 
     m.def("auto_device", []() {
-        if (litetorch::tpu::is_available()) {
-            return Device(DeviceType::TPU, 0);
-        }
-        if (std::getenv("LITETORCH_NO_NATIVE_GPU")) {
-            if (litetorch::CLBackend::get().is_available()) {
+        if (!std::getenv("LITETORCH_NO_NATIVE_GPU")) {
+            auto backend = litetorch::BackendDispatcher::get().get_backend();
+            if (backend && backend->is_available()) {
                 return Device(DeviceType::GPU, 0);
             }
-            return Device(DeviceType::CPU, 0);
-        }
-        auto backend = litetorch::BackendDispatcher::get().get_backend();
-        if (backend && backend->is_available()) {
-            return Device(DeviceType::GPU, 0);
         }
         if (litetorch::CLBackend::get().is_available()) {
             return Device(DeviceType::GPU, 0);
+        }
+        if (litetorch::tpu::is_available()) {
+            return Device(DeviceType::TPU, 0);
         }
         return Device(DeviceType::CPU, 0);
     });
 
     m.def("get_backend_name", []() -> std::string {
-        if (litetorch::tpu::is_available()) {
-            return "TPU (Google Systolic Array)";
-        }
         if (!std::getenv("LITETORCH_NO_NATIVE_GPU")) {
             auto backend = litetorch::BackendDispatcher::get().get_backend();
             if (backend && backend->is_available()) {
@@ -171,6 +164,9 @@ PYBIND11_MODULE(litetorch, m) {
         }
         if (litetorch::CLBackend::get().is_available()) {
             return "OpenCL";
+        }
+        if (litetorch::tpu::is_available()) {
+            return "TPU (Google PJRT / libtpu)";
         }
         return "CPU";
     });
