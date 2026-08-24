@@ -156,7 +156,7 @@ class VisionTransformerClassifier(lt.nn.Module):
         
         h_t = h.transpose(1, 2)
         h_pool = self.pool.forward(h_t)
-        h_flat = h_pool.contiguous().view([b, self.embed_dim]) if not h_pool.is_contiguous() else h_pool.view([b, self.embed_dim])
+        h_flat = h_pool.contiguous().view([b, self.embed_dim])
         out = self.head.forward(h_flat)
         return out
 

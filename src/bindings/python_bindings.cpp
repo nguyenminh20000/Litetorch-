@@ -238,6 +238,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("reshape", &Tensor::reshape)
         .def("transpose", &Tensor::transpose)
         .def("contiguous", &Tensor::contiguous)
+        .def("is_contiguous", &Tensor::is_contiguous)
         .def("clone", &Tensor::clone)
         .def("cast", &Tensor::cast, py::arg("target_dtype"))
         .def("copy_", &Tensor::copy_)
