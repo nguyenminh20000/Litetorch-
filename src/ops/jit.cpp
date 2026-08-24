@@ -204,17 +204,42 @@ public:
             }
 
             auto deriv_expr = Tracer::derivative(expr_, input_vars_[i]);
-            auto bwd_expr = deriv_expr * grad_var;
+            if (deriv_expr->op == JITVar::OpType::CONST) {
+                if (deriv_expr->val == 1.0f) {
+                    grads.push_back(grad_output);
+                    continue;
+                } else if (deriv_expr->val == 0.0f) {
+                    grads.push_back(nullptr);
+                    continue;
+                }
+            }
 
+            auto bwd_expr = deriv_expr * grad_var;
             std::vector<std::shared_ptr<JITVar>> bwd_inputs = input_vars_;
             bwd_inputs.push_back(grad_var);
 
             JITFunction bwd_fn("jit_bwd_" + std::to_string(i), bwd_expr, bwd_inputs);
 
-            std::vector<std::shared_ptr<Tensor>> bwd_args = saved_inputs_;
-            bwd_args.push_back(grad_output);
+            std::vector<std::shared_ptr<Tensor>> bwd_args;
+            bwd_args.reserve(saved_inputs_.size() + 1);
+            for (auto& inp : saved_inputs_) {
+                auto detached_inp = Tensor::create(inp->shape, inp->device);
+                detached_inp->storage = inp->storage;
+                detached_inp->offset = inp->offset;
+                detached_inp->strides = inp->strides;
+                detached_inp->requires_grad = false;
+                bwd_args.push_back(detached_inp);
+            }
+            auto detached_gout = Tensor::create(grad_output->shape, grad_output->device);
+            detached_gout->storage = grad_output->storage;
+            detached_gout->offset = grad_output->offset;
+            detached_gout->strides = grad_output->strides;
+            detached_gout->requires_grad = false;
+            bwd_args.push_back(detached_gout);
 
             auto in_grad = bwd_fn(bwd_args);
+            in_grad->creator = nullptr;
+            in_grad->requires_grad = false;
             grads.push_back(in_grad);
         }
         return grads;
