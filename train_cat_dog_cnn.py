@@ -95,34 +95,25 @@ class ConvNetClassifier(lt.nn.Module):
         self.fc1 = lt.nn.Linear(128 * 4 * 4, 128, True)
         self.fc2 = lt.nn.Linear(128, num_classes, True)
 
-        v_x1 = lt.jit.JITVar(lt.jit.OpType.INPUT, "x1")
-        self.jit_relu1 = lt.jit.JITFunction("fused_conv1_relu", lt.jit.relu(v_x1), [v_x1])
-        v_x2 = lt.jit.JITVar(lt.jit.OpType.INPUT, "x2")
-        self.jit_relu2 = lt.jit.JITFunction("fused_conv2_relu", lt.jit.relu(v_x2), [v_x2])
-        v_x3 = lt.jit.JITVar(lt.jit.OpType.INPUT, "x3")
-        self.jit_relu3 = lt.jit.JITFunction("fused_conv3_relu", lt.jit.relu(v_x3), [v_x3])
-        v_xfc = lt.jit.JITVar(lt.jit.OpType.INPUT, "xfc")
-        self.jit_relu_fc = lt.jit.JITFunction("fused_fc_relu", lt.jit.relu(v_xfc), [v_xfc])
-
     def forward(self, x):
         b = x.shape[0]
         h = self.conv1.forward(x)
-        h = self.jit_relu1([h])
+        h = lt.Ops.relu(h)
         h = self.pool1.forward(h)
 
         h = self.conv2.forward(h)
-        h = self.jit_relu2([h])
+        h = lt.Ops.relu(h)
         h = self.pool2.forward(h)
 
         h = self.conv3.forward(h)
-        h = self.jit_relu3([h])
+        h = lt.Ops.relu(h)
         h = self.pool3.forward(h)
         h = self.pool4.forward(h)
 
         h = self.dropout.forward(h)
         h_flat = h.reshape([b, 128 * 4 * 4]) if hasattr(h, "reshape") else (h.contiguous().view([b, 128 * 4 * 4]) if not h.is_contiguous() else h.view([b, 128 * 4 * 4]))
         h_fc = self.fc1.forward(h_flat)
-        h_fc = self.jit_relu_fc([h_fc])
+        h_fc = lt.Ops.relu(h_fc)
         out = self.fc2.forward(h_fc)
         return out
 

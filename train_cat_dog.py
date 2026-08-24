@@ -86,23 +86,16 @@ class TransformerBlock(lt.nn.Module):
         self.fc1 = lt.nn.Linear(embed_dim, mlp_dim, True)
         self.fc2 = lt.nn.Linear(mlp_dim, embed_dim, True)
         self.ln2 = lt.nn.LayerNorm([embed_dim])
-        
-        v_a = lt.jit.JITVar(lt.jit.OpType.INPUT, "a")
-        v_b = lt.jit.JITVar(lt.jit.OpType.INPUT, "b")
-        self.jit_add = lt.jit.JITFunction("fused_residual_add", v_a + v_b, [v_a, v_b])
-
-        v_u = lt.jit.JITVar(lt.jit.OpType.INPUT, "u")
-        self.jit_gelu = lt.jit.JITFunction("fused_gelu", lt.jit.gelu(v_u), [v_u])
 
     def forward(self, x):
         norm1 = self.ln1.forward(x)
         attn_out = self.attn.forward(norm1)
-        x = self.jit_add([x, attn_out])
+        x = lt.Ops.add(x, attn_out)
         norm2 = self.ln2.forward(x)
         mlp_h = self.fc1.forward(norm2)
-        mlp_h = self.jit_gelu([mlp_h])
+        mlp_h = lt.Ops.gelu(mlp_h)
         mlp_out = self.fc2.forward(mlp_h)
-        x = self.jit_add([x, mlp_out])
+        x = lt.Ops.add(x, mlp_out)
         return x
 
     def train(self, mode=True):
@@ -141,15 +134,11 @@ class VisionTransformerClassifier(lt.nn.Module):
         self.ln_f = lt.nn.LayerNorm([embed_dim])
         self.head = lt.nn.Linear(num_patches * embed_dim, num_classes, True)
 
-        v_h = lt.jit.JITVar(lt.jit.OpType.INPUT, "h")
-        v_pos = lt.jit.JITVar(lt.jit.OpType.INPUT, "pos")
-        self.jit_pos_add = lt.jit.JITFunction("fused_pos_add", v_h + v_pos, [v_h, v_pos])
-
     def forward(self, x):
         b = x.shape[0]
         h = self.patch_proj.forward(x)
         pos = self.pos_proj.forward(h)
-        h = self.jit_pos_add([h, pos])
+        h = lt.Ops.add(h, pos)
         h = self.block1.forward(h)
         h = self.block2.forward(h)
         h = self.ln_f.forward(h)
