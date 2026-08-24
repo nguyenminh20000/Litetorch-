@@ -3,35 +3,30 @@ import sys
 import glob
 import time
 import random
-import ctypes
+import queue
+import threading
 import subprocess
-import gc
-
-current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
-if hasattr(os, "add_dll_directory"):
-    for p in [r"C:\mingw64\bin", current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
-        if os.path.isdir(p):
-            try:
-                os.add_dll_directory(p)
-            except Exception:
-                pass
-
-for bdir in [os.path.join(current_dir, "build"), os.path.join(os.getcwd(), "build"), "/content/Litetorch-/Litetorch-/build", "/content/Litetorch-/build"]:
-    for ext in ["liblitetorch.so", "liblitetorch.dll"]:
-        lib_file = os.path.join(bdir, ext)
-        if os.path.exists(lib_file):
-            try:
-                ctypes.CDLL(lib_file, mode=ctypes.RTLD_GLOBAL)
-                break
-            except Exception:
-                pass
-
+from concurrent.futures import ThreadPoolExecutor
 try:
     from PIL import Image
 except ImportError:
     Image = None
 
-import litetorch as lt
+for dll_dir in [r"C:\mingw64\bin", os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()]:
+    if os.path.isdir(dll_dir) and hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(dll_dir)
+        except Exception:
+            pass
+
+try:
+    import litetorch as lt
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
+    for search_path in [current_dir, os.path.join(current_dir, "build"), os.getcwd(), os.path.join(os.getcwd(), "build")]:
+        if search_path not in sys.path and os.path.isdir(search_path):
+            sys.path.insert(0, search_path)
+    import litetorch as lt
 
 def find_dataset_dir():
     for c in ["/content/dataset/data", "../dataset/data", "dataset/data", "dataset", "/content/dataset"]:
@@ -49,9 +44,11 @@ MODEL_SAVE_PATH = "cat_dog_cnn_model.lt"
 IMAGE_SIZE = 64
 CHANNELS = 3
 NUM_CLASSES = 2
-BATCH_SIZE = 32
-EPOCHS = 25
+BATCH_SIZE = 64
+EPOCHS = 20
 LEARNING_RATE = 0.0005
+NUM_WORKERS = 4
+PREFETCH_BATCHES = 4
 
 def get_ram_usage_mb():
     try:
@@ -81,7 +78,7 @@ def get_gpu_metrics():
     return None, None, None
 
 class ConvNetClassifier(lt.nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes=NUM_CLASSES):
         super().__init__()
         self.training = True
         self.conv1 = lt.nn.Conv2d(3, 32, 3, 1, 1, True)
@@ -156,136 +153,138 @@ class ConvNetClassifier(lt.nn.Module):
         self.fc2.to(device)
 
 def load_and_preprocess_image(img_path, size=IMAGE_SIZE, augment=False):
-    if Image is None:
-        return None
     try:
         with Image.open(img_path) as img:
             if img.mode in ("P", "RGBA", "LA"):
                 img = img.convert("RGBA").convert("RGB")
-            elif img.mode != "RGB":
+            else:
                 img = img.convert("RGB")
-            
-            if augment:
-                if random.random() > 0.5:
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if random.random() > 0.6:
-                    angle = random.uniform(-15.0, 15.0)
-                    img = img.rotate(angle, resample=Image.BILINEAR)
-
-            img = img.resize((size, size), Image.BILINEAR)
-            raw_bytes = img.tobytes()
-            
-            total_px = size * size
-            ch_r = [0.0] * total_px
-            ch_g = [0.0] * total_px
-            ch_b = [0.0] * total_px
-
-            mean = (0.485, 0.456, 0.406)
-            std = (0.229, 0.224, 0.225)
-
-            inv_255 = 1.0 / 255.0
-            inv_std_r = 1.0 / std[0]
-            inv_std_g = 1.0 / std[1]
-            inv_std_b = 1.0 / std[2]
-
-            for i in range(total_px):
-                base_idx = i * 3
-                r = raw_bytes[base_idx] * inv_255
-                g = raw_bytes[base_idx + 1] * inv_255
-                b = raw_bytes[base_idx + 2] * inv_255
-
-                ch_r[i] = (r - mean[0]) * inv_std_r
-                ch_g[i] = (g - mean[1]) * inv_std_g
-                ch_b[i] = (b - mean[2]) * inv_std_b
-
-            return ch_r + ch_g + ch_b
+            if augment and random.random() > 0.5:
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            img = img.resize((size, size))
+            w, h = img.size
+            r_c, g_c, b_c = [], [], []
+            for y in range(h):
+                for x in range(w):
+                    r, g, b = img.getpixel((x, y))
+                    r_c.append((r / 255.0 - 0.5) * 2.0)
+                    g_c.append((g / 255.0 - 0.5) * 2.0)
+                    b_c.append((b / 255.0 - 0.5) * 2.0)
+            return r_c + g_c + b_c
     except Exception:
         return None
 
-def build_gpu_batches(dataset_pairs, batch_size, channels, height, width, device):
-    batches = []
-    num_samples = len(dataset_pairs)
-    sample_len = channels * height * width
+def process_single_task(args):
+    img_path, label, size, augment = args
+    feat = load_and_preprocess_image(img_path, size, augment)
+    return (feat, label) if feat is not None else None
 
-    for start_idx in range(0, num_samples, batch_size):
-        chunk = dataset_pairs[start_idx : start_idx + batch_size]
-        actual_bs = len(chunk)
-        
-        flat_x = []
-        flat_y = []
-        for feat, label in chunk:
-            flat_x.extend(feat)
-            flat_y.append(label)
+class StreamingDataLoader:
+    def __init__(self, samples, batch_size, channels, size, device, shuffle=True, augment=True, num_workers=NUM_WORKERS, prefetch_batches=PREFETCH_BATCHES):
+        self.samples = list(samples)
+        self.batch_size = batch_size
+        self.channels = channels
+        self.size = size
+        self.device = device
+        self.shuffle = shuffle
+        self.augment = augment
+        self.num_workers = num_workers
+        self.prefetch_batches = prefetch_batches
+        self.total_samples = len(self.samples)
+        self.total_batches = (self.total_samples + batch_size - 1) // batch_size
 
-        if actual_bs < batch_size:
-            pad_count = batch_size - actual_bs
-            for _ in range(pad_count):
-                flat_x.extend([0.0] * sample_len)
-                flat_y.append(0.0)
+    def __len__(self):
+        return self.total_batches
 
-        x_tensor = lt.Tensor.from_vector(flat_x, [batch_size, channels, height, width], device, False)
-        y_tensor = lt.Tensor.from_vector(flat_y, [batch_size], device, False)
-        batches.append((x_tensor, y_tensor, actual_bs))
+    def __iter__(self):
+        if self.shuffle:
+            random.shuffle(self.samples)
 
-    return batches
+        batch_queue = queue.Queue(maxsize=self.prefetch_batches)
+        stop_token = object()
+
+        def producer():
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                for i in range(0, self.total_samples, self.batch_size):
+                    batch_samples = self.samples[i:i + self.batch_size]
+                    tasks = [(p, lbl, self.size, self.augment) for p, lbl in batch_samples]
+                    results = list(executor.map(process_single_task, tasks))
+                    valid_items = [r for r in results if r is not None]
+                    if not valid_items:
+                        continue
+                    actual_b = len(valid_items)
+                    batch_x = [v for item in valid_items for v in item[0]]
+                    batch_y = [float(item[1]) for item in valid_items]
+                    x_tensor = lt.Tensor.from_vector(batch_x, [actual_b, self.channels, self.size, self.size], self.device, False)
+                    y_tensor = lt.Tensor.from_vector(batch_y, [actual_b], self.device, False)
+                    batch_queue.put((x_tensor, y_tensor, actual_b))
+            batch_queue.put(stop_token)
+
+        producer_thread = threading.Thread(target=producer, daemon=True)
+        producer_thread.start()
+
+        while True:
+            item = batch_queue.get()
+            if item is stop_token:
+                break
+            yield item
+
+def load_dataset():
+    samples = []
+    cat_files = glob.glob(os.path.join(CAT_DIR, "*.*"))
+    for p in cat_files:
+        if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            samples.append((p, 0))
+    dog_files = glob.glob(os.path.join(DOG_DIR, "*.*"))
+    for p in dog_files:
+        if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            samples.append((p, 1))
+    random.seed(42)
+    random.shuffle(samples)
+    return samples
 
 def main():
-    print("=" * 80)
-    print("                 LITETORCH CONVNET SYSTEM MONITOR")
-    print("=" * 80)
-
-    cat_files = glob.glob(os.path.join(CAT_DIR, "*.jpg")) + glob.glob(os.path.join(CAT_DIR, "*.png"))
-    dog_files = glob.glob(os.path.join(DOG_DIR, "*.jpg")) + glob.glob(os.path.join(DOG_DIR, "*.png"))
-
-    all_samples = [(f, 0) for f in cat_files] + [(f, 1) for f in dog_files]
-    if not all_samples:
-        print(f"Error: No images found in '{CAT_DIR}' or '{DOG_DIR}'")
+    if not os.path.exists(CAT_DIR) or not os.path.exists(DOG_DIR):
+        print(f"Error: Folders '{CAT_DIR}' or '{DOG_DIR}' not found.")
         return
 
-    random.seed(42)
-    random.shuffle(all_samples)
-    print(f"Total dataset images found: {len(all_samples)}")
+    samples = load_dataset()
+    print("================================================================================")
+    print("           LITETORCH HIGH-SCALE STREAMING CNN DEEP LEARNING")
+    print("================================================================================")
+    print(f"Total dataset images found: {len(samples)}")
+    if len(samples) == 0:
+        print("No images found in dataset/data/Cat or dataset/data/Dog.")
+        return
 
-    print("Pre-caching dataset images into system RAM...")
-    t_cache_start = time.perf_counter()
-    cached_dataset = []
-    for path, label in all_samples:
-        feat = load_and_preprocess_image(path, augment=True)
-        if feat is not None:
-            cached_dataset.append((feat, float(label)))
-    t_cache_end = time.perf_counter()
-    print(f"Pre-cached {len(cached_dataset)} images into RAM in {t_cache_end - t_cache_start:.2f}s | RAM: {get_ram_usage_mb():.1f} MB")
-
-    val_split = int(len(cached_dataset) * 0.8)
-    train_data = cached_dataset[:val_split]
-    val_data = cached_dataset[val_split:]
-    print(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
+    val_split = int(len(samples) * 0.8)
+    train_samples = samples[:val_split]
+    val_samples = samples[val_split:]
+    print(f"Train samples: {len(train_samples)}, Validation samples: {len(val_samples)}")
 
     device = lt.auto_device()
     backend_name = lt.get_backend_name() if hasattr(lt, "get_backend_name") else ("CUDA (Native)" if (hasattr(lt, "cuda") and lt.cuda.is_available()) else ("OpenCL" if lt.is_gpu_available() else "CPU"))
-    jit_status = "Enabled (Runtime Kernel Fusion)" if hasattr(lt, "jit") else "Disabled"
+    jit_status = "Enabled (Kernel Fusion & JIT Autograd)" if (hasattr(lt, "jit") and hasattr(lt.jit, "JITFunction")) else "Disabled"
     print(f"Active Compute Device: {device} | Backend Driver: {backend_name} | JIT Engine: {jit_status}")
-
+    
     gpu_util, vram_used, vram_total = get_gpu_metrics()
     if vram_total is not None:
         print(f"GPU Hardware: NVIDIA GPU | Initial VRAM: {vram_used:.1f} MB / {vram_total:.1f} MB")
     print(f"Host System RAM: {get_ram_usage_mb():.1f} MB")
-
-    print(f"Pre-loading entire dataset into GPU VRAM (NCHW: [3, {IMAGE_SIZE}, {IMAGE_SIZE}])...")
-    train_gpu_batches = build_gpu_batches(train_data, BATCH_SIZE, CHANNELS, IMAGE_SIZE, IMAGE_SIZE, device)
-    val_gpu_batches = build_gpu_batches(val_data, BATCH_SIZE, CHANNELS, IMAGE_SIZE, IMAGE_SIZE, device)
-    gpu_util, vram_used_after, _ = get_gpu_metrics()
-    if vram_used_after is not None and vram_used is not None:
-        print(f"Dataset VRAM Footprint: {vram_used_after - vram_used:.2f} MB | Current VRAM: {vram_used_after:.1f} MB")
+    print(f"Model Configuration: Scaled ConvNet-3L | Batch Size: {BATCH_SIZE}")
+    print("Data Pipeline: Streaming Multi-Threaded Prefetching (Constant RAM & VRAM Footprint)")
     print("================================================================================\n")
+
+    train_loader = StreamingDataLoader(train_samples, BATCH_SIZE, CHANNELS, IMAGE_SIZE, device, shuffle=True, augment=True)
+    val_loader = StreamingDataLoader(val_samples, BATCH_SIZE, CHANNELS, IMAGE_SIZE, device, shuffle=False, augment=False)
 
     random.seed(42)
     model = ConvNetClassifier(NUM_CLASSES)
     model.to(device)
     optimizer = lt.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
 
-    total_train_batches = len(train_gpu_batches)
-    print("Beginning ConvNet Model Training Pipeline:")
+    total_train_batches = len(train_loader)
+    print("Beginning Scaled CNN Training Pipeline:")
     total_training_start = time.perf_counter()
     best_val_acc = 0.0
     best_epoch = 0
@@ -295,12 +294,12 @@ def main():
         epoch_cpu_start = time.process_time()
 
         model.train()
-        random.shuffle(train_gpu_batches)
-        correct = 0
-        total = 0
+        total_loss = 0.0
+        total_samples_processed = 0
         epoch_gpu_compute_time = 0.0
+        last_loss = 0.0
 
-        for batch_idx, (x_tensor, y_tensor, actual_batch_size) in enumerate(train_gpu_batches, start=1):
+        for batch_idx, (x_tensor, y_tensor, actual_batch_size) in enumerate(train_loader, start=1):
             t_gpu_start = time.perf_counter()
             optimizer.zero_grad()
             logits = model.forward(x_tensor)
@@ -311,7 +310,9 @@ def main():
 
             gpu_step_time = (t_gpu_end - t_gpu_start)
             epoch_gpu_compute_time += gpu_step_time
-            total += actual_batch_size
+            total_samples_processed += actual_batch_size
+            last_loss = loss.item()
+            total_loss += last_loss * actual_batch_size
 
             ram_mb = get_ram_usage_mb()
             g_util, v_used, v_tot = get_gpu_metrics()
@@ -323,19 +324,20 @@ def main():
             filled_len = int(bar_len * batch_idx // total_train_batches)
             bar = "=" * filled_len + ">" + "." * (bar_len - filled_len - 1) if filled_len < bar_len else "=" * bar_len
 
+            throughput = total_samples_processed / (time.perf_counter() - epoch_start_time + 1e-6)
             sys.stdout.write(
                 f"\rEpoch [{epoch:2d}/{EPOCHS}] [{bar}] {batch_idx}/{total_train_batches} | "
-                f"GPU Time: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
+                f"{throughput:5.1f} img/s | GPU: {gpu_step_time*1000.0:4.1f}ms | RAM: {ram_mb:.0f}MB | {vram_str} {gpu_str}"
             )
             sys.stdout.flush()
 
-        avg_loss = loss.item()
+        avg_loss = (total_loss / total_samples_processed) if total_samples_processed > 0 else last_loss
 
         model.eval()
         val_correct = 0
         val_total = 0
 
-        for x_tensor, y_tensor, actual_batch_size in val_gpu_batches:
+        for x_tensor, y_tensor, actual_batch_size in val_loader:
             logits = model.forward(x_tensor)
             logits_vec = logits.to_vector()
             y_vec = y_tensor.to_vector()
@@ -354,8 +356,8 @@ def main():
             lt.save(model, MODEL_SAVE_PATH)
             saved_marker = " *"
 
-        lt.empty_cache()
-        gc.collect()
+        if hasattr(lt, "empty_cache"):
+            lt.empty_cache()
 
         epoch_end_time = time.perf_counter()
         epoch_cpu_end = time.process_time()
@@ -372,7 +374,7 @@ def main():
     total_training_end = time.perf_counter()
     print("================================================================================")
     print(f"Training Complete! Total Wall Time: {total_training_end - total_training_start:.2f}s | Best Val Acc: {best_val_acc:.2f}% (Epoch {best_epoch})")
-
+    
     if os.path.exists(MODEL_SAVE_PATH):
         lt.load(model, MODEL_SAVE_PATH)
         file_size_kb = os.path.getsize(MODEL_SAVE_PATH) / 1024.0
