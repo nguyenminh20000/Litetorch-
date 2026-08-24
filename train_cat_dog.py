@@ -91,13 +91,16 @@ class TransformerBlock(lt.nn.Module):
         v_b = lt.jit.JITVar(lt.jit.OpType.INPUT, "b")
         self.jit_add = lt.jit.JITFunction("fused_residual_add", v_a + v_b, [v_a, v_b])
 
+        v_u = lt.jit.JITVar(lt.jit.OpType.INPUT, "u")
+        self.jit_gelu = lt.jit.JITFunction("fused_gelu", lt.jit.gelu(v_u), [v_u])
+
     def forward(self, x):
         norm1 = self.ln1.forward(x)
         attn_out = self.attn.forward(norm1)
         x = self.jit_add([x, attn_out])
         norm2 = self.ln2.forward(x)
         mlp_h = self.fc1.forward(norm2)
-        mlp_h = lt.Ops.gelu(mlp_h)
+        mlp_h = self.jit_gelu([mlp_h])
         mlp_out = self.fc2.forward(mlp_h)
         x = self.jit_add([x, mlp_out])
         return x
