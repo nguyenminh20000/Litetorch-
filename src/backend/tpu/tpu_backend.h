@@ -2,23 +2,17 @@
 #define LITETORCH_TPU_BACKEND_H
 
 #include "litetorch/backend.h"
-#include "litetorch/platform.h"
+#include "common/tpu_common.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace litetorch {
 
 class TPUBackend : public DeviceBackend {
 public:
-    void* handle = nullptr;
-    bool is_ok = false;
     int current_device_id = 0;
-    int num_devices = 0;
-    std::string device_name = "Google TPU";
     std::mutex tpu_mutex;
 
     TPUBackend();
@@ -73,10 +67,6 @@ public:
     void set_device(int device_id) override;
     int get_device_count() const;
     std::string get_device_name(int id) const;
-
-private:
-    void init_tpu_driver();
-    void systolic_gemm_tile(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t K);
 };
 
 }

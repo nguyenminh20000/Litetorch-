@@ -19,6 +19,11 @@ H:/Litetorch/src/autograd/checkpoint.cpp
 H:/Litetorch/src/autograd/saved_tensor.cpp
 H:/Litetorch/src/backend/backend.cpp
 H:/Litetorch/src/backend/tpu/tpu_backend.cpp
+H:/Litetorch/src/backend/tpu/common/tpu_driver.cpp
+H:/Litetorch/src/backend/tpu/math/systolic_gemm.cpp
+H:/Litetorch/src/backend/tpu/memory/tpu_allocator.cpp
+H:/Litetorch/src/backend/tpu/nn/tpu_attention.cpp
+H:/Litetorch/src/backend/tpu/optim/tpu_optimizers.cpp
 H:/Litetorch/src/bindings/python_bindings.cpp
 H:/Litetorch/src/cl_backend/cl_backend.cpp
 H:/Litetorch/src/cl_backend/cl_functions.cpp
@@ -172,6 +177,12 @@ src/backend/gpu_native/nn/nn_kernels.cu
 src/backend/gpu_native/optim/optimizers.cu
 src/backend/tpu/tpu_backend.cpp
 src/backend/tpu/tpu_backend.h
+src/backend/tpu/common/tpu_common.h
+src/backend/tpu/common/tpu_driver.cpp
+src/backend/tpu/math/systolic_gemm.cpp
+src/backend/tpu/memory/tpu_allocator.cpp
+src/backend/tpu/nn/tpu_attention.cpp
+src/backend/tpu/optim/tpu_optimizers.cpp
 src/bindings/python_bindings.cpp
 src/cl_backend/cl_backend.cpp
 src/cl_backend/cl_functions.cpp
