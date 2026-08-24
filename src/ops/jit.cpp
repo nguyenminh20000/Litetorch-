@@ -119,6 +119,12 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
         case JITVar::OpType::LOG: return Ops::log(left_tensor);
         case JITVar::OpType::ABS: return Ops::abs(left_tensor);
         case JITVar::OpType::RELU_GRAD: {
+            if (device.type == DeviceType::GPU) {
+                auto relu_fwd = Ops::relu(left_tensor);
+                if (relu_fwd->creator) {
+                    return relu_fwd->creator->backward(right_tensor)[0];
+                }
+            }
             auto out = Tensor::create(shape, device);
             float* in_ptr = left_tensor->data_ptr();
             float* gout_ptr = right_tensor->data_ptr();
@@ -127,12 +133,15 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : 0.0f;
             });
-            if (device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
-            }
             return out;
         }
         case JITVar::OpType::GELU_GRAD: {
+            if (device.type == DeviceType::GPU) {
+                auto gelu_fwd = Ops::gelu(left_tensor);
+                if (gelu_fwd->creator) {
+                    return gelu_fwd->creator->backward(right_tensor)[0];
+                }
+            }
             auto out = Tensor::create(shape, device);
             float* in_ptr = left_tensor->data_ptr();
             float* gout_ptr = right_tensor->data_ptr();
@@ -145,12 +154,15 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
                 float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);
                 out_ptr[idx] = gout_ptr[idx] * (term1 + term2);
             });
-            if (device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
-            }
             return out;
         }
         case JITVar::OpType::ABS_GRAD: {
+            if (device.type == DeviceType::GPU) {
+                auto abs_fwd = Ops::abs(left_tensor);
+                if (abs_fwd->creator) {
+                    return abs_fwd->creator->backward(right_tensor)[0];
+                }
+            }
             auto out = Tensor::create(shape, device);
             float* in_ptr = left_tensor->data_ptr();
             float* gout_ptr = right_tensor->data_ptr();
@@ -159,9 +171,6 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : (in_ptr[i] < 0.0f ? -gout_ptr[i] : 0.0f);
             });
-            if (device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
-            }
             return out;
         }
         default: return left_tensor;
