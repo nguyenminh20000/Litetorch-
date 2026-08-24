@@ -173,15 +173,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
     StorageUseGuard guard({a_c->storage, b_c->storage, out->storage});
 
     bool run_gpu = false;
-    if (a->device.type == DeviceType::TPU) {
-        auto tpu = BackendDispatcher::get().get_tpu_backend();
-        if (tpu && tpu->is_available()) {
-            run_gpu = true;
-            int64_t lda = a_trans ? a->shape[0] : a_c->shape[1];
-            int64_t ldb = b_trans ? b->shape[0] : b_c->shape[1];
-            tpu->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
-        }
-    } else if (a->device.type == DeviceType::GPU) {
+    if (a->device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
@@ -224,6 +216,14 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                                         {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &M, &K, &N},
                                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
+        }
+    } else if (a->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && tpu->is_available()) {
+            run_gpu = true;
+            int64_t lda = a_trans ? a->shape[0] : a_c->shape[1];
+            int64_t ldb = b_trans ? b->shape[0] : b_c->shape[1];
+            tpu->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
         }
     }
     if (!run_gpu) {
@@ -309,13 +309,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     auto out = Tensor::create({B, M, N}, a_c->device, false, a_c->dtype);
     StorageUseGuard guard({a_c->storage, b_c->storage, out->storage});
     bool run_gpu = false;
-    if (a_c->device.type == DeviceType::TPU) {
-        auto tpu = BackendDispatcher::get().get_tpu_backend();
-        if (tpu && tpu->is_available()) {
-            run_gpu = true;
-            tpu->bmm(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, B, M, N, K);
-        }
-    } else if (a_c->device.type == DeviceType::GPU) {
+    if (a_c->device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
@@ -349,6 +343,12 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                                         {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &M, &K, &N, &B},
                                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
+        }
+    } else if (a_c->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && tpu->is_available()) {
+            run_gpu = true;
+            tpu->bmm(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, B, M, N, K);
         }
     }
     if (!run_gpu) {

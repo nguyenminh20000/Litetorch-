@@ -97,23 +97,15 @@ cl_mem StorageImpl::get_gpu_ptr() {
     if (device.type == DeviceType::META) {
         throw std::runtime_error("[litetorch Error] Cannot access GPU/TPU pointer for a Tensor on META device");
     }
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
-    std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (device.type == DeviceType::CPU) {
         return nullptr;
     }
     if (is_swapped) {
-        swap_in_impl();
-    }
-    if (device.type == DeviceType::CPU) {
-        return nullptr;
-    }
-    if (device.type == DeviceType::GPU) {
-        MemoryManager::get().touch_impl(this);
-    }
-    if (cpu_data) {
-        CachingAllocator::get().free_cpu(cpu_data);
-        cpu_data = nullptr;
+        std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+        std::lock_guard<std::mutex> storage_lock(storage_mutex_);
+        if (is_swapped) {
+            swap_in_impl();
+        }
     }
     return gpu_data;
 }
