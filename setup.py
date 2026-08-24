@@ -27,6 +27,8 @@ class BuildExt(build_ext):
                 ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
             else:
                 ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
+                if sys.platform.startswith("win"):
+                    ext.extra_link_args = ["-static-libgcc", "-static-libstdc++"]
         try:
             super().build_extensions()
             nvcc_bin = None
@@ -110,7 +112,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.3.8",
+    version="0.3.9",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,

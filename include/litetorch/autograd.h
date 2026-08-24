@@ -26,6 +26,13 @@ struct SavedTensor {
 
 struct SavedTensorsVector : public std::vector<std::shared_ptr<Tensor>> {
     using std::vector<std::shared_ptr<Tensor>>::vector;
+    using std::vector<std::shared_ptr<Tensor>>::operator=;
+    SavedTensorsVector() = default;
+    SavedTensorsVector(const std::vector<std::shared_ptr<Tensor>>& v) : std::vector<std::shared_ptr<Tensor>>(v) {}
+    SavedTensorsVector& operator=(const std::vector<std::shared_ptr<Tensor>>& v) {
+        std::vector<std::shared_ptr<Tensor>>::operator=(v);
+        return *this;
+    }
     const std::shared_ptr<Tensor>& operator[](size_t idx) const {
         return at(idx);
     }

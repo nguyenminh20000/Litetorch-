@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 import litetorch as lt
 import time
-import resource
 import os
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 def current_rss_mb():
     try:
@@ -15,10 +19,12 @@ def current_rss_mb():
     return 0.0
 
 def peak_rss_mb():
-    try:
-        return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
-    except Exception:
-        return 0.0
+    if resource is not None:
+        try:
+            return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+        except Exception:
+            pass
+    return 0.0
 
 def get_vram_mb():
     try:
