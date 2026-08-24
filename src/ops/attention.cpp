@@ -262,6 +262,12 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
         }
+    } else if (q_c->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && tpu->is_available()) {
+            run_gpu = true;
+            tpu->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale);
+        }
     }
     if (!run_gpu) {
         if (q_c->dtype != DataType::FP32 || k_c->dtype != DataType::FP32 || v_c->dtype != DataType::FP32) {

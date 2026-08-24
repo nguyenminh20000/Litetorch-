@@ -119,7 +119,12 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
                 }
             }
         }
+        if (!create_graph) {
+            node->saved_tensors.clear();
+            node->output = SavedTensor();
+        }
     }
+    grads.clear();
     is_create_graph_ = old_create_graph;
 }
 

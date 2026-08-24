@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -172,6 +173,15 @@ public:
                     }
                     db_ptr[c] = sum_db;
                 });
+            }
+
+            if (grad_input->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) {
+                    tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), dx_ptr);
+                    if (grad_weight && dw_ptr) tpu->write(grad_weight->gpu_data(), grad_weight->numel() * sizeof(float), dw_ptr);
+                    if (grad_bias && db_ptr) tpu->write(grad_bias->gpu_data(), grad_bias->numel() * sizeof(float), db_ptr);
+                }
             }
         }
         
@@ -399,6 +409,14 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
                 out_ptr[idx] = w * x_hat + b;
             }
         });
+        if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) {
+                tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+                tpu->write(save_mean->gpu_data(), save_mean->numel() * sizeof(float), sm_ptr);
+                tpu->write(save_var->gpu_data(), save_var->numel() * sizeof(float), sv_ptr);
+            }
+        }
     }
     
     bool req_grad = input->requires_grad || (weight && weight->requires_grad) || (bias && bias->requires_grad);

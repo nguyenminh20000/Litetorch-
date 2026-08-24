@@ -107,6 +107,10 @@ cl_mem StorageImpl::get_gpu_ptr() {
             swap_in_impl();
         }
     }
+    if (cpu_data) {
+        CachingAllocator::get().free_cpu(cpu_data);
+        cpu_data = nullptr;
+    }
     return gpu_data;
 }
 

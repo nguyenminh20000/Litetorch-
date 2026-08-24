@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -115,6 +116,11 @@ public:
                     gin_ptr[i * C + j] = (probs[j] - indicator) / N * gout_val;
                 }
             });
+
+            if (grad_input->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), gin_ptr);
+            }
         }
         return { grad_input, nullptr };
     }
@@ -411,7 +417,12 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
         for (int i = 0; i < N; ++i) {
             total_loss += losses[i];
         }
-        out->data_ptr()[0] = total_loss / N;
+        float avg_loss = total_loss / N;
+        out->data_ptr()[0] = avg_loss;
+        if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), sizeof(float), &avg_loss);
+        }
     }
 
     if (input->requires_grad) {
