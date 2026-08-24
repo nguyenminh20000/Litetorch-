@@ -103,22 +103,22 @@ class ConvNetClassifier(lt.nn.Module):
     def forward(self, x):
         b = x.shape[0]
         h = self.conv1.forward(x)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h])
         h = self.pool1.forward(h)
 
         h = self.conv2.forward(h)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h])
         h = self.pool2.forward(h)
 
         h = self.conv3.forward(h)
-        h = lt.Ops.relu(h)
+        h = self.jit_relu([h])
         h = self.pool3.forward(h)
         h = self.pool4.forward(h)
 
         h = self.dropout.forward(h)
         h_flat = h.reshape([b, 128 * 4 * 4]) if hasattr(h, "reshape") else (h.contiguous().view([b, 128 * 4 * 4]) if not h.is_contiguous() else h.view([b, 128 * 4 * 4]))
         h_fc = self.fc1.forward(h_flat)
-        h_fc = lt.Ops.relu(h_fc)
+        h_fc = self.jit_relu([h_fc])
         out = self.fc2.forward(h_fc)
         return out
 
