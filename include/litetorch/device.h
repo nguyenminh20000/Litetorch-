@@ -29,9 +29,13 @@ struct Device {
     }
 
     std::string to_string() const {
-        if (type == DeviceType::META) return "meta";
-        if (type == DeviceType::TPU) return "tpu:" + std::to_string(index);
-        return (type == DeviceType::CPU ? "cpu:" : "gpu:") + std::to_string(index);
+        switch (type) {
+            case DeviceType::CPU:  return "cpu:" + std::to_string(index);
+            case DeviceType::GPU:  return "gpu:" + std::to_string(index);
+            case DeviceType::TPU:  return "tpu:" + std::to_string(index);
+            case DeviceType::META: return "meta";
+            default:               return "unknown";
+        }
     }
 };
 
