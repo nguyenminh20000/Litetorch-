@@ -108,6 +108,12 @@ cl_mem StorageImpl::get_gpu_ptr() {
         }
     }
     if (cpu_data) {
+        if (device.type == DeviceType::TPU && gpu_data) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(gpu_data, size * element_size(), cpu_data);
+        } else if (device.type == DeviceType::GPU && gpu_data) {
+            CLBackend::get().write(gpu_data, size * element_size(), cpu_data);
+        }
         CachingAllocator::get().free_cpu(cpu_data);
         cpu_data = nullptr;
     }
