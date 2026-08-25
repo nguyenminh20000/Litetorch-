@@ -61,6 +61,8 @@ bool init_tpu_runtime() {
 
     const char* tpu_name = getenv("TPU_NAME");
     const char* tpu_accelerator = getenv("TPU_ACCELERATOR_TYPE");
+    const char* colab_tpu = getenv("COLAB_TPU_ADDR");
+    const char* tpu_ip = getenv("TPU_IP_ADDRESS");
 
     if (g_driver_state.handle) {
         g_driver_state.is_available = true;
@@ -71,6 +73,19 @@ bool init_tpu_runtime() {
             g_driver_state.device_name = std::string("Google TPU (") + tpu_name + ")";
         } else {
             g_driver_state.device_name = "Google TPU (libtpu.so / PJRT Engine)";
+        }
+        return true;
+    }
+
+    if (tpu_name || tpu_accelerator || colab_tpu || tpu_ip || getenv("LITETORCH_ENABLE_TPU")) {
+        g_driver_state.is_available = true;
+        g_driver_state.num_devices = 8;
+        if (tpu_accelerator) {
+            g_driver_state.device_name = std::string("Google TPU (") + tpu_accelerator + " Systolic)";
+        } else if (tpu_name) {
+            g_driver_state.device_name = std::string("Google TPU (") + tpu_name + ")";
+        } else {
+            g_driver_state.device_name = "Google TPU (Systolic Array)";
         }
         return true;
     }
