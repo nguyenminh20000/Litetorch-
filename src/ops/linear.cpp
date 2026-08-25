@@ -251,6 +251,9 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             });
             if (out->device.type == DeviceType::GPU) {
                 CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), C);
+            } else if (out->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), C);
             }
         }
     }
@@ -378,6 +381,9 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             });
             if (out->device.type == DeviceType::GPU) {
                 CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), C);
+            } else if (out->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), C);
             }
         }
     }

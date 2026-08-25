@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -255,6 +256,9 @@ public:
             });
             if (grad_input->device.type == DeviceType::GPU) {
                 CLBackend::get().write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), grad_in_ptr);
+            } else if (grad_input->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), grad_in_ptr);
             }
         }
         
@@ -308,6 +312,9 @@ public:
             });
             if (grad_input->device.type == DeviceType::GPU) {
                 CLBackend::get().write(grad_input->gpu_data(), size * sizeof(float), grad_in_ptr);
+            } else if (grad_input->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(grad_input->gpu_data(), size * sizeof(float), grad_in_ptr);
             }
         }
         
@@ -344,6 +351,9 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
         }
     }
 
@@ -386,6 +396,9 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
         }
     }
 
@@ -428,6 +441,9 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
         }
     }
 
@@ -470,6 +486,9 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
         }
     }
 
@@ -540,6 +559,9 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
     
@@ -593,6 +615,12 @@ std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) {
+                tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
+                tpu->write(save_tanh->gpu_data(), size * sizeof(float), st_ptr);
+            }
         }
     }
     

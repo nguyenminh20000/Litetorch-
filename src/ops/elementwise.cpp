@@ -134,7 +134,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
         }
         if (!run_gpu) {
             auto reshaped = current->view({prod_prepended, remaining});
-            auto summed = Tensor::create({remaining}, Device(DeviceType::CPU, 0));
+            auto summed = Tensor::create({remaining}, grad->device);
             float* res_ptr = summed->data_ptr();
             float* reshaped_ptr = reshaped->data_ptr();
             
@@ -149,6 +149,10 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                 auto gpu_summed = Tensor::create({remaining}, grad->device);
                 CLBackend::get().write(gpu_summed->gpu_data(), remaining * sizeof(float), res_ptr);
                 current = gpu_summed->view(final_shape);
+            } else if (grad->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(summed->gpu_data(), remaining * sizeof(float), res_ptr);
+                current = summed->view(final_shape);
             } else {
                 current = summed->view(final_shape);
             }
@@ -191,7 +195,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                 }
             }
             if (!run_gpu) {
-                auto summed = Tensor::create(new_shape, Device(DeviceType::CPU, 0));
+                auto summed = Tensor::create(new_shape, grad->device);
                 float* src = current->data_ptr();
                 float* dst = summed->data_ptr();
 
@@ -208,6 +212,10 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                     auto gpu_summed = Tensor::create(new_shape, grad->device);
                     CLBackend::get().write(gpu_summed->gpu_data(), gpu_summed->numel() * sizeof(float), dst);
                     current = gpu_summed;
+                } else if (grad->device.type == DeviceType::TPU) {
+                    auto tpu = BackendDispatcher::get().get_tpu_backend();
+                    if (tpu) tpu->write(summed->gpu_data(), summed->numel() * sizeof(float), dst);
+                    current = summed;
                 } else {
                     current = summed;
                 }
@@ -374,6 +382,9 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
 
@@ -494,6 +505,9 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
 
@@ -614,6 +628,9 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
 
@@ -734,6 +751,9 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
 
@@ -789,6 +809,9 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -843,6 +866,9 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -896,6 +922,9 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -948,6 +977,9 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -1009,6 +1041,9 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -1060,6 +1095,9 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
         }
     }
 
@@ -1106,6 +1144,9 @@ public:
             });
             if (grad_input->device.type == DeviceType::GPU) {
                 CLBackend::get().write(grad_input->gpu_data(), size * sizeof(float), ptr);
+            } else if (grad_input->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(grad_input->gpu_data(), size * sizeof(float), ptr);
             }
         }
         return { grad_input };
@@ -1138,6 +1179,12 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
                     {&a_mem, &a_off, &out_mem, &out_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
+        }
+    } else if (a->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && tpu->is_available()) {
+            run_gpu = true;
+            tpu->sum(a->gpu_data(), a->offset, out->gpu_data(), out->offset, a->numel());
         }
     }
     if (!run_gpu) {

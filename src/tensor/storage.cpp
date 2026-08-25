@@ -268,6 +268,12 @@ void StorageImpl::ensure_cpu() {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
         }
         CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
+    } else if (device.type == DeviceType::TPU && gpu_data) {
+        if (!cpu_data) {
+            cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+        }
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu) tpu->read(gpu_data, size * element_size(), cpu_data);
     }
 }
 

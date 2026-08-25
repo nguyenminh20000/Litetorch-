@@ -82,19 +82,20 @@ void tpu_systolic_matmul_ex(const float* A, bool trans_a, int64_t lda,
 
 void tpu_systolic_bmm(const float* A, const float* B, float* C, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
-    ThreadPool::get().parallel_for(0, B_batch, [&](int64_t b) {
-        const float* a_ptr = A + b * M * K;
-        const float* b_ptr = B + b * K * N;
-        float* c_ptr = C + b * M * N;
-        std::memset(c_ptr, 0, M * N * sizeof(float));
-        for (int64_t i = 0; i < M; ++i) {
-            float* C_row = c_ptr + i * N;
-            for (int64_t k = 0; k < K; ++k) {
-                float aval = a_ptr[i * K + k];
-                const float* B_row = b_ptr + k * N;
-                for (int64_t j = 0; j < N; ++j) {
-                    C_row[j] += aval * B_row[j];
-                }
+    int64_t total_rows = B_batch * M;
+    ThreadPool::get().parallel_for(0, total_rows, [&](int64_t idx) {
+        int64_t b = idx / M;
+        int64_t i = idx % M;
+        const float* a_row = A + b * (M * K) + i * K;
+        const float* b_batch = B + b * (K * N);
+        float* c_row = C + b * (M * N) + i * N;
+        std::memset(c_row, 0, N * sizeof(float));
+        for (int64_t k = 0; k < K; ++k) {
+            float aval = a_row[k];
+            if (aval == 0.0f) continue;
+            const float* b_row = b_batch + k * N;
+            for (int64_t j = 0; j < N; ++j) {
+                c_row[j] += aval * b_row[j];
             }
         }
     });
