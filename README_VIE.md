@@ -8,7 +8,7 @@
 [![Python Versions](https://img.shields.io/pypi/pyversions/litetorch.svg)](https://pypi.org/project/litetorch/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)](https://github.com/nguyenminh20000/Litetorch-)
-[![Accelerators](https://img.shields.io/badge/Accelerators-NVIDIA%20CUDA%20%7C%20AMD%20ROCm%20%7C%20OpenCL%20%7C%20CPU-orange.svg)](https://github.com/nguyenminh20000/Litetorch-)
+[![Accelerators](https://img.shields.io/badge/Accelerators-NVIDIA%20CUDA%20%7C%20Google%20TPU%20%7C%20AMD%20ROCm%20%7C%20OpenCL%20%7C%20CPU-orange.svg)](https://github.com/nguyenminh20000/Litetorch-)
 
 LiteTorch là một framework học sâu (Deep Learning Framework) và động cơ huấn luyện mô hình ngôn ngữ lớn (LLM Engine) hiệu năng cao, được xây dựng hoàn toàn bằng C++14 nguyên khối với giao diện lập trình Python tự nhiên thông qua `pybind11`.
 
@@ -34,6 +34,7 @@ LiteTorch tích hợp toàn bộ sức mạnh huấn luyện cốt lõi của **
 
 ### 3. Hỗ Trợ Phần Cứng Đa Nền Tảng
 - **NVIDIA CUDA**: Tích hợp cuBLAS, cuDNN, hỗ trợ kiến trúc Blackwell B200 và Rubin R100 (`sm_100`/`sm_105+`), tự động nhận diện phần cứng (`-arch=native`), tăng tốc TensorFloat-32 (`TF32`), và tính toán ma trận độ chính xác thấp FP8/FP4 (`cublasLtMatmul`).
+- **Google TPU**: Hỗ trợ toàn diện các thế hệ Google Cloud TPU (từ v2/v3/v4/v5e/v5p, v6e Trillium, v7 Ironwood, đến v8 8t/8i) qua PJRT C-API và `libtpu.so` với nhân nhân ma trận Systolic Matrix Multiplication (MXU), TPU FlashAttention, trừu tượng hóa bộ nhớ HBM2e/HBM3e hai chiều và bộ tối ưu hóa AdamW tách rời. Tự động nhận diện môi trường Google Colab và Cloud TPU VM (`COLAB_TPU_ADDR`, `TPU_NAME`, `TPU_ACCELERATOR_TYPE`).
 - **AMD ROCm / HIP**: Biên dịch trực tiếp qua `hipcc` với rocBLAS và MIOpen.
 - **OpenCL & CPU Đa Luồng**: Tự động nhận diện phần cứng và fallback mượt mà về OpenCL hoặc CPU ThreadPool nếu không có card GPU chuyên dụng.
 

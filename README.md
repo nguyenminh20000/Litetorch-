@@ -8,7 +8,7 @@
 [![Python Versions](https://img.shields.io/pypi/pyversions/litetorch.svg)](https://pypi.org/project/litetorch/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)](https://github.com/nguyenminh20000/Litetorch-)
-[![Accelerators](https://img.shields.io/badge/Accelerators-NVIDIA%20CUDA%20%7C%20AMD%20ROCm%20%7C%20OpenCL%20%7C%20CPU-orange.svg)](https://github.com/nguyenminh20000/Litetorch-)
+[![Accelerators](https://img.shields.io/badge/Accelerators-NVIDIA%20CUDA%20%7C%20Google%20TPU%20%7C%20AMD%20ROCm%20%7C%20OpenCL%20%7C%20CPU-orange.svg)](https://github.com/nguyenminh20000/Litetorch-)
 
 LiteTorch is a lightweight, high-performance deep learning and large language model (LLM) training engine built in native C++14 with Python bindings via `pybind11`.
 
@@ -32,8 +32,9 @@ LiteTorch delivers the core training capabilities of **PyTorch + Megatron-LM + D
 - **Context Parallelism (CP) & Ring Attention**: Sequence splitting across GPUs with ring-based Key-Value communication.
 - **Rendezvous System**: Dual initialization via Shared FileStore (`LITETORCH_RENDEZVOUS_FILE`) and TCP sockets for massive GPU scale (1000+ GPUs).
 
-### 3. Dual-Platform Hardware Acceleration
+### 3. Multi-Platform Hardware Acceleration
 - **NVIDIA CUDA**: cuBLAS, cuDNN, Blackwell B200 and Rubin R100 support (`sm_100`/`sm_105+`), auto-architecture discovery (`-arch=native`), TensorFloat-32 (`TF32`) acceleration, and native FP8/FP4 precision.
+- **Google TPU**: Native Google Cloud TPU integration (v2/v3/v4/v5e/v5p, v6e Trillium, v7 Ironwood, and v8 8t/8i) via PJRT C-API and dynamic `libtpu.so` driver discovery with multi-threaded Systolic Matrix Multiplication (MXU), TPU FlashAttention, HBM2e/HBM3e memory abstraction, and decoupled TPU AdamW optimizer. Auto-detects Google Colab and Google Cloud TPU environments (`COLAB_TPU_ADDR`, `TPU_NAME`, `TPU_ACCELERATOR_TYPE`).
 - **AMD ROCm / HIP**: Full hipcc compilation with rocBLAS and MIOpen support.
 - **OpenCL & CPU Fallback**: Automatic hardware detection falling back to OpenCL or multi-threaded CPU execution.
 
@@ -145,9 +146,10 @@ graph TD
     D --> F["Compute Backends"]
     E --> F
     F --> G1["NVIDIA CUDA Backend (cuBLAS, cuLt, FlashAttention, Blackwell)"]
-    F --> G2["AMD ROCm Backend (rocBLAS, MIOpen)"]
-    F --> G3["OpenCL GPU Backend"]
-    F --> G4["Multi-Threaded CPU Engine"]
+    F --> G2["Google TPU Backend (PJRT, libtpu, Systolic Array MXU)"]
+    F --> G3["AMD ROCm Backend (rocBLAS, MIOpen)"]
+    F --> G4["OpenCL GPU Backend"]
+    F --> G5["Multi-Threaded CPU Engine"]
 ```
 
 ---
