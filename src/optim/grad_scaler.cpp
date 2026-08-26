@@ -26,11 +26,10 @@ bool GradScaler::check_inf_nan(const std::vector<std::shared_ptr<Tensor>>& grads
                 }
             }
         } else {
-            std::vector<float> vals = g->to_vector();
-            for (float v : vals) {
-                if (std::isnan(v) || std::isinf(v)) {
-                    return true;
-                }
+            auto max_abs = Ops::max(Ops::abs(g));
+            float val = max_abs->item();
+            if (std::isnan(val) || std::isinf(val)) {
+                return true;
             }
         }
     }
