@@ -87,8 +87,12 @@ class TPUTransformerBlock(lt.nn.Module):
 
     def train(self, mode=True):
         self.training = mode
-        if hasattr(self.attn, "train"):
-            self.attn.train(mode)
+        if mode:
+            if hasattr(self.attn, "train"):
+                self.attn.train()
+        else:
+            if hasattr(self.attn, "eval"):
+                self.attn.eval()
         return self
 
     def eval(self):
