@@ -13,10 +13,19 @@ void tpu_systolic_matmul(const float* A, const float* B, float* C, int64_t M, in
 
     ThreadPool::get().parallel_for(0, M, [&](int64_t i) {
         float* C_row = C + i * N;
+        const float* A_row = A + i * K;
         for (int64_t k = 0; k < K; ++k) {
-            float aval = A[i * K + k];
+            float aval = A_row[k];
+            if (aval == 0.0f) continue;
             const float* B_row = B + k * N;
-            for (int64_t j = 0; j < N; ++j) {
+            int64_t j = 0;
+            for (; j + 4 <= N; j += 4) {
+                C_row[j]     += aval * B_row[j];
+                C_row[j + 1] += aval * B_row[j + 1];
+                C_row[j + 2] += aval * B_row[j + 2];
+                C_row[j + 3] += aval * B_row[j + 3];
+            }
+            for (; j < N; ++j) {
                 C_row[j] += aval * B_row[j];
             }
         }
@@ -35,8 +44,16 @@ void tpu_systolic_matmul_ex(const float* A, bool trans_a, int64_t lda,
             const float* A_row = A + i * lda;
             for (int64_t k = 0; k < K; ++k) {
                 float aval = A_row[k];
+                if (aval == 0.0f) continue;
                 const float* B_row = B + k * ldb;
-                for (int64_t j = 0; j < N; ++j) {
+                int64_t j = 0;
+                for (; j + 4 <= N; j += 4) {
+                    C_row[j]     += aval * B_row[j];
+                    C_row[j + 1] += aval * B_row[j + 1];
+                    C_row[j + 2] += aval * B_row[j + 2];
+                    C_row[j + 3] += aval * B_row[j + 3];
+                }
+                for (; j < N; ++j) {
                     C_row[j] += aval * B_row[j];
                 }
             }
@@ -46,8 +63,16 @@ void tpu_systolic_matmul_ex(const float* A, bool trans_a, int64_t lda,
             float* C_row = C + i * N;
             for (int64_t k = 0; k < K; ++k) {
                 float aval = A[k * lda + i];
+                if (aval == 0.0f) continue;
                 const float* B_row = B + k * ldb;
-                for (int64_t j = 0; j < N; ++j) {
+                int64_t j = 0;
+                for (; j + 4 <= N; j += 4) {
+                    C_row[j]     += aval * B_row[j];
+                    C_row[j + 1] += aval * B_row[j + 1];
+                    C_row[j + 2] += aval * B_row[j + 2];
+                    C_row[j + 3] += aval * B_row[j + 3];
+                }
+                for (; j < N; ++j) {
                     C_row[j] += aval * B_row[j];
                 }
             }

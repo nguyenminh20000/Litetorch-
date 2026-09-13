@@ -41,6 +41,9 @@ void tpu_systolic_bmm(const float* A, const float* B, float* C, int64_t B_batch,
 
 void tpu_flash_attention_forward(const float* Q, const float* K, const float* V, float* O,
                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale);
+void tpu_flash_attention_backward(const float* Q, const float* K, const float* V, const float* O, const float* dO,
+                                  float* dQ, float* dK, float* dV,
+                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale);
 
 void tpu_adamw_update(float* p, const float* g, float* m, float* v, int64_t size,
                       float lr, float beta1, float beta2, float eps, float weight_decay,

@@ -37,11 +37,7 @@ __global__ void fused_softmax_fwd_kernel(const float* S, float* P, int M, int Tk
         float val = s_row[i];
         if (val > max_val) max_val = val;
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        max_val = fmaxf(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
-    }
-#endif
+    max_val = warp_reduce_max(max_val);
     __shared__ float s_max[32];
     int lane = tid % 32;
     int wid = tid / 32;
@@ -49,11 +45,7 @@ __global__ void fused_softmax_fwd_kernel(const float* S, float* P, int M, int Tk
     __syncthreads();
     if (wid == 0) {
         float b_max = (lane < (blockDim.x + 31) / 32) ? s_max[lane] : -1e37f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_max = fmaxf(b_max, __shfl_down_sync(0xffffffff, b_max, offset));
-        }
-#endif
+        b_max = warp_reduce_max(b_max);
         if (lane == 0) s_max[0] = b_max;
     }
     __syncthreads();
@@ -65,20 +57,12 @@ __global__ void fused_softmax_fwd_kernel(const float* S, float* P, int M, int Tk
         p_row[i] = e;
         sum_exp += e;
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        sum_exp += __shfl_down_sync(0xffffffff, sum_exp, offset);
-    }
-#endif
+    sum_exp = warp_reduce_sum(sum_exp);
     if (lane == 0) s_max[wid] = sum_exp;
     __syncthreads();
     if (wid == 0) {
         float b_sum = (lane < (blockDim.x + 31) / 32) ? s_max[lane] : 0.0f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_sum += __shfl_down_sync(0xffffffff, b_sum, offset);
-        }
-#endif
+        b_sum = warp_reduce_sum(b_sum);
         if (lane == 0) s_max[0] = b_sum;
     }
     __syncthreads();
@@ -101,11 +85,7 @@ __global__ void fused_softmax_bwd_kernel(const float* dP, const float* P, float*
     for (int i = tid; i < Tk; i += blockDim.x) {
         dot += dp_row[i] * p_row[i];
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        dot += __shfl_down_sync(0xffffffff, dot, offset);
-    }
-#endif
+    dot = warp_reduce_sum(dot);
     __shared__ float s_dot[32];
     int lane = tid % 32;
     int wid = tid / 32;
@@ -113,11 +93,7 @@ __global__ void fused_softmax_bwd_kernel(const float* dP, const float* P, float*
     __syncthreads();
     if (wid == 0) {
         float b_dot = (lane < (blockDim.x + 31) / 32) ? s_dot[lane] : 0.0f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_dot += __shfl_down_sync(0xffffffff, b_dot, offset);
-        }
-#endif
+        b_dot = warp_reduce_sum(b_dot);
         if (lane == 0) s_dot[0] = b_dot;
     }
     __syncthreads();
@@ -140,11 +116,7 @@ __global__ void fused_softmax_fwd_half_kernel(const __half* S, __half* P, int M,
         float val = __half2float(s_row[i]);
         if (val > max_val) max_val = val;
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        max_val = fmaxf(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
-    }
-#endif
+    max_val = warp_reduce_max(max_val);
     __shared__ float s_max[32];
     int lane = tid % 32;
     int wid = tid / 32;
@@ -152,11 +124,7 @@ __global__ void fused_softmax_fwd_half_kernel(const __half* S, __half* P, int M,
     __syncthreads();
     if (wid == 0) {
         float b_max = (lane < (blockDim.x + 31) / 32) ? s_max[lane] : -1e37f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_max = fmaxf(b_max, __shfl_down_sync(0xffffffff, b_max, offset));
-        }
-#endif
+        b_max = warp_reduce_max(b_max);
         if (lane == 0) s_max[0] = b_max;
     }
     __syncthreads();
@@ -168,20 +136,12 @@ __global__ void fused_softmax_fwd_half_kernel(const __half* S, __half* P, int M,
         p_row[i] = __float2half(e);
         sum_exp += e;
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        sum_exp += __shfl_down_sync(0xffffffff, sum_exp, offset);
-    }
-#endif
+    sum_exp = warp_reduce_sum(sum_exp);
     if (lane == 0) s_max[wid] = sum_exp;
     __syncthreads();
     if (wid == 0) {
         float b_sum = (lane < (blockDim.x + 31) / 32) ? s_max[lane] : 0.0f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_sum += __shfl_down_sync(0xffffffff, b_sum, offset);
-        }
-#endif
+        b_sum = warp_reduce_sum(b_sum);
         if (lane == 0) s_max[0] = b_sum;
     }
     __syncthreads();
@@ -204,11 +164,7 @@ __global__ void fused_softmax_bwd_half_kernel(const __half* dP, const __half* P,
     for (int i = tid; i < Tk; i += blockDim.x) {
         dot += __half2float(dp_row[i]) * __half2float(p_row[i]);
     }
-#ifndef __HIP_PLATFORM_AMD__
-    for (int offset = 16; offset > 0; offset /= 2) {
-        dot += __shfl_down_sync(0xffffffff, dot, offset);
-    }
-#endif
+    dot = warp_reduce_sum(dot);
     __shared__ float s_dot[32];
     int lane = tid % 32;
     int wid = tid / 32;
@@ -216,11 +172,7 @@ __global__ void fused_softmax_bwd_half_kernel(const __half* dP, const __half* P,
     __syncthreads();
     if (wid == 0) {
         float b_dot = (lane < (blockDim.x + 31) / 32) ? s_dot[lane] : 0.0f;
-#ifndef __HIP_PLATFORM_AMD__
-        for (int offset = 16; offset > 0; offset /= 2) {
-            b_dot += __shfl_down_sync(0xffffffff, b_dot, offset);
-        }
-#endif
+        b_dot = warp_reduce_sum(b_dot);
         if (lane == 0) s_dot[0] = b_dot;
     }
     __syncthreads();

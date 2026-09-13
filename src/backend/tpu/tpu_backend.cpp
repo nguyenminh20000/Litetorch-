@@ -146,8 +146,28 @@ void TPUBackend::flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k
     flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
 }
 
-void TPUBackend::flash_attention_backward(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float) {}
-void TPUBackend::flash_attention_backward_half(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float) {}
+void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
+                                          void* O, int64_t o_off, void* dO, int64_t do_off,
+                                          void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
+                                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+    if (!dQ || !dK || !dV || !O || !dO || !Q || !K || !V) return;
+    float* dq_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dQ) + dq_off);
+    float* dk_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dK) + dk_off);
+    float* dv_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dV) + dv_off);
+    const float* o_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(O) + o_off);
+    const float* do_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(dO) + do_off);
+    const float* q_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(Q) + q_off);
+    const float* k_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(K) + k_off);
+    const float* v_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(V) + v_off);
+    tpu_internal::tpu_flash_attention_backward(q_ptr, k_ptr, v_ptr, o_ptr, do_ptr, dq_ptr, dk_ptr, dv_ptr, B, H, H_kv, Tq, Tk, D, scale);
+}
+
+void TPUBackend::flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
+                                               void* O, int64_t o_off, void* dO, int64_t do_off,
+                                               void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
+                                               int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+    flash_attention_backward(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+}
 
 void TPUBackend::cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) {
     if (!input || !output) return;

@@ -76,6 +76,8 @@ miopenHandle_t get_miopen_handle() {
     return handle;
 }
 #endif
+extern "C" void gpu_set_tf32_enabled(bool) {}
+extern "C" bool gpu_is_tf32_enabled() { return false; }
 #endif
 
 static inline void auto_set_device(const void* ptr) {

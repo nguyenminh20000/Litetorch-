@@ -31,51 +31,98 @@ class BuildExt(build_ext):
                     ext.extra_link_args = ["-static-libgcc", "-static-libstdc++"]
         try:
             super().build_extensions()
+            use_rocm = bool(os.environ.get("LITETORCH_ROCM"))
+            use_cuda = bool(os.environ.get("LITETORCH_CUDA"))
             nvcc_bin = None
-            for candidate in [shutil.which("nvcc"), "/usr/local/cuda/bin/nvcc", "/usr/bin/nvcc", "/usr/local/cuda-12/bin/nvcc", "/usr/local/cuda-11/bin/nvcc"]:
-                if candidate and os.path.exists(candidate):
-                    nvcc_bin = candidate
-                    break
-            if nvcc_bin and not os.environ.get("LITETORCH_NO_NATIVE_GPU"):
-                cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
-                if os.path.exists(cu_src):
-                    target_dir = self.build_lib
-                    lib_name = "liblitetorch_gpu.dll" if sys.platform.startswith("win") else "liblitetorch_gpu.so"
-                    out_so = os.path.join(target_dir, lib_name)
-                    inc1 = os.path.join(SCRIPT_DIR, "include")
-                    inc2 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native")
-                    inc3 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "common")
-                    cmd = [
-                        nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
-                        "-arch=native",
-                        f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
-                        cu_src, "-o", out_so,
-                        "-lcublas", "-lcublasLt"
-                    ]
-                    try:
-                        res = subprocess.run(cmd, capture_output=True, text=True)
-                        if res.returncode != 0:
-                            cmd_fallback = [
-                                nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
-                                f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
-                                cu_src, "-o", out_so,
-                                "-lcublas", "-lcublasLt"
-                            ]
-                            res = subprocess.run(cmd_fallback, capture_output=True, text=True)
-                        if res.returncode == 0:
-                            extra_dests = []
-                            temp_dir = tempfile.gettempdir()
-                            if temp_dir and os.path.exists(temp_dir):
-                                extra_dests.append(os.path.join(temp_dir, lib_name))
-                            if not sys.platform.startswith("win"):
-                                extra_dests.extend(["/tmp/liblitetorch_gpu.so", "/usr/local/lib/liblitetorch_gpu.so"])
-                            for extra_dest in extra_dests:
-                                try:
-                                    shutil.copyfile(out_so, extra_dest)
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
+            if not use_rocm:
+                for candidate in [shutil.which("nvcc"), "/usr/local/cuda/bin/nvcc", "/usr/bin/nvcc", "/usr/local/cuda-12/bin/nvcc", "/usr/local/cuda-11/bin/nvcc"]:
+                    if candidate and os.path.exists(candidate):
+                        nvcc_bin = candidate
+                        break
+            hipcc_bin = None
+            if not use_cuda:
+                rocm_candidates = [shutil.which("hipcc")]
+                rocm_env = os.environ.get("ROCM_PATH") or os.environ.get("HIP_PATH")
+                if rocm_env:
+                    rocm_candidates.extend([
+                        os.path.join(rocm_env, "bin", "hipcc"),
+                        os.path.join(rocm_env, "bin", "hipcc.bat"),
+                        os.path.join(rocm_env, "bin", "hipcc.exe")
+                    ])
+                rocm_candidates.extend([
+                    "/opt/rocm/bin/hipcc",
+                    "/opt/rocm/hip/bin/hipcc",
+                    "/usr/bin/hipcc"
+                ])
+                for candidate in rocm_candidates:
+                    if candidate and os.path.exists(candidate):
+                        hipcc_bin = candidate
+                        break
+            if not os.environ.get("LITETORCH_NO_NATIVE_GPU"):
+                target_dir = self.build_lib
+                lib_name = "liblitetorch_gpu.dll" if sys.platform.startswith("win") else "liblitetorch_gpu.so"
+                out_so = os.path.join(target_dir, lib_name)
+                inc1 = os.path.join(SCRIPT_DIR, "include")
+                inc2 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native")
+                inc3 = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "common")
+                build_success = False
+                if nvcc_bin and not use_rocm:
+                    cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
+                    if os.path.exists(cu_src):
+                        cmd = [
+                            nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                            "-arch=native",
+                            f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
+                            cu_src, "-o", out_so,
+                            "-lcublas", "-lcublasLt"
+                        ]
+                        try:
+                            res = subprocess.run(cmd, capture_output=True, text=True)
+                            if res.returncode != 0:
+                                cmd_fallback = [
+                                    nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                                    f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
+                                    cu_src, "-o", out_so,
+                                    "-lcublas", "-lcublasLt"
+                                ]
+                                res = subprocess.run(cmd_fallback, capture_output=True, text=True)
+                            build_success = (res.returncode == 0)
+                        except Exception:
+                            pass
+                elif hipcc_bin:
+                    hip_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.hip")
+                    if os.path.exists(hip_src):
+                        extra_hip_args = ["-lrocblas"]
+                        for miopen_path in ["/opt/rocm/lib/libMIOpen.so", "/opt/rocm/lib64/libMIOpen.so"]:
+                            if os.path.exists(miopen_path):
+                                extra_hip_args.extend(["-lMIOpen", "-DUSE_MIOPEN"])
+                                break
+                        cmd = [
+                            hipcc_bin, "-O3", "--shared", "-fPIC", "-D__HIP_PLATFORM_AMD__",
+                            f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
+                            hip_src, "-o", out_so
+                        ] + extra_hip_args
+                        try:
+                            res = subprocess.run(cmd, capture_output=True, text=True)
+                            build_success = (res.returncode == 0)
+                        except Exception:
+                            pass
+                if build_success:
+                    extra_dests = []
+                    temp_dir = tempfile.gettempdir()
+                    if temp_dir and os.path.exists(temp_dir):
+                        extra_dests.append(os.path.join(temp_dir, lib_name))
+                    if not sys.platform.startswith("win"):
+                        extra_dests.extend([
+                            "/tmp/liblitetorch_gpu.so",
+                            "/usr/local/lib/liblitetorch_gpu.so",
+                            "/opt/rocm/lib/liblitetorch_gpu.so"
+                        ])
+                    for extra_dest in extra_dests:
+                        try:
+                            shutil.copyfile(out_so, extra_dest)
+                        except Exception:
+                            pass
         except Exception as e:
             sys.stderr.write("\n" + "=" * 70 + "\n")
             sys.stderr.write("LITETORCH BUILD ERROR:\n")
@@ -112,7 +159,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.3.30",
+    version="0.3.35",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,

@@ -124,7 +124,9 @@ public:
             "liblitetorch_gpu.so",
             "/tmp/liblitetorch_gpu.so",
             "/usr/local/lib/liblitetorch_gpu.so",
-            "/usr/lib/liblitetorch_gpu.so"
+            "/usr/lib/liblitetorch_gpu.so",
+            "/opt/rocm/lib/liblitetorch_gpu.so",
+            "/opt/rocm/lib64/liblitetorch_gpu.so"
         };
         const char* temp_env = getenv("TEMP");
         if (!temp_env) temp_env = getenv("TMP");

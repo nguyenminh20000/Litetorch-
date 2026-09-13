@@ -68,6 +68,34 @@ __device__ inline float atomic_add_float(float* addr, float val) {
     return atomicAdd(addr, val);
 }
 
+#ifdef __HIP_PLATFORM_AMD__
+__device__ inline float warp_reduce_sum(float val) {
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val += __shfl_down(val, offset);
+    }
+    return val;
+}
+__device__ inline float warp_reduce_max(float val) {
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val = fmaxf(val, __shfl_down(val, offset));
+    }
+    return val;
+}
+#else
+__device__ inline float warp_reduce_sum(float val) {
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    }
+    return val;
+}
+__device__ inline float warp_reduce_max(float val) {
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
+    }
+    return val;
+}
+#endif
+
 __device__ inline unsigned short dev_float_to_half(float f) {
     __half h = __float2half(f);
     return *reinterpret_cast<unsigned short*>(&h);

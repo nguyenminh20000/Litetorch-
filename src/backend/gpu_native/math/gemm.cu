@@ -168,6 +168,22 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
     gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
 #endif
 #else
-    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+    rocblas_handle handle = get_rocblas_handle();
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const void* a_ptr = (const char*)A + a_off * sizeof(unsigned short);
+    const void* b_ptr = (const char*)B + b_off * sizeof(unsigned short);
+    void* c_ptr = (char*)C + c_off * sizeof(unsigned short);
+    rocblas_status status = rocblas_gemm_ex(handle, rocblas_operation_none, rocblas_operation_none,
+                    N, M, K, &alpha,
+                    b_ptr, rocblas_datatype_bf16_r, N,
+                    a_ptr, rocblas_datatype_bf16_r, K,
+                    &beta,
+                    c_ptr, rocblas_datatype_bf16_r, N,
+                    c_ptr, rocblas_datatype_bf16_r, N,
+                    rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+    if (status != rocblas_status_success) {
+        gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+    }
 #endif
 }
