@@ -26,28 +26,39 @@ struct StorageUseGuard {
     }
 };
 
-cl_mem create_gpu_int_buffer(const std::vector<int64_t>& vec) {
-    std::vector<int> int_vec(vec.begin(), vec.end());
-    size_t size_bytes = int_vec.size() * sizeof(int);
-    cl_mem buf = CLBackend::get().allocate(size_bytes);
-    CLBackend::get().write(buf, size_bytes, int_vec.data());
-    return buf;
-}
-
-struct TemporaryGPUBuffers {
-    std::vector<cl_mem> buffers;
-    cl_mem add(const std::vector<int64_t>& vec) {
-        cl_mem buf = create_gpu_int_buffer(vec);
-        buffers.push_back(buf);
-        return buf;
-    }
-    ~TemporaryGPUBuffers() {
-        for (auto buf : buffers) {
+struct IntBufferPool {
+    static cl_mem get_and_fill(const std::vector<int64_t>& vec) {
+        thread_local std::vector<cl_mem> pool;
+        thread_local size_t index = 0;
+        std::vector<int> int_vec(vec.begin(), vec.end());
+        size_t size_bytes = int_vec.size() * sizeof(int);
+        if (pool.size() < 32) {
+            cl_mem buf = CLBackend::get().allocate(64 * sizeof(int));
             if (buf) {
-                CLBackend::get().free(buf);
+                pool.push_back(buf);
+                CLBackend::get().write(buf, size_bytes, int_vec.data());
+                return buf;
             }
         }
+        if (!pool.empty()) {
+            cl_mem buf = pool[index % pool.size()];
+            index++;
+            CLBackend::get().write(buf, size_bytes, int_vec.data());
+            return buf;
+        }
+        cl_mem buf = CLBackend::get().allocate(size_bytes);
+        if (buf) {
+            CLBackend::get().write(buf, size_bytes, int_vec.data());
+        }
+        return buf;
     }
+};
+
+struct TemporaryGPUBuffers {
+    cl_mem add(const std::vector<int64_t>& vec) {
+        return IntBufferPool::get_and_fill(vec);
+    }
+    ~TemporaryGPUBuffers() = default;
 };
 
 std::vector<int64_t> broadcast_shapes(const std::vector<int64_t>& shape_a, const std::vector<int64_t>& shape_b) {

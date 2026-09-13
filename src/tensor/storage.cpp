@@ -14,8 +14,9 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
     std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (device.type == DeviceType::GPU) {
-        if (CLBackend::get().is_available()) {
-            auto native = BackendDispatcher::get().get_backend();
+        auto native = BackendDispatcher::get().get_backend();
+        bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+        if (has_gpu) {
             if (native && native->is_available()) {
                 native->set_device(device.index);
             }
@@ -126,9 +127,10 @@ void StorageImpl::to(const Device& new_device) {
     if (device == new_device) return;
 
     if (new_device.type == DeviceType::GPU) {
-        if (!CLBackend::get().is_available()) return;
-        
         auto native = BackendDispatcher::get().get_backend();
+        bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+        if (!has_gpu) return;
+        
         if (native && native->is_available()) {
             native->set_device(new_device.index);
         }
@@ -240,6 +242,12 @@ void StorageImpl::swap_in_impl() {
     if (!is_swapped || gpu_data) return;
 
     auto native = BackendDispatcher::get().get_backend();
+    bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+    if (!has_gpu) {
+        is_swapped = false;
+        device = Device(DeviceType::CPU, 0);
+        return;
+    }
     if (native && native->is_available()) {
         native->set_device(device.index);
     }

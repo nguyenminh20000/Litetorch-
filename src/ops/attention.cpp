@@ -339,7 +339,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         auto node = std::make_shared<FlashAttentionNode>();
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
-        node->saved_tensors = { q, k, v };
+        node->saved_tensors = { q_c, k_c, v_c };
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

@@ -25,6 +25,7 @@
 #include "litetorch/jit.h"
 #include "litetorch/allocator.h"
 #include "litetorch/tpu.h"
+#include "litetorch/memory_manager.h"
 
 namespace py = pybind11;
 using namespace litetorch;
@@ -191,6 +192,12 @@ PYBIND11_MODULE(litetorch, m) {
             return backend->is_tf32_enabled();
         }
         return false;
+    });
+    cuda_mod.def("memory_allocated", []() -> size_t {
+        return litetorch::MemoryManager::get().get_gpu_used();
+    });
+    m.def("get_gpu_memory_used", []() -> size_t {
+        return litetorch::MemoryManager::get().get_gpu_used();
     });
 
     auto tpu_mod = m.def_submodule("tpu");

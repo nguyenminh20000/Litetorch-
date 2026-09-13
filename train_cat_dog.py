@@ -267,11 +267,22 @@ def main():
         print(f"GPU Hardware: NVIDIA GPU | Initial VRAM: {vram_used:.1f} MB / {vram_total:.1f} MB")
     print(f"Host System RAM: {get_ram_usage_mb():.1f} MB")
 
+    def get_lt_vram_mb():
+        if hasattr(lt, "cuda") and hasattr(lt.cuda, "memory_allocated"):
+            return lt.cuda.memory_allocated() / (1024.0 * 1024.0)
+        if hasattr(lt, "get_gpu_memory_used"):
+            return lt.get_gpu_memory_used() / (1024.0 * 1024.0)
+        return 0.0
+
     print(f"Pre-loading entire dataset into GPU VRAM (Num Patches: {NUM_PATCHES}, Embed Dim: {EMBED_DIM})...")
     train_gpu_batches = build_gpu_batches(train_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
     val_gpu_batches = build_gpu_batches(val_data, BATCH_SIZE, NUM_PATCHES, PATCH_DIM, device)
+    lt_vram = get_lt_vram_mb()
     gpu_util, vram_used_after, _ = get_gpu_metrics()
-    if vram_used_after is not None and vram_used is not None:
+    if lt_vram > 0:
+        curr_vram = vram_used_after if vram_used_after is not None else lt_vram
+        print(f"Dataset VRAM Footprint: {lt_vram:.2f} MB | Current VRAM: {curr_vram:.1f} MB")
+    elif vram_used_after is not None and vram_used is not None:
         print(f"Dataset VRAM Footprint: {vram_used_after - vram_used:.2f} MB | Current VRAM: {vram_used_after:.1f} MB")
     print("================================================================================\n")
 
@@ -285,6 +296,8 @@ def main():
     total_training_start = time.perf_counter()
     best_val_acc = 0.0
     best_epoch = 0
+
+    g_util, v_used, v_tot = get_gpu_metrics()
 
     for epoch in range(1, EPOCHS + 1):
         epoch_start_time = time.perf_counter()
@@ -311,9 +324,17 @@ def main():
             total += actual_batch_size
 
             ram_mb = get_ram_usage_mb()
-            g_util, v_used, v_tot = get_gpu_metrics()
+            if batch_idx == 1 or batch_idx == total_train_batches or batch_idx % 15 == 0:
+                g_util, v_used, v_tot = get_gpu_metrics()
 
-            vram_str = f"VRAM: {v_used:.0f}/{v_tot:.0f}MB" if v_used is not None else "VRAM: N/A"
+            lt_vram = get_lt_vram_mb()
+            if v_used is not None and v_tot is not None:
+                vram_str = f"VRAM: {v_used:.0f}/{v_tot:.0f}MB"
+            elif lt_vram > 0:
+                vram_str = f"VRAM: {lt_vram:.1f}MB"
+            else:
+                vram_str = "VRAM: N/A"
+
             gpu_str = f"GPU: {g_util:.0f}%" if g_util is not None else ""
 
             bar_len = 15

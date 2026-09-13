@@ -132,6 +132,12 @@ CLBackend::~CLBackend() {
     shutdown();
 }
 
+bool CLBackend::is_available() const {
+    auto native = BackendDispatcher::get().get_backend();
+    if (native && native->is_available()) return true;
+    return available_;
+}
+
 bool CLBackend::init() {
     const char* libs[] = { "libOpenCL.so.1", "libOpenCL.so" };
     for (const char* lib : libs) {

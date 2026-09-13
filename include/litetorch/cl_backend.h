@@ -157,7 +157,7 @@ public:
 
     std::shared_ptr<OpenCLCommandGraph> active_graph = nullptr;
 
-    bool is_available() const { return available_; }
+    bool is_available() const;
     cl_command_queue get_queue() const { return queue_; }
     
     cl_mem allocate(size_t size);
