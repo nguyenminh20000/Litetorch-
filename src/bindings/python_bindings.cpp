@@ -134,6 +134,13 @@ PYBIND11_MODULE(litetorch, m) {
         return litetorch::CLBackend::get().is_available();
     });
 
+    m.def("cuda_synchronize", []() {
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend && backend->is_available()) {
+            backend->finish();
+        }
+    });
+
     m.def("is_tpu_available", &litetorch::tpu::is_available);
 
     m.def("auto_device", []() {
