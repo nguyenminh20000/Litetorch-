@@ -27,7 +27,7 @@ print("wt.grad is None:", wt.grad is None)
 print("bt.grad is None:", bt.grad is None)
 if wt.grad is not None:
     def to_np(t, shape):
-        v = t.to(lt.Device("cpu")).tolist()
+        v = t.to(lt.Device("cpu")).to_vector()
         return np.array(v, dtype=np.float32).reshape(shape)
     lt_gw = to_np(wt.grad, w_np.shape)
     lt_gb = to_np(bt.grad, b_np.shape)
