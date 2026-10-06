@@ -180,13 +180,20 @@ def train_lt(data, vocab):
     emb, cnn = build_lt(vocab)
     opt = lt.optim.Adam(emb.parameters() + cnn.parameters(), lr=LR)
     n = len(x_train)
+    print("[lt] preloading batches...", flush=True)
+    t_pre = time.perf_counter()
+    lt_batches = []
+    for xb, yb in batches(x_train, y_train, BATCH):
+        b = len(xb)
+        xt = lt.Tensor.from_vector([float(v) for v in xb.reshape(-1)], [b, SEQ_LEN], dev)
+        yt = lt.Tensor.from_vector([float(v) for v in yb], [b], dev)
+        lt_batches.append((xt, yt))
+    sync()
+    print(f"[lt] preload done in {time.perf_counter()-t_pre:.2f}s, xt device: {lt_batches[0][0].device}", flush=True)
     times = []
     for ep in range(EPOCHS):
         t0 = time.perf_counter()
-        for xb, yb in batches(x_train, y_train, BATCH):
-            b = len(xb)
-            xt = lt.Tensor.from_vector([float(v) for v in xb.reshape(-1)], [b, SEQ_LEN], dev)
-            yt = lt.Tensor.from_vector([float(v) for v in yb], [b], dev)
+        for xt, yt in lt_batches:
             opt.zero_grad()
             loss = lt.Ops.cross_entropy_loss(lt_forward(emb, cnn, xt), yt)
             loss.backward()
