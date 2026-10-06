@@ -838,24 +838,25 @@ __kernel void embedding_forward(__global const float* input, int in_off,
         output[out_off + i * embedding_dim + d] = 0.0f;
     }
 }
+inline void atomic_add_f(volatile __global float* addr, float val) {
+    union { unsigned int u; float f; } old_v, new_v;
+    do {
+        old_v.f = *addr;
+        new_v.f = old_v.f + val;
+    } while (atomic_cmpxchg((volatile __global unsigned int*)addr, old_v.u, new_v.u) != old_v.u);
+}
 __kernel void embedding_backward(__global const float* input, int in_off,
                                  __global const float* grad_output, int gout_off,
                                  __global float* grad_weight, int gw_off,
                                  int num_indices, int num_embeddings, int embedding_dim) {
-    int idx_thread = get_global_id(0);
-    if (idx_thread >= num_embeddings * embedding_dim) return;
-
-    int idx = idx_thread / embedding_dim;
-    int d = idx_thread % embedding_dim;
-
-    float sum = 0.0f;
-    for (int i = 0; i < num_indices; ++i) {
-        int input_val = (int)input[in_off + i];
-        if (input_val == idx) {
-            sum += grad_output[gout_off + i * embedding_dim + d];
-        }
+    int i = get_global_id(0);
+    if (i >= num_indices) return;
+    int idx = (int)input[in_off + i];
+    if (idx < 0 || idx >= num_embeddings) return;
+    for (int d = 0; d < embedding_dim; ++d) {
+        atomic_add_f(&grad_weight[gw_off + idx * embedding_dim + d],
+                     grad_output[gout_off + i * embedding_dim + d]);
     }
-    grad_weight[gw_off + idx_thread] = sum;
 }
 __kernel void sum_backward(__global float* grad_input, int gin_off,
                            __global const float* grad_output, int gout_off,
