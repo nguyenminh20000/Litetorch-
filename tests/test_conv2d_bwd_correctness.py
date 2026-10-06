@@ -20,20 +20,15 @@ wt = lt.Tensor.from_vector(w_np.reshape(-1).tolist(), [C_out, C_in, KH, KW], dev
 bt = lt.Tensor.from_vector(b_np.tolist(), [C_out], dev, True)
 gt = lt.Tensor.from_vector(g_np.reshape(-1).tolist(), [N, C_out, 6, 6], dev)
 
-conv = lt.nn.Conv2d(C_in, C_out, 3, padding=0)
-conv.to(dev)
-conv.weight = wt
-conv.bias = bt
-
-out = conv.forward(xt)
+out = lt.Ops.conv2d(xt, wt, bt, 1, 0)
 out.backward(gt)
 
 def to_np(t, shape):
     v = t.to(lt.Device("cpu")).tolist()
     return np.array(v, dtype=np.float32).reshape(shape)
 
-lt_gw = to_np(conv.weight.grad, w_np.shape)
-lt_gb = to_np(conv.bias.grad, b_np.shape)
+lt_gw = to_np(wt.grad, w_np.shape)
+lt_gb = to_np(bt.grad, b_np.shape)
 
 xt_t = torch.tensor(x_np, requires_grad=True)
 wt_t = torch.tensor(w_np, requires_grad=True)
@@ -45,5 +40,4 @@ pt_gb = bt_t.grad.numpy()
 
 print("gw max diff:", np.max(np.abs(lt_gw - pt_gw)))
 print("gb max diff:", np.max(np.abs(lt_gb - pt_gb)))
-print("gw rel err:", np.max(np.abs(lt_gw - pt_gw)) / (np.max(np.abs(pt_gw)) + 1e-9))
 print("PASS" if np.max(np.abs(lt_gw - pt_gw)) < 1e-3 else "FAIL")
