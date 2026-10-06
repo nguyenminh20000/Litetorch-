@@ -100,6 +100,11 @@ void ProcessGroup::init(int rank, int world_size, const std::string& master_addr
                 shutdown();
                 throw std::runtime_error("Failed to read client rank");
             }
+            if (client_rank < 1 || client_rank >= world_size_) {
+                close(client_fd);
+                shutdown();
+                throw std::runtime_error("Invalid client rank received");
+            }
 
             client_fds_[client_rank] = client_fd;
         }
@@ -256,7 +261,6 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                 for (size_t j = 0; j < N; ++j) acc[j] += half_to_float(temp_ptr[j]);
             }
 
-            for (size_t j = 0; j < N; ++j) acc[j] /= world_size_;
             for (size_t j = 0; j < N; ++j) data_ptr[j] = float_to_half(acc[j]);
 
             for (int i = 1; i < world_size_; ++i) {
@@ -290,7 +294,6 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                 }
             }
 
-            for (size_t j = 0; j < N; ++j) acc[j] /= world_size_;
             for (size_t j = 0; j < N; ++j) {
                 float val_f = acc[j];
                 uint32_t val_u = *(uint32_t*)&val_f;
@@ -322,7 +325,7 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                 for (size_t j = 0; j < N; ++j) acc[j] += temp_ptr[j];
             }
 
-            for (size_t j = 0; j < N; ++j) data_ptr[j] = acc[j] / world_size_;
+            for (size_t j = 0; j < N; ++j) data_ptr[j] = acc[j];
 
             for (int i = 1; i < world_size_; ++i) {
                 size_t bytes_sent = 0;

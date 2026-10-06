@@ -185,8 +185,8 @@ public:
         gpu_bmm_half_fn = (gpu_bmm_half_t)dlsym(handle, "gpu_bmm_half");
         gpu_matmul_fp8_fn = (gpu_matmul_fp8_t)dlsym(handle, "gpu_matmul_fp8");
         gpu_matmul_bf16_fn = (gpu_matmul_bf16_t)dlsym(handle, "gpu_matmul_bf16");
-        gpu_sum_fn = (gpu_sum_t)dlsym(handle, "gpu_sum");
-        gpu_max_fn = (gpu_max_t)dlsym(handle, "gpu_max");
+        gpu_sum_fn = (gpu_sum_t)dlsym(handle, "gpu_sum_forward");
+        gpu_max_fn = (gpu_max_t)dlsym(handle, "gpu_max_forward");
         gpu_adamw_step_fn = (gpu_adamw_step_t)dlsym(handle, "gpu_adamw_step");
         gpu_flash_attention_fn = (gpu_flash_attention_t)dlsym(handle, "gpu_flash_attention");
         gpu_flash_attention_half_fn = (gpu_flash_attention_half_t)dlsym(handle, "gpu_flash_attention_half");

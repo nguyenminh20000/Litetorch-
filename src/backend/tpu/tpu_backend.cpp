@@ -3,6 +3,7 @@
 #include "litetorch/tpu.h"
 #include <iostream>
 #include <cstring>
+#include <stdexcept>
 
 namespace litetorch {
 
@@ -87,19 +88,19 @@ void TPUBackend::bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, in
 }
 
 void TPUBackend::matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
-    matmul(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] TPUBackend::matmul_half not implemented (FP32-only backend)");
 }
 
 void TPUBackend::bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
-    bmm(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+    throw std::runtime_error("[litetorch Error] TPUBackend::bmm_half not implemented (FP32-only backend)");
 }
 
 void TPUBackend::matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float, float, float) {
-    matmul(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] TPUBackend::matmul_fp8 not implemented (FP32-only backend)");
 }
 
 void TPUBackend::matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
-    matmul(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] TPUBackend::matmul_bf16 not implemented (FP32-only backend)");
 }
 
 void TPUBackend::sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
@@ -143,7 +144,7 @@ void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off,
 }
 
 void TPUBackend::flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-    flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+    throw std::runtime_error("[litetorch Error] TPUBackend::flash_attention_half not implemented (FP32-only backend)");
 }
 
 void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
@@ -166,7 +167,7 @@ void TPUBackend::flash_attention_backward_half(void* dQ, int64_t dq_off, void* d
                                                void* O, int64_t o_off, void* dO, int64_t do_off,
                                                void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
                                                int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-    flash_attention_backward(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+    throw std::runtime_error("[litetorch Error] TPUBackend::flash_attention_backward_half not implemented (FP32-only backend)");
 }
 
 void TPUBackend::cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) {

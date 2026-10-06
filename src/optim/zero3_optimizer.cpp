@@ -48,15 +48,17 @@ void ZeRO3Optimizer::step() {
                                     active_size, lr_t, beta1, beta2, eps, weight_decay);
             }
         } else {
+            auto grad_c = active_p->grad->is_contiguous() ? active_p->grad : active_p->grad->contiguous();
             float* p_ptr = active_p->data_ptr();
-            float* g_ptr = active_p->grad->data_ptr();
+            float* g_ptr = grad_c->data_ptr();
             float* m_ptr = m[active_p.get()]->data_ptr();
             float* v_ptr = v[active_p.get()]->data_ptr();
             for (size_t i = 0; i < active_size; ++i) {
-                float g = g_ptr[i] + weight_decay * p_ptr[i];
+                float g = g_ptr[i];
                 m_ptr[i] = beta1 * m_ptr[i] + (1.0f - beta1) * g;
                 v_ptr[i] = beta2 * v_ptr[i] + (1.0f - beta2) * g * g;
-                p_ptr[i] -= lr_t * m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
+                float update = m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
+                p_ptr[i] -= lr_t * (weight_decay * p_ptr[i] + update);
             }
         }
     }
@@ -85,15 +87,17 @@ void ZeRO3Optimizer::step() {
                                         active_size, lr_t, beta1, beta2, eps, weight_decay);
                 }
             } else {
+                auto grad_c = p->grad->is_contiguous() ? p->grad : p->grad->contiguous();
                 float* p_ptr = p->data_ptr();
-                float* g_ptr = p->grad->data_ptr();
+                float* g_ptr = grad_c->data_ptr();
                 float* m_ptr = m[p.get()]->data_ptr();
                 float* v_ptr = v[p.get()]->data_ptr();
                 for (size_t i = 0; i < active_size; ++i) {
-                    float g = g_ptr[i] + weight_decay * p_ptr[i];
+                    float g = g_ptr[i];
                     m_ptr[i] = beta1 * m_ptr[i] + (1.0f - beta1) * g;
                     v_ptr[i] = beta2 * v_ptr[i] + (1.0f - beta2) * g * g;
-                    p_ptr[i] -= lr_t * m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
+                    float update = m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
+                    p_ptr[i] -= lr_t * (weight_decay * p_ptr[i] + update);
                 }
             }
         }

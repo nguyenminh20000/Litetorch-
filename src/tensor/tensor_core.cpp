@@ -1072,9 +1072,13 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
 
     auto target_storage = std::make_shared<StorageImpl>(num_elements, Device(DeviceType::CPU, 0), target_dtype);
     auto out = std::make_shared<Tensor>(target_storage, shape, default_strides(shape), 0, Device(DeviceType::CPU, 0), requires_grad);
-    
-    storage->ensure_cpu();
-    void* src_cpu = (void*)storage->get_cpu_ptr();
+
+    // Linear reads below assume a dense layout; make the source contiguous
+    // so views/slices/transposes (non-contiguous or offset != 0) are read
+    // correctly (mirrors the GPU path's self_c handling above).
+    auto src_tensor = is_contiguous() ? shared_from_this() : contiguous();
+    src_tensor->storage->ensure_cpu();
+    void* src_cpu = (void*)src_tensor->storage->get_cpu_ptr();
     void* dst_cpu = (void*)out->storage->get_cpu_ptr();
     
     if (dtype == DataType::FP32 && target_dtype == DataType::FP16) {

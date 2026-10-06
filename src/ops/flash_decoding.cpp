@@ -20,6 +20,7 @@ std::shared_ptr<Tensor> flash_decoding(
     int64_t H = q->shape[1];
     int64_t T_q = q->shape[2];
     int64_t D = q->shape[3];
+    int64_t H_kv = k->shape[1];
     int64_t T_k = k->shape[2];
 
     if (T_q != 1 || q->device.type == DeviceType::GPU) {
@@ -30,12 +31,29 @@ std::shared_ptr<Tensor> flash_decoding(
         return flash_attention(q, k, v);
     }
 
+    // Validate shapes and dtypes: this CPU path assumes FP32 and matching layouts
+    if (q->shape.size() != 4 || k->shape.size() != 4 || v->shape.size() != 4 ||
+        k->shape[0] != B || v->shape[0] != B || k->shape[3] != D || v->shape[3] != D ||
+        v->shape[1] != H_kv || v->shape[2] != T_k) {
+        throw std::runtime_error("[litetorch Error] flash_decoding: k/v shape mismatch");
+    }
+    if (H % H_kv != 0) {
+        throw std::runtime_error("[litetorch Error] flash_decoding: H must be divisible by H_kv");
+    }
+    if (q->dtype != DataType::FP32 || k->dtype != DataType::FP32 || v->dtype != DataType::FP32) {
+        return flash_attention(q, k, v);
+    }
+    int64_t group_size = H / H_kv;
+
     auto out = Tensor::zeros({B, H, 1, D}, q->device, false);
     float scale = 1.0f / std::sqrt(static_cast<float>(D));
 
-    float* q_ptr = q->data_ptr();
-    float* k_ptr = k->data_ptr();
-    float* v_ptr = v->data_ptr();
+    auto q_c = q->is_contiguous() ? q : q->contiguous();
+    auto k_c = k->is_contiguous() ? k : k->contiguous();
+    auto v_c = v->is_contiguous() ? v : v->contiguous();
+    float* q_ptr = q_c->data_ptr();
+    float* k_ptr = k_c->data_ptr();
+    float* v_ptr = v_c->data_ptr();
     float* out_ptr = out->data_ptr();
 
     int64_t chunk_size = (T_k + num_splits - 1) / num_splits;
@@ -59,7 +77,8 @@ std::shared_ptr<Tensor> flash_decoding(
             for (int64_t j = start_idx; j < end_idx; ++j) {
                 float dot = 0.0f;
                 int64_t q_offset = b * (H * T_q * D) + h * (T_q * D);
-                int64_t k_offset = b * (H * T_k * D) + h * (T_k * D) + j * D;
+                int64_t h_kv = h / group_size;
+                int64_t k_offset = b * (H_kv * T_k * D) + h_kv * (T_k * D) + j * D;
                 for (int64_t d = 0; d < D; ++d) {
                     dot += q_ptr[q_offset + d] * k_ptr[k_offset + d];
                 }
@@ -82,7 +101,8 @@ std::shared_ptr<Tensor> flash_decoding(
             for (int64_t d = 0; d < D; ++d) {
                 float sum_v = 0.0f;
                 for (int64_t j = start_idx; j < end_idx; ++j) {
-                    int64_t v_offset = b * (H * T_k * D) + h * (T_k * D) + j * D;
+                    int64_t h_kv = h / group_size;
+                    int64_t v_offset = b * (H_kv * T_k * D) + h_kv * (T_k * D) + j * D;
                     sum_v += exp_S[j - start_idx] * v_ptr[v_offset + d];
                 }
                 O_s[s][d] = sum_v;

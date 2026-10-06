@@ -39,9 +39,12 @@ bool GradScaler::check_inf_nan(const std::vector<std::shared_ptr<Tensor>>& grads
 void GradScaler::unscale_grads(const std::vector<std::shared_ptr<Tensor>>& grads) {
     for (auto& g : grads) {
         if (!g) continue;
-        auto scale_tensor = Tensor::from_vector({scale}, {}, g->device, false, g->dtype);
-        auto unscaled = Ops::div(g, scale_tensor);
-        g->copy_(unscaled);
+        // Always unscale in FP32: a scale > 65504 overflows FP16 to inf,
+        // which would silently zero all gradients (div by inf = 0).
+        auto scale_tensor = Tensor::from_vector({scale}, {}, g->device, false, DataType::FP32);
+        auto g_fp32 = (g->dtype == DataType::FP32) ? g : g->cast(DataType::FP32);
+        auto unscaled = Ops::div(g_fp32, scale_tensor);
+        g->copy_(unscaled->cast(g->dtype));
     }
 }
 

@@ -108,6 +108,9 @@ cl_mem StorageImpl::get_gpu_ptr() {
             swap_in_impl();
         }
     }
+    // Hold the storage lock for the cpu->gpu migration below: two threads
+    // racing here would both write and double-free cpu_data.
+    std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (cpu_data) {
         if (device.type == DeviceType::TPU && gpu_data) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -152,6 +155,10 @@ void StorageImpl::to(const Device& new_device) {
             CLBackend::get().write(new_gpu_data, size * element_size(), tmp);
             if (tpu) tpu->free(gpu_data);
             CachingAllocator::get().free_cpu(tmp);
+        } else if (gpu_data) {
+            // GPU -> GPU (different index): device-to-device copy, then free old buffer
+            CLBackend::get().copy(gpu_data, new_gpu_data, size * element_size());
+            CLBackend::get().free(gpu_data);
         }
         gpu_data = new_gpu_data;
         device = new_device;
@@ -174,6 +181,10 @@ void StorageImpl::to(const Device& new_device) {
             CLBackend::get().free(gpu_data);
             MemoryManager::get().unregister_gpu_impl(this);
             CachingAllocator::get().free_cpu(tmp);
+        } else if (gpu_data) {
+            // TPU -> TPU (different index): device-to-device copy, then free old buffer
+            tpu->copy(gpu_data, new_tpu_data, size * element_size());
+            tpu->free(gpu_data);
         }
         gpu_data = new_tpu_data;
         device = new_device;

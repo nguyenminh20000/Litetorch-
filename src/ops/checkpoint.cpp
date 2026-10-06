@@ -5,7 +5,7 @@
 
 namespace litetorch {
 
-class CheckpointNode : public Node {
+class ModuleCheckpointNode : public Node {
 public:
     std::shared_ptr<nn::Module> module;
     std::vector<std::shared_ptr<Tensor>> saved_inputs;
@@ -13,10 +13,10 @@ public:
     std::vector<bool> orig_requires_grad_inputs;
     std::vector<bool> orig_requires_grad_params;
 
-    CheckpointNode(std::shared_ptr<nn::Module> mod,
+    ModuleCheckpointNode(std::shared_ptr<nn::Module> mod,
                    const std::vector<std::shared_ptr<Tensor>>& inputs,
                    const std::vector<std::shared_ptr<Tensor>>& params)
-        : Node("Checkpoint"), module(mod), saved_inputs(inputs), saved_params(params) {
+        : Node("ModuleCheckpoint"), module(mod), saved_inputs(inputs), saved_params(params) {
         for (auto& t : inputs) orig_requires_grad_inputs.push_back(t->requires_grad);
         for (auto& t : params) orig_requires_grad_params.push_back(t->requires_grad);
     }
@@ -43,9 +43,6 @@ public:
         }
 
         local_out->creator = std::shared_ptr<Node>(nullptr);
-
-        for (auto& t : saved_inputs) t->requires_grad = false;
-        for (auto& t : saved_params) t->requires_grad = false;
 
         return grads;
     }
@@ -80,7 +77,7 @@ std::shared_ptr<Tensor> checkpoint(std::shared_ptr<nn::Module> module, std::shar
     }
 
     if (any_requires_grad) {
-        auto node = std::make_shared<CheckpointNode>(module, std::vector<std::shared_ptr<Tensor>>{input}, params);
+        auto node = std::make_shared<ModuleCheckpointNode>(module, std::vector<std::shared_ptr<Tensor>>{input}, params);
         node->inputs.push_back({input, input_requires_grad});
         node->next_nodes.push_back(input->creator);
         for (size_t i = 0; i < params.size(); ++i) {

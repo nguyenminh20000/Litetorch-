@@ -27,7 +27,23 @@ std::shared_ptr<Tensor> ring_attention(
     int64_t H = q->shape[1];
     int64_t T_local = q->shape[2];
     int64_t D = q->shape[3];
+    int64_t H_kv = k->shape[1];
 
+    // Validate shapes and dtypes: this path assumes FP32 and proper sharding
+    if (q->shape.size() != 4 || k->shape.size() != 4 || v->shape.size() != 4 ||
+        k->shape[0] != B || k->shape[2] != T_local || k->shape[3] != D ||
+        v->shape[0] != B || v->shape[1] != H_kv || v->shape[2] != T_local || v->shape[3] != D) {
+        throw std::runtime_error("[litetorch Error] ring_attention: k/v shape mismatch");
+    }
+    if (H % H_kv != 0) {
+        throw std::runtime_error("[litetorch Error] ring_attention: H must be divisible by H_kv");
+    }
+    if (q->dtype != DataType::FP32 || k->dtype != DataType::FP32 || v->dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] ring_attention: only FP32 supported on CPU path");
+    }
+    int64_t group_size = H / H_kv;
+
+    auto q_c = q->is_contiguous() ? q : q->contiguous();
     auto k_curr = k->is_contiguous() ? k : k->contiguous();
     auto v_curr = v->is_contiguous() ? v : v->contiguous();
 
@@ -47,7 +63,7 @@ std::shared_ptr<Tensor> ring_attention(
     int src = (rank - 1 + world_size) % world_size;
 
     for (int step = 0; step < world_size; ++step) {
-        float* q_ptr = q->data_ptr();
+        float* q_ptr = q_c->data_ptr();
         float* k_ptr = k_curr->data_ptr();
         float* v_ptr = v_curr->data_ptr();
         float* out_ptr = out->data_ptr();
@@ -57,6 +73,7 @@ std::shared_ptr<Tensor> ring_attention(
             int64_t b = idx / (H * T_local);
             int64_t h = (idx % (H * T_local)) / T_local;
             int64_t t = idx % T_local;
+            int64_t h_kv = h / group_size;
 
             float m_old = M_ptr[idx];
             float l_old = L_ptr[idx];
@@ -67,7 +84,7 @@ std::shared_ptr<Tensor> ring_attention(
             for (int64_t j = 0; j < T_local; ++j) {
                 float dot = 0.0f;
                 int64_t q_offset = b * (H * T_local * D) + h * (T_local * D) + t * D;
-                int64_t k_offset = b * (H * T_local * D) + h * (T_local * D) + j * D;
+                int64_t k_offset = b * (H_kv * T_local * D) + h_kv * (T_local * D) + j * D;
                 for (int64_t d = 0; d < D; ++d) {
                     dot += q_ptr[q_offset + d] * k_ptr[k_offset + d];
                 }
@@ -94,7 +111,7 @@ std::shared_ptr<Tensor> ring_attention(
                 float val_old = out_ptr[out_offset + d] * l_old * exp_old;
                 float val_new = 0.0f;
                 for (int64_t j = 0; j < T_local; ++j) {
-                    int64_t v_offset = b * (H * T_local * D) + h * (T_local * D) + j * D;
+                    int64_t v_offset = b * (H_kv * T_local * D) + h_kv * (T_local * D) + j * D;
                     val_new += exp_S[j] * v_ptr[v_offset + d];
                 }
                 out_ptr[out_offset + d] = (val_old + val_new) / (l_new + 1e-15f);

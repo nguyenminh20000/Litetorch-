@@ -131,18 +131,10 @@ public:
         if (probs_grad_node) {
             auto probs_grads = probs_grad_node->backward(grad_probs);
             if (probs_grads.size() > 0 && probs_grads[0]) {
-                float* pg_in_ptr = grads[0]->data_ptr();
-                float* pg_add_ptr = probs_grads[0]->data_ptr();
-                for (size_t i = 0; i < grads[0]->numel(); ++i) {
-                    pg_in_ptr[i] += pg_add_ptr[i];
-                }
+                grads[0]->add_(probs_grads[0]);
             }
             if (probs_grads.size() > 1 && probs_grads[1]) {
-                float* pg_gw_ptr = grads[1]->data_ptr();
-                float* pg_add_gw = probs_grads[1]->data_ptr();
-                for (size_t i = 0; i < grads[1]->numel(); ++i) {
-                    pg_gw_ptr[i] += pg_add_gw[i];
-                }
+                grads[1]->add_(probs_grads[1]);
             }
         }
 

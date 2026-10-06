@@ -549,7 +549,7 @@ __kernel void batch_norm2d_backward_dx_kernel(__global const float* input, int i
 __kernel void mse_loss_forward(__global const float* input, int in_off,
                                __global const float* target, int tgt_off,
                                __global float* output, int out_off,
-                               int size) {
+                               int size, float inv_n) {
     __local float sdata[256];
     int tid = get_local_id(0);
     int idx = get_group_id(0) * get_local_size(0) + get_local_id(0);
@@ -568,7 +568,7 @@ __kernel void mse_loss_forward(__global const float* input, int in_off,
         barrier(CLK_LOCAL_MEM_FENCE);
     }
     if (tid == 0) {
-        atomic_add_float(&output[out_off], sdata[0]);
+        atomic_add_float(&output[out_off], sdata[0] * inv_n);
     }
 }
 __kernel void mse_loss_backward(__global const float* input, int in_off,
@@ -586,7 +586,7 @@ __kernel void mse_loss_backward(__global const float* input, int in_off,
 __kernel void l1_loss_forward(__global const float* input, int in_off,
                               __global const float* target, int tgt_off,
                               __global float* output, int out_off,
-                              int size) {
+                              int size, float inv_n) {
     __local float sdata[256];
     int tid = get_local_id(0);
     int idx = get_group_id(0) * get_local_size(0) + get_local_id(0);
@@ -604,7 +604,7 @@ __kernel void l1_loss_forward(__global const float* input, int in_off,
         barrier(CLK_LOCAL_MEM_FENCE);
     }
     if (tid == 0) {
-        atomic_add_float(&output[out_off], sdata[0]);
+        atomic_add_float(&output[out_off], sdata[0] * inv_n);
     }
 }
 __kernel void l1_loss_backward(__global const float* input, int in_off,
@@ -623,7 +623,7 @@ __kernel void l1_loss_backward(__global const float* input, int in_off,
 __kernel void bce_loss_forward(__global const float* input, int in_off,
                                __global const float* target, int tgt_off,
                                __global float* output, int out_off,
-                               int size) {
+                               int size, float inv_n) {
     __local float sdata[256];
     int tid = get_local_id(0);
     int idx = get_group_id(0) * get_local_size(0) + get_local_id(0);
@@ -645,7 +645,7 @@ __kernel void bce_loss_forward(__global const float* input, int in_off,
         barrier(CLK_LOCAL_MEM_FENCE);
     }
     if (tid == 0) {
-        atomic_add_float(&output[out_off], sdata[0]);
+        atomic_add_float(&output[out_off], sdata[0] * inv_n);
     }
 }
 __kernel void bce_loss_backward(__global const float* input, int in_off,
@@ -666,7 +666,7 @@ __kernel void bce_loss_backward(__global const float* input, int in_off,
 __kernel void cross_entropy_loss_forward(__global const float* input, int in_off,
                                          __global const float* target, int tgt_off,
                                          __global float* output, int out_off,
-                                         int N, int C) {
+                                         int N, int C, float inv_n) {
     int i = get_global_id(0);
     if (i >= N) return;
     float max_val = input[in_off + i * C];
@@ -681,7 +681,7 @@ __kernel void cross_entropy_loss_forward(__global const float* input, int in_off
     int target_idx = (int)target[tgt_off + i];
     float correct_logit = input[in_off + i * C + target_idx];
     float loss = -correct_logit + max_val + log(sum_exp);
-    atomic_add_float(&output[out_off], loss);
+    atomic_add_float(&output[out_off], loss * inv_n);
 }
 __kernel void cross_entropy_loss_backward(__global const float* input, int in_off,
                                           __global const float* target, int tgt_off,

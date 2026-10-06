@@ -73,6 +73,12 @@ void CachingAllocator::free_cpu(void* ptr) {
             std::free(ptr);
         }
     } else {
+        // Not a live allocation: either a double-free or a foreign pointer.
+        // Check the free-list before calling std::free to avoid freeing a
+        // cached block that may be handed out again (use-after-free).
+        for (auto f = free_cpu_blocks_.begin(); f != free_cpu_blocks_.end(); ++f) {
+            if (f->second == ptr) return; // already freed / cached: ignore
+        }
         std::free(ptr);
     }
 }

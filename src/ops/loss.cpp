@@ -234,8 +234,8 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
         CLBackend::get().launch(kernel, {blocks * 256}, {256},
-            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val},
-            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
+            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
         float* in_ptr = input_c->data_ptr();
         float* tgt_ptr = target_c->data_ptr();
@@ -267,6 +267,7 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
     auto out = Tensor::create({1}, input_c->device);
     StorageUseGuard guard({input_c->storage, target_c->storage, out->storage});
     size_t size = input_c->numel();
+    float inv_n = 1.0f / size;
 
     if (input_c->device.type == DeviceType::GPU) {
         auto kernel = CLBackend::get().get_kernel(KernelID::BceLossForward);
@@ -282,8 +283,8 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
         CLBackend::get().launch(kernel, {blocks * 256}, {256},
-            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val},
-            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
+            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
         float* in_ptr = input_c->data_ptr();
         float* tgt_ptr = target_c->data_ptr();
@@ -341,8 +342,8 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
         CLBackend::get().launch(kernel, {blocks * 256}, {256},
-            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val},
-            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
+            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
         float* in_ptr = input_c->data_ptr();
         float* tgt_ptr = target_c->data_ptr();
@@ -391,9 +392,10 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
         int out_off = out->offset;
         float zero = 0.0f;
         CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+        float inv_n = 1.0f / N;
         CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
-            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &N, &C},
-            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+            {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &N, &C, &inv_n},
+            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {
         float* in_ptr = input_c->data_ptr();
         float* tgt_ptr = target_c->data_ptr();

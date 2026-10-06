@@ -199,7 +199,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
                 uint16_t* r_buf = reinterpret_cast<uint16_t*>(shm_buffers_[r]);
                 sum += half_to_float(r_buf[j]);
             }
-            acc[j] = float_to_half(sum / world_size_);
+            acc[j] = float_to_half(sum);
         }
         if (tensor->device.type == DeviceType::GPU) {
             CLBackend::get().write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
@@ -215,7 +215,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
                 uint32_t val = ((uint32_t)r_buf[j]) << 16;
                 sum += *(float*)&val;
             }
-            float avg = sum / world_size_;
+            float avg = sum;
             uint32_t val = *(uint32_t*)&avg;
             acc[j] = (uint16_t)(val >> 16);
         }
@@ -231,7 +231,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
             for (int r = 0; r < world_size_; ++r) {
                 sum += shm_buffers_[r][j];
             }
-            acc[j] = sum / world_size_;
+            acc[j] = sum;
         }
         if (tensor->device.type == DeviceType::GPU) {
             CLBackend::get().write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);

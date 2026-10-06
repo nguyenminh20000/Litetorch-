@@ -81,6 +81,10 @@ void DataLoader::reset() {
         for (size_t d = 1; d < x_tensor->shape.size(); ++d) {
             D *= x_tensor->shape[d];
         }
+        int64_t Dy = 1;
+        for (size_t d = 1; d < y_tensor->shape.size(); ++d) {
+            Dy *= y_tensor->shape[d];
+        }
 
         std::vector<int64_t> epoch_x_shape = x_tensor->shape;
         epoch_x_shape[0] = n;
@@ -98,7 +102,7 @@ void DataLoader::reset() {
         for (size_t i = 0; i < n; ++i) {
             size_t idx = indices[i];
             std::memcpy(ex_ptr + i * D, x_ptr + idx * D, D * sizeof(float));
-            ey_ptr[i] = y_ptr[idx];
+            std::memcpy(ey_ptr + i * Dy, y_ptr + idx * Dy, Dy * sizeof(float));
         }
 
         epoch_x_gpu = epoch_x_cpu->to(device);
@@ -166,6 +170,10 @@ void DataLoader::worker_loop() {
             for (size_t d = 1; d < x_tensor->shape.size(); ++d) {
                 D *= x_tensor->shape[d];
             }
+            int64_t Dy = 1;
+            for (size_t d = 1; d < y_tensor->shape.size(); ++d) {
+                Dy *= y_tensor->shape[d];
+            }
             
             std::vector<int64_t> batch_x_shape = x_tensor->shape;
             batch_x_shape[0] = batch_len;
@@ -185,7 +193,7 @@ void DataLoader::worker_loop() {
                     local_y_gpu->storage, 
                     batch_y_shape, 
                     default_strides(batch_y_shape), 
-                    local_y_gpu->offset + start, 
+                    local_y_gpu->offset + start * Dy, 
                     device, 
                     false
                 );

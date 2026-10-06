@@ -663,14 +663,14 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::ZeRO3Optimizer::weight_decay);
 
     py::class_<optim::StepLR>(optim_mod, "StepLR")
-        .def(py::init<optim::Optimizer*, int, float>(), py::arg("optimizer"), py::arg("step_size"), py::arg("gamma") = 0.1f)
+        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("step_size"), py::arg("gamma") = 0.1f)
         .def("step", &optim::StepLR::step)
         .def_readwrite("step_size", &optim::StepLR::step_size)
         .def_readwrite("gamma", &optim::StepLR::gamma)
         .def_readwrite("last_epoch", &optim::StepLR::last_epoch);
 
     py::class_<optim::CosineAnnealingLR>(optim_mod, "CosineAnnealingLR")
-        .def(py::init<optim::Optimizer*, int, float>(), py::arg("optimizer"), py::arg("T_max"), py::arg("eta_min") = 0.0f)
+        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("T_max"), py::arg("eta_min") = 0.0f)
         .def("step", &optim::CosineAnnealingLR::step)
         .def_readwrite("T_max", &optim::CosineAnnealingLR::T_max)
         .def_readwrite("eta_min", &optim::CosineAnnealingLR::eta_min)

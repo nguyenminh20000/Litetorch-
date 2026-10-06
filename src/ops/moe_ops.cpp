@@ -116,6 +116,9 @@ std::shared_ptr<Tensor> moe_gate(
     int64_t N = input->shape[0];
     int64_t D = input->shape[1];
     int64_t E = gate_weight->shape[0];
+    if (top_k < 1 || top_k > E) {
+        throw std::runtime_error("[litetorch Error] moe_gate: top_k must satisfy 1 <= top_k <= num_experts (" + std::to_string(E) + "), got " + std::to_string(top_k));
+    }
 
     auto logits = Ops::matmul(input, gate_weight->transpose(0, 1));
     auto out_probs = Tensor::create({N, top_k}, input->device, false);

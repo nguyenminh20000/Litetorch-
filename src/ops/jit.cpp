@@ -14,7 +14,7 @@
 namespace litetorch {
 
 static std::string to_opencl_expr(std::shared_ptr<JITVar> var) {
-    if (var->op == JITVar::OpType::INPUT) return var->name + "[id + " + var->name + "_off]";
+    if (var->op == JITVar::OpType::INPUT) return var->name + "[idx + " + var->name + "_off]";
     if (var->op == JITVar::OpType::CONST) return std::to_string(var->val) + "f";
 
     std::string left_expr = to_opencl_expr(var->left);

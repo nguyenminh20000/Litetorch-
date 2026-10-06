@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 namespace litetorch {
 
@@ -1019,14 +1020,15 @@ public:
     AbsNode() : Node("Abs") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto input = saved_tensors[0];
-        auto signs = Tensor::create(input->shape, input->device);
-        float* in_ptr = input->data_ptr();
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto signs = Tensor::create(input_c->shape, Device(DeviceType::CPU, 0));
+        float* in_ptr = input_c->data_ptr();
         float* s_ptr = signs->data_ptr();
-        for (size_t i = 0; i < input->numel(); ++i) {
+        for (size_t i = 0; i < input_c->numel(); ++i) {
             s_ptr[i] = (in_ptr[i] > 0.0f) ? 1.0f : ((in_ptr[i] < 0.0f) ? -1.0f : 0.0f);
         }
-        if (input->device.type == DeviceType::GPU) {
-            signs->to(input->device);
+        if (input->device.type != DeviceType::CPU) {
+            signs = signs->to(input->device);
         }
         auto grad_input = mul(grad_output, signs);
         return { grad_input };
@@ -1209,13 +1211,21 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
+        auto a_c = a->is_contiguous() ? a : a->contiguous();
         float total = 0.0f;
-        float* ptr = a->data_ptr();
-        size_t size = a->numel();
+        float* ptr = a_c->data_ptr();
+        size_t size = a_c->numel();
         for (size_t i = 0; i < size; ++i) {
             total += ptr[i];
         }
-        out->data_ptr()[0] = total;
+        float* out_ptr = out->data_ptr();
+        out_ptr[0] = total;
+        if (out->device.type == DeviceType::GPU) {
+            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+        }
     }
     if (a->requires_grad) {
         auto node = std::make_shared<SumNode>(a->shape);
@@ -1333,13 +1343,21 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
     }
 
     if (!run_gpu) {
-        float* ptr = a->data_ptr();
-        float max_val = ptr[0];
-        size_t size = a->numel();
+        auto a_c = a->is_contiguous() ? a : a->contiguous();
+        float* ptr = a_c->data_ptr();
+        size_t size = a_c->numel();
+        float max_val = (size > 0) ? ptr[0] : -std::numeric_limits<float>::infinity();
         for (size_t i = 1; i < size; ++i) {
             if (ptr[i] > max_val) max_val = ptr[i];
         }
-        out->data_ptr()[0] = max_val;
+        float* out_ptr = out->data_ptr();
+        out_ptr[0] = max_val;
+        if (out->device.type == DeviceType::GPU) {
+            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+        } else if (out->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+        }
     }
 
     if (a->requires_grad) {
@@ -1596,15 +1614,16 @@ public:
     ClampNode(float min_val, float max_val) : Node("Clamp"), min_val(min_val), max_val(max_val) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto input = saved_tensors[0];
-        auto mask = Tensor::create(input->shape, input->device);
-        StorageUseGuard guard({input->storage, mask->storage});
-        float* in_ptr = input->data_ptr();
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto mask = Tensor::create(input_c->shape, Device(DeviceType::CPU, 0));
+        StorageUseGuard guard({input_c->storage, mask->storage});
+        float* in_ptr = input_c->data_ptr();
         float* m_ptr = mask->data_ptr();
-        for (size_t i = 0; i < input->numel(); ++i) {
+        for (size_t i = 0; i < input_c->numel(); ++i) {
             m_ptr[i] = (in_ptr[i] >= min_val && in_ptr[i] <= max_val) ? 1.0f : 0.0f;
         }
-        if (input->device.type == DeviceType::GPU) {
-            mask->to(input->device);
+        if (input->device.type != DeviceType::CPU) {
+            mask = mask->to(input->device);
         }
         auto grad_input = mul(grad_output, mask);
         return { grad_input };
@@ -1612,15 +1631,22 @@ public:
 };
 
 std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float max_val) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    float* src = a->data_ptr();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    float* src = a_c->data_ptr();
     float* dst = out->data_ptr();
     size_t size = out->numel();
     ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
         float x = src[i];
         dst[i] = x < min_val ? min_val : (x > max_val ? max_val : x);
     });
+    if (out->device.type == DeviceType::GPU) {
+        CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+    } else if (out->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
+    }
     if (a->requires_grad) {
         auto node = std::make_shared<ClampNode>(min_val, max_val);
         node->inputs = { {a, true} };

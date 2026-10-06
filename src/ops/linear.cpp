@@ -230,7 +230,9 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         }
     } else if (a->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
-        if (tpu && tpu->is_available()) {
+        // TPU kernels are FP32-only; non-FP32 dtypes fall through to the
+        // FP32-cast fallback below instead of corrupting memory.
+        if (tpu && tpu->is_available() && a_c->dtype == DataType::FP32 && b_c->dtype == DataType::FP32) {
             run_gpu = true;
             int64_t lda = a_trans ? a->shape[0] : a_c->shape[1];
             int64_t ldb = b_trans ? b->shape[0] : b_c->shape[1];
@@ -238,12 +240,12 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         }
     }
     if (!run_gpu) {
-        if (a_c->dtype == DataType::FP16 || b_c->dtype == DataType::FP16) {
+        if (a_c->dtype != DataType::FP32 || b_c->dtype != DataType::FP32) {
             auto a_fp32 = a_c->cast(DataType::FP32);
             auto b_fp32 = b_c->cast(DataType::FP32);
             auto out_fp32 = matmul(a_fp32, b_fp32);
-            auto out_fp16 = out_fp32->cast(DataType::FP16);
-            out->copy_(out_fp16);
+            auto out_cast = out_fp32->cast(out->dtype);
+            out->copy_(out_cast);
         } else {
             float* A = a_c->data_ptr();
             float* B = b_c->data_ptr();

@@ -5,6 +5,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/amp.h"
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <limits>
 #include <vector>
@@ -365,6 +366,11 @@ std::shared_ptr<Tensor> paged_attention(
     int64_t max_num_blocks_per_seq = block_tables->shape[1];
     float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
+    // The OpenCL kernel uses a fixed-size private array float acc[128]
+    if (head_dim > 128) {
+        throw std::runtime_error("[litetorch Error] paged_attention: head_dim must be <= 128");
+    }
+
     if (q->device.type == DeviceType::CPU) {
         float* q_ptr = q->data_ptr();
         void* k_void = k_cache->storage->cpu_data;
@@ -379,6 +385,27 @@ std::shared_ptr<Tensor> paged_attention(
         auto get_val = [](void* ptr, int64_t idx, DataType dtype) -> float {
             if (dtype == DataType::FP32) {
                 return static_cast<float*>(ptr)[idx];
+            } else if (dtype == DataType::FP16) {
+                uint16_t h = static_cast<uint16_t*>(ptr)[idx];
+                uint32_t sign = (h >> 15) & 1;
+                uint32_t exp = (h >> 10) & 0x1F;
+                uint32_t mant = h & 0x3FF;
+                uint32_t fbits;
+                if (exp == 0) {
+                    if (mant == 0) return sign ? -0.0f : 0.0f;
+                    // subnormal: normalize
+                    exp = 1;
+                    while (!(mant & 0x400)) { mant <<= 1; exp--; }
+                    mant &= 0x3FF;
+                    fbits = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+                } else if (exp == 31) {
+                    fbits = (sign << 31) | (0xFF << 23) | (mant << 13);
+                } else {
+                    fbits = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+                }
+                float f;
+                std::memcpy(&f, &fbits, sizeof(f));
+                return f;
             } else if (dtype == DataType::FP8_E4M3) {
                 uint8_t val = static_cast<uint8_t*>(ptr)[idx];
                 uint32_t sign = (val >> 7) & 1;

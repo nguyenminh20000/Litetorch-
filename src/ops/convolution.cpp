@@ -130,36 +130,69 @@ public:
             float* gw_ptr = grad_weight->data_ptr();
             float* gb_ptr = grad_bias ? grad_bias->data_ptr() : nullptr;
 
-            std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
-            std::fill(gw_ptr, gw_ptr + grad_weight->numel(), 0.0f);
+            // Race-free: each thread writes exactly one output element (same
+            // pattern as Conv3dNode::backward). The old fused loop had data
+            // races on gb_ptr[co], gw_ptr[.] and gin_ptr[.] across threads.
             if (gb_ptr) {
-                std::fill(gb_ptr, gb_ptr + grad_bias->numel(), 0.0f);
+                ThreadPool::get().parallel_for(0, C_out, [&](int64_t co) {
+                    float sum = 0.0f;
+                    for (int b = 0; b < N; ++b) {
+                        for (int ho = 0; ho < H_out; ++ho) {
+                            for (int wo = 0; wo < W_out; ++wo) {
+                                sum += gout_ptr[((b * C_out + co) * H_out + ho) * W_out + wo];
+                            }
+                        }
+                    }
+                    gb_ptr[co] = sum;
+                });
             }
 
-            ThreadPool::get().parallel_for(0, N * C_out, [&](int64_t thread_idx) {
-                int b = thread_idx / C_out;
-                int co = thread_idx % C_out;
-                
-                for (int ho = 0; ho < H_out; ++ho) {
-                    for (int wo = 0; wo < W_out; ++wo) {
-                        int gout_idx = ((b * C_out + co) * H_out + ho) * W_out + wo;
-                        float go = gout_ptr[gout_idx];
-                        
-                        if (gb_ptr) {
-                            gb_ptr[co] += go;
+            ThreadPool::get().parallel_for(0, (int64_t)C_out * C_in * KH * KW, [&](int64_t idx) {
+                int kw = (int)(idx % KW);
+                int kh = (int)((idx / KW) % KH);
+                int ci = (int)((idx / (KW * KH)) % C_in);
+                int co = (int)(idx / (KW * KH * C_in));
+
+                float sum = 0.0f;
+                for (int b = 0; b < N; ++b) {
+                    for (int ho = 0; ho < H_out; ++ho) {
+                        int y = ho * stride - padding + kh;
+                        if (y >= 0 && y < H_in) {
+                            for (int wo = 0; wo < W_out; ++wo) {
+                                int x = wo * stride - padding + kw;
+                                if (x >= 0 && x < W_in) {
+                                    int gout_idx = ((b * C_out + co) * H_out + ho) * W_out + wo;
+                                    int in_idx = ((b * C_in + ci) * H_in + y) * W_in + x;
+                                    sum += gout_ptr[gout_idx] * in_ptr[in_idx];
+                                }
+                            }
                         }
-                        
-                        for (int ci = 0; ci < C_in; ++ci) {
-                            for (int ky = 0; ky < KH; ++ky) {
-                                int y = ho * stride - padding + ky;
-                                if (y >= 0 && y < H_in) {
-                                    for (int kx = 0; kx < KW; ++kx) {
-                                        int x = wo * stride - padding + kx;
-                                        if (x >= 0 && x < W_in) {
-                                            int input_idx = ((b * C_in + ci) * H_in + y) * W_in + x;
-                                            int weight_idx = ((co * C_in + ci) * KH + ky) * KW + kx;
-                                            gw_ptr[weight_idx] += go * in_ptr[input_idx];
-                                            gin_ptr[input_idx] += go * w_ptr[weight_idx];
+                    }
+                }
+                gw_ptr[idx] = sum;
+            });
+
+            ThreadPool::get().parallel_for(0, (int64_t)N * C_in * H_in * W_in, [&](int64_t idx) {
+                int x = (int)(idx % W_in);
+                int y = (int)((idx / W_in) % H_in);
+                int ci = (int)((idx / (W_in * H_in)) % C_in);
+                int b = (int)(idx / (W_in * H_in * C_in));
+
+                float sum = 0.0f;
+                for (int co = 0; co < C_out; ++co) {
+                    for (int kh = 0; kh < KH; ++kh) {
+                        int ho_temp = y + padding - kh;
+                        if (ho_temp % stride == 0) {
+                            int ho = ho_temp / stride;
+                            if (ho >= 0 && ho < H_out) {
+                                for (int kw = 0; kw < KW; ++kw) {
+                                    int wo_temp = x + padding - kw;
+                                    if (wo_temp % stride == 0) {
+                                        int wo = wo_temp / stride;
+                                        if (wo >= 0 && wo < W_out) {
+                                            int gout_idx = ((b * C_out + co) * H_out + ho) * W_out + wo;
+                                            int w_idx = ((co * C_in + ci) * KH + kh) * KW + kw;
+                                            sum += gout_ptr[gout_idx] * w_ptr[w_idx];
                                         }
                                     }
                                 }
@@ -167,6 +200,7 @@ public:
                         }
                     }
                 }
+                gin_ptr[idx] = sum;
             });
         }
 
