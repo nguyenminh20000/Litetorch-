@@ -46,10 +46,77 @@ def rand_lt(*shape, dtype=lt.DataType.FP32):
     return lt.Tensor.from_vector([0.1] * n, list(shape), GPU, False, dtype)
 
 
+def to_torch(t):
+    import numpy as np
+
+    return torch.tensor(np.array(t.to(lt.Device("cpu")).to_vector(), dtype=np.float32)).cuda()
+
+
+def rand_data(n):
+    import random
+
+    random.seed(0)
+    return [random.gauss(0, 1) for _ in range(n)]
+
+
+def check(name, torch_op, lt_op, tol=1e-3):
+    try:
+        a = torch_op()
+        b = to_torch(lt_op())
+        ok = torch.allclose(a.float(), b.float(), atol=tol, rtol=tol)
+        print(f"correctness {name}: {'OK' if ok else 'MISMATCH'}", flush=True)
+    except Exception as e:
+        print(f"correctness {name}: ERROR {e}", flush=True)
+
+
+def check_pair(name, shape, torch_op, lt_op, tol=1e-3):
+    import numpy as np
+
+    n = 1
+    for s in shape:
+        n *= s
+    data = rand_data(n)
+    check(
+        name,
+        lambda: torch_op(torch.tensor(np.array(data, dtype=np.float32).reshape(shape)).cuda()),
+        lambda: lt_op(lt.Tensor.from_vector(data, list(shape), GPU)),
+        tol,
+    )
+
+
 def main():
     assert torch.cuda.is_available(), "no torch cuda"
     assert lt.is_gpu_available(), "no litetorch gpu"
     print("torch", torch.__version__, "| device:", torch.cuda.get_device_name(0), flush=True)
+
+    check_pair(
+        "softmax",
+        (32, 128),
+        lambda a: torch.softmax(a, dim=-1),
+        lambda a: lt.Ops.softmax(a, -1),
+    )
+    wdata = rand_data(128)
+    import numpy as np
+
+    w_t = torch.tensor(np.array(wdata, dtype=np.float32)).cuda()
+    w_l = lt.Tensor.from_vector(wdata, [128], GPU)
+    check_pair(
+        "layer_norm",
+        (32, 128),
+        lambda a: torch.nn.functional.layer_norm(a, (128,), w_t),
+        lambda a: lt.Ops.layer_norm(a, [128], w_l),
+    )
+    xdata = rand_data(4 * 8 * 16 * 16)
+    cdata = rand_data(16 * 8 * 3 * 3)
+    x_t = torch.tensor(np.array(xdata, dtype=np.float32).reshape(4, 8, 16, 16)).cuda()
+    c_t = torch.tensor(np.array(cdata, dtype=np.float32).reshape(16, 8, 3, 3)).cuda()
+    x_l = lt.Tensor.from_vector(xdata, [4, 8, 16, 16], GPU)
+    c_l = lt.Tensor.from_vector(cdata, [16, 8, 3, 3], GPU)
+    check(
+        "conv2d",
+        lambda: torch.nn.functional.conv2d(x_t, c_t, padding=1),
+        lambda: lt.Ops.conv2d(x_l, c_l, padding=1),
+    )
 
     for n in (512, 1024, 2048, 4096):
         a_t, b_t = rand_torch(n, n), rand_torch(n, n)
