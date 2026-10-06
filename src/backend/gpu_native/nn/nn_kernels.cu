@@ -1257,8 +1257,8 @@ extern "C" __global__ void paged_attention_forward(
     const float* q_ptr, int q_off,
     const float* k_ptr, int k_off,
     const float* v_ptr, int v_off,
-    const float* bt_ptr, int bt_off,
-    const float* cl_ptr, int cl_off,
+    const int* bt_ptr, int bt_off,
+    const int* cl_ptr, int cl_off,
     float* out_ptr, int out_off,
     int num_seqs, int num_heads, int num_kv_heads, int head_dim,
     int max_num_blocks, int block_size, float scale)
@@ -1270,14 +1270,14 @@ extern "C" __global__ void paged_attention_forward(
     int seq_idx = id / num_heads;
     int head_idx = id % num_heads;
     int kv_head_idx = head_idx / (num_heads / num_kv_heads);
-    int context_len = (int)cl_ptr[cl_off + seq_idx];
+    int context_len = cl_ptr[cl_off + seq_idx];
     if (context_len <= 0) return;
 
     float scores[2048];
     float max_val = -1e37f;
 
     for (int t = 0; t < context_len && t < 2048; ++t) {
-        int block_idx = (int)bt_ptr[bt_off + seq_idx * max_num_blocks + t / block_size];
+        int block_idx = bt_ptr[bt_off + seq_idx * max_num_blocks + t / block_size];
         int block_offset = t % block_size;
         int k_idx = block_idx * (num_kv_heads * block_size * head_dim) + kv_head_idx * (block_size * head_dim) + block_offset * head_dim;
 
@@ -1297,7 +1297,7 @@ extern "C" __global__ void paged_attention_forward(
         float exp_val = expf(scores[t] - max_val);
         denominator += exp_val;
 
-        int block_idx = (int)bt_ptr[bt_off + seq_idx * max_num_blocks + t / block_size];
+        int block_idx = bt_ptr[bt_off + seq_idx * max_num_blocks + t / block_size];
         int block_offset = t % block_size;
         int v_idx = block_idx * (num_kv_heads * block_size * head_dim) + kv_head_idx * (block_size * head_dim) + block_offset * head_dim;
 

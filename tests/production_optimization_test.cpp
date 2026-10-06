@@ -68,12 +68,12 @@ void test_paged_attention() {
         Device(DeviceType::CPU)
     );
 
-    auto block_tables = Tensor::create({num_seqs, max_num_blocks_per_seq}, Device(DeviceType::CPU), false, DataType::FP32);
-    int* bt_ptr = reinterpret_cast<int*>(block_tables->data_ptr());
+    auto block_tables = Tensor::create({num_seqs, max_num_blocks_per_seq}, Device(DeviceType::CPU), false, DataType::INT32);
+    int32_t* bt_ptr = static_cast<int32_t*>(block_tables->data_ptr());
     bt_ptr[0] = 0; bt_ptr[1] = 1; bt_ptr[2] = 2; bt_ptr[3] = 3;
 
-    auto context_lens = Tensor::create({num_seqs}, Device(DeviceType::CPU), false, DataType::FP32);
-    int* cl_ptr = reinterpret_cast<int*>(context_lens->data_ptr());
+    auto context_lens = Tensor::create({num_seqs}, Device(DeviceType::CPU), false, DataType::INT32);
+    int32_t* cl_ptr = static_cast<int32_t*>(context_lens->data_ptr());
     cl_ptr[0] = 6; cl_ptr[1] = 8;
 
     auto out_cpu = Ops::paged_attention(q, k_cache, v_cache, block_tables, context_lens, block_size);

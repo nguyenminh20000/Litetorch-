@@ -358,6 +358,13 @@ std::shared_ptr<Tensor> paged_attention(
     std::shared_ptr<Tensor> context_lens,
     int block_size)
 {
+    if (q->shape.size() != 3 || k_cache->shape.size() != 4 || v_cache->shape.size() != 4 ||
+        block_tables->shape.size() != 2 || context_lens->shape.size() != 1) {
+        throw std::runtime_error("[litetorch Error] paged_attention: bad input ranks");
+    }
+    if (block_tables->dtype != DataType::INT32 || context_lens->dtype != DataType::INT32) {
+        throw std::runtime_error("[litetorch Error] paged_attention: block_tables and context_lens must be INT32");
+    }
     auto out = Tensor::create(q->shape, q->device, false);
     int64_t num_seqs = q->shape[0];
     int64_t num_heads = q->shape[1];
@@ -370,9 +377,6 @@ std::shared_ptr<Tensor> paged_attention(
     // The OpenCL kernel uses a fixed-size private array float acc[128]
     if (head_dim > 128) {
         throw std::runtime_error("[litetorch Error] paged_attention: head_dim must be <= 128");
-    }
-    if (block_tables->dtype != DataType::INT32 || context_lens->dtype != DataType::INT32) {
-        throw std::runtime_error("[litetorch Error] paged_attention: block_tables and context_lens must be INT32");
     }
 
     if (q->device.type == DeviceType::CPU) {
@@ -498,6 +502,9 @@ std::shared_ptr<Tensor> paged_attention(
         int max_num_blocks_val = static_cast<int>(max_num_blocks_per_seq);
 
         auto kernel = CLBackend::get().get_kernel(KernelID::PagedAttentionForward);
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] paged_attention: GPU kernel not available on this backend");
+        }
         CLBackend::get().launch(kernel, {static_cast<size_t>(num_seqs * num_heads)}, {},
             {&q_mem, &q_off, &k_mem, &k_off, &v_mem, &v_off, &bt_mem, &bt_off, &cl_mem_val, &cl_off, &o_mem, &o_off,
              &num_seqs_val, &num_heads_val, &num_kv_heads_val, &head_dim_val, &max_num_blocks_val, &block_size, &scale},
