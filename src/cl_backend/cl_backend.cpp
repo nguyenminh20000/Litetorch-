@@ -87,6 +87,8 @@ static const char* g_precompiled_kernel_names[] = {
     "reduce_broadcast_dim",
     "im2col_kernel",
     "im2col_batched_kernel",
+    "im2col_flat_kernel",
+    "transpose_conv_out_kernel",
     "broadcast_batch_kernel",
     "add_bias_2d",
     "fused_add_layer_norm_forward_kernel",

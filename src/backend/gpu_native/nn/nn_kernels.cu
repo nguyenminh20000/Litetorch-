@@ -303,6 +303,56 @@ extern "C" __global__ void im2col_batched_kernel(
     col[col_off + (int64_t)n * K * HW_out + k * HW_out + h_out * W_out + w_out] = v;
 }
 
+extern "C" __global__ void im2col_flat_kernel(
+    const float* im, int im_off,
+    int N, int C, int H, int W,
+    int KH, int KW, int padding, int stride,
+    int H_out, int W_out,
+    float* col, int col_off)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t HW_out = (int64_t)H_out * W_out;
+    int64_t K = (int64_t)C * KH * KW;
+    int64_t total = K * (int64_t)N * HW_out;
+    if (idx >= total) return;
+
+    int64_t tmp = idx;
+    int j = tmp % ((int64_t)N * HW_out); tmp /= ((int64_t)N * HW_out);
+    int k = tmp;
+    int n = j / HW_out;
+    int hw = j % HW_out;
+    int h_out = hw / W_out;
+    int w_out = hw % W_out;
+    int kw = k % KW;
+    int kh = (k / KW) % KH;
+    int c = k / (KH * KW);
+
+    int im_row = h_out * stride - padding + kh;
+    int im_col = w_out * stride - padding + kw;
+
+    float v = 0.0f;
+    if (im_row >= 0 && im_row < H && im_col >= 0 && im_col < W) {
+        v = im[im_off + ((int64_t)n * C + c) * H * W + im_row * W + im_col];
+    }
+    col[col_off + (int64_t)k * N * HW_out + j] = v;
+}
+
+extern "C" __global__ void transpose_conv_out_kernel(
+    const float* src, int s_off,
+    float* dst, int d_off,
+    int N, int C, int H, int W)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t HW = (int64_t)H * W;
+    int64_t total = (int64_t)N * C * HW;
+    if (idx >= total) return;
+    int64_t tmp = idx;
+    int hw = tmp % HW; tmp /= HW;
+    int c = tmp % C; tmp /= C;
+    int n = tmp;
+    dst[d_off + idx] = src[s_off + (int64_t)c * N * HW + (int64_t)n * HW + hw];
+}
+
 extern "C" __global__ void broadcast_batch_kernel(
     const float* src, int s_off,
     float* dst, int d_off,

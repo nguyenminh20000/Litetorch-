@@ -362,6 +362,8 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "conv2d_backward_gdx") return (void*)&conv2d_backward_gdx;
     if (sname == "im2col_kernel") return (void*)&im2col_kernel;
     if (sname == "im2col_batched_kernel") return (void*)&im2col_batched_kernel;
+    if (sname == "im2col_flat_kernel") return (void*)&im2col_flat_kernel;
+    if (sname == "transpose_conv_out_kernel") return (void*)&transpose_conv_out_kernel;
     if (sname == "broadcast_batch_kernel") return (void*)&broadcast_batch_kernel;
     if (sname == "add_bias_2d") return (void*)&add_bias_2d;
     if (sname == "conv3d_kernel") return (void*)&conv3d_kernel;

@@ -46,10 +46,10 @@ def rand_lt(*shape, dtype=lt.DataType.FP32):
     return lt.Tensor.from_vector([0.1] * n, list(shape), GPU, False, dtype)
 
 
-def to_torch(t):
+def to_torch(t, shape):
     import numpy as np
 
-    return torch.tensor(np.array(t.to(lt.Device("cpu")).to_vector(), dtype=np.float32)).cuda()
+    return torch.tensor(np.array(t.to(lt.Device("cpu")).to_vector(), dtype=np.float32).reshape(shape)).cuda()
 
 
 def rand_data(n):
@@ -59,17 +59,17 @@ def rand_data(n):
     return [random.gauss(0, 1) for _ in range(n)]
 
 
-def check(name, torch_op, lt_op, tol=1e-3):
+def check(name, torch_op, lt_op, out_shape, tol=1e-3):
     try:
         a = torch_op()
-        b = to_torch(lt_op())
+        b = to_torch(lt_op(), out_shape)
         ok = torch.allclose(a.float(), b.float(), atol=tol, rtol=tol)
         print(f"correctness {name}: {'OK' if ok else 'MISMATCH'}", flush=True)
     except Exception as e:
         print(f"correctness {name}: ERROR {e}", flush=True)
 
 
-def check_pair(name, shape, torch_op, lt_op, tol=1e-3):
+def check_pair(name, shape, torch_op, lt_op, out_shape=None, tol=1e-3):
     import numpy as np
 
     n = 1
@@ -80,6 +80,7 @@ def check_pair(name, shape, torch_op, lt_op, tol=1e-3):
         name,
         lambda: torch_op(torch.tensor(np.array(data, dtype=np.float32).reshape(shape)).cuda()),
         lambda: lt_op(lt.Tensor.from_vector(data, list(shape), GPU)),
+        out_shape or shape,
         tol,
     )
 
@@ -116,6 +117,7 @@ def main():
         "conv2d",
         lambda: torch.nn.functional.conv2d(x_t, c_t, padding=1),
         lambda: lt.Ops.conv2d(x_l, c_l, padding=1),
+        (4, 16, 16, 16),
     )
 
     for n in (512, 1024, 2048, 4096):

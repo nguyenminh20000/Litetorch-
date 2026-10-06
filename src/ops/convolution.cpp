@@ -454,13 +454,14 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     if (input->device.type == DeviceType::GPU) {
         bool done = false;
         auto native = BackendDispatcher::get().get_backend();
-        auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colBatched);
-        auto bcast_k = CLBackend::get().get_kernel(KernelID::BroadcastBatch);
-        if (native && native->is_available() && im2col_k && bcast_k) {
+        auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
+        auto transp_k = CLBackend::get().get_kernel(KernelID::TransposeConvOut);
+        if (native && native->is_available() && im2col_k && transp_k) {
             int64_t K = (int64_t)C_in * KH * KW;
             int64_t HW_out = (int64_t)H_out * W_out;
-            auto col = Tensor::create({N, K, HW_out}, input_c->device);
-            auto w_exp = Tensor::create({N, C_out, K}, weight_c->device);
+            int64_t NHW = (int64_t)N * HW_out;
+            auto col = Tensor::create({K, NHW}, input_c->device);
+            auto tmp = Tensor::create({C_out, NHW}, input_c->device);
             {
                 cl_mem in_mem = input_c->gpu_data();
                 int in_off = input_c->offset;
@@ -469,25 +470,28 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 int ho_v = H_out, wo_v = W_out;
                 cl_mem col_mem = col->gpu_data();
                 int col_off = col->offset;
-                size_t total = (size_t)N * (size_t)K * (size_t)HW_out;
+                size_t total = (size_t)K * (size_t)NHW;
                 CLBackend::get().launch(im2col_k, {total}, {},
                     {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
                     {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
             }
+            auto weight_2d = Tensor::create({C_out, K}, weight_c->device);
+            weight_2d->storage = weight_c->storage;
+            weight_2d->offset = weight_c->offset;
+            weight_2d->requires_grad = false;
+            native->matmul(weight_2d->gpu_data(), weight_2d->offset, col->gpu_data(), col->offset,
+                           tmp->gpu_data(), tmp->offset, C_out, NHW, K);
             {
-                cl_mem w_mem = weight_c->gpu_data();
-                int w_off = weight_c->offset;
-                cl_mem we_mem = w_exp->gpu_data();
-                int we_off = w_exp->offset;
-                int n_v = N, co_v = C_out;
-                int k_v = (int)K;
-                size_t total = (size_t)N * (size_t)C_out * (size_t)K;
-                CLBackend::get().launch(bcast_k, {total}, {},
-                    {&w_mem, &w_off, &we_mem, &we_off, &n_v, &co_v, &k_v},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                cl_mem tmp_mem = tmp->gpu_data();
+                int tmp_off = tmp->offset;
+                cl_mem out_mem = out->gpu_data();
+                int out_off = out->offset;
+                int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
+                size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
+                CLBackend::get().launch(transp_k, {total}, {},
+                    {&tmp_mem, &tmp_off, &out_mem, &out_off, &n_v, &co_v, &ho_v, &wo_v},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
-            native->bmm(w_exp->gpu_data(), w_exp->offset, col->gpu_data(), col->offset,
-                        out->gpu_data(), out->offset, N, C_out, HW_out, K);
             if (bias_c) {
                 auto bias_k = CLBackend::get().get_kernel(KernelID::AddBias2d);
                 if (bias_k) {

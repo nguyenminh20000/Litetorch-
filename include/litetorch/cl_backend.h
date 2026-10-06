@@ -110,6 +110,8 @@ enum class KernelID {
     ReduceBroadcastDim,
     Im2col,
     Im2colBatched,
+    Im2colFlat,
+    TransposeConvOut,
     BroadcastBatch,
     AddBias2d,
     FusedAddLayerNormForward,
