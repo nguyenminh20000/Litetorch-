@@ -163,15 +163,23 @@ def train_lt(data):
     times = []
     for ep in range(EPOCHS):
         t0 = time.perf_counter()
+        t_fwd = t_bwd = t_opt = 0.0
         for xt, yt in lt_batches:
             opt.zero_grad()
-            loss = lt.Ops.cross_entropy_loss(model.forward(xt), yt)
+            ta = time.perf_counter()
+            out = model.forward(xt)
+            loss = lt.Ops.cross_entropy_loss(out, yt)
+            sync(); t_fwd += time.perf_counter() - ta
+            ta = time.perf_counter()
             loss.backward()
+            sync(); t_bwd += time.perf_counter() - ta
+            ta = time.perf_counter()
             opt.step()
+            sync(); t_opt += time.perf_counter() - ta
         sync()
         dt = time.perf_counter() - t0
         times.append(dt)
-        print(f"[lt] epoch {ep+1}/{EPOCHS}: {dt:.2f}s ({n/dt:.0f} samples/s)", flush=True)
+        print(f"[lt] epoch {ep+1}/{EPOCHS}: {dt:.2f}s ({n/dt:.0f} samples/s) fwd={t_fwd:.2f}s bwd={t_bwd:.2f}s opt={t_opt:.2f}s", flush=True)
     acc = eval_lt(model, x_test, y_test, dev)
     print(f"[lt] test acc: {acc:.4f}", flush=True)
     os.makedirs(WEIGHT_DIR, exist_ok=True)
