@@ -369,7 +369,12 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
     auto save_var = Tensor::create({N}, input_c->device, false, DataType::FP32);
     
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormForward);
+        auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormFastForward);
+        size_t launch_n = static_cast<size_t>(N) * 256;
+        if (!kernel) {
+            kernel = CLBackend::get().get_kernel(KernelID::LayerNormForward);
+            launch_n = static_cast<size_t>(N);
+        }
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem w_mem = weight_c ? weight_c->gpu_data() : cl_mem();
@@ -388,7 +393,7 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
         int m_val = M;
         float eps_val = eps;
         
-        CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
+        CLBackend::get().launch(kernel, {launch_n}, {},
             {&in_mem, &in_off, &w_mem, &w_off, &has_weight, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {

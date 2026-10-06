@@ -271,6 +271,50 @@ extern "C" __global__ void im2col_kernel(
     }
 }
 
+extern "C" __global__ void im2col_batched_kernel(
+    const float* im, int im_off,
+    int N, int C, int H, int W,
+    int KH, int KW, int padding, int stride,
+    int H_out, int W_out,
+    float* col, int col_off)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t HW_out = (int64_t)H_out * W_out;
+    int64_t K = (int64_t)C * KH * KW;
+    int64_t total = (int64_t)N * K * HW_out;
+    if (idx >= total) return;
+
+    int64_t tmp = idx;
+    int w_out = tmp % W_out; tmp /= W_out;
+    int h_out = tmp % H_out; tmp /= H_out;
+    int k = tmp % K; tmp /= K;
+    int n = tmp;
+    int kw = k % KW;
+    int kh = (k / KW) % KH;
+    int c = k / (KH * KW);
+
+    int im_row = h_out * stride - padding + kh;
+    int im_col = w_out * stride - padding + kw;
+
+    float v = 0.0f;
+    if (im_row >= 0 && im_row < H && im_col >= 0 && im_col < W) {
+        v = im[im_off + ((int64_t)n * C + c) * H * W + im_row * W + im_col];
+    }
+    col[col_off + (int64_t)n * K * HW_out + k * HW_out + h_out * W_out + w_out] = v;
+}
+
+extern "C" __global__ void broadcast_batch_kernel(
+    const float* src, int s_off,
+    float* dst, int d_off,
+    int batch, int rows, int cols)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t inner = (int64_t)rows * cols;
+    int64_t total = (int64_t)batch * inner;
+    if (idx >= total) return;
+    dst[d_off + idx] = src[s_off + idx % inner];
+}
+
 extern "C" __global__ void add_bias_2d(
     float* out, int out_off,
     const float* bias, int b_off,
@@ -674,6 +718,79 @@ extern "C" __global__ void softmax_backward_kernel(
     }
 }
 
+extern "C" __global__ void softmax_fast_kernel(const float* A, int a_off,
+                                              float* B, int b_off,
+                                              int dim_size, int outer_size) {
+    int row = blockIdx.x;
+    if (row >= outer_size) return;
+    int tid = threadIdx.x;
+    const float* a_row = A + a_off + (int64_t)row * dim_size;
+    float* b_row = B + b_off + (int64_t)row * dim_size;
+    bool aligned = ((reinterpret_cast<uintptr_t>(a_row) & 15) == 0) &&
+                   ((reinterpret_cast<uintptr_t>(b_row) & 15) == 0);
+
+    __shared__ float sdata[256];
+
+    float tmax = -3.4028235e38f;
+    int vec_n = dim_size >> 2;
+    if (aligned) {
+        const float4* a4 = reinterpret_cast<const float4*>(a_row);
+        for (int i = tid; i < vec_n; i += 256) {
+            float4 v = a4[i];
+            float m = fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w));
+            tmax = fmaxf(tmax, m);
+        }
+    }
+    for (int i = (aligned ? (vec_n << 2) : 0) + tid; i < dim_size; i += 256) {
+        tmax = fmaxf(tmax, a_row[i]);
+    }
+    sdata[tid] = tmax;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] = fmaxf(sdata[tid], sdata[tid + s]);
+        __syncthreads();
+    }
+    float row_max = sdata[0];
+    __syncthreads();
+
+    float tsum = 0.0f;
+    if (aligned) {
+        const float4* a4 = reinterpret_cast<const float4*>(a_row);
+        float4* b4 = reinterpret_cast<float4*>(b_row);
+        for (int i = tid; i < vec_n; i += 256) {
+            float4 v = a4[i];
+            float4 e;
+            e.x = expf(v.x - row_max); e.y = expf(v.y - row_max);
+            e.z = expf(v.z - row_max); e.w = expf(v.w - row_max);
+            b4[i] = e;
+            tsum += e.x + e.y + e.z + e.w;
+        }
+    }
+    for (int i = (aligned ? (vec_n << 2) : 0) + tid; i < dim_size; i += 256) {
+        float e = expf(a_row[i] - row_max);
+        b_row[i] = e;
+        tsum += e;
+    }
+    sdata[tid] = tsum;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float inv_sum = 1.0f / (sdata[0] + 1e-20f);
+    if (aligned) {
+        float4* b4 = reinterpret_cast<float4*>(b_row);
+        for (int i = tid; i < vec_n; i += 256) {
+            float4 e = b4[i];
+            e.x *= inv_sum; e.y *= inv_sum; e.z *= inv_sum; e.w *= inv_sum;
+            b4[i] = e;
+        }
+    }
+    for (int i = (aligned ? (vec_n << 2) : 0) + tid; i < dim_size; i += 256) {
+        b_row[i] *= inv_sum;
+    }
+}
+
 extern "C" __global__ void layer_norm_forward_kernel(const float* input, int in_off,
                                         const float* weight, int w_off, int has_weight,
                                         const float* bias, int b_off, int has_bias,
@@ -703,6 +820,75 @@ extern "C" __global__ void layer_norm_forward_kernel(const float* input, int in_
         float w = (has_weight && weight) ? weight[w_off + c] : 1.0f;
         float b = (has_bias && bias) ? bias[b_off + c] : 0.0f;
         output[out_off + idx] = w * x_hat + b;
+    }
+}
+
+extern "C" __global__ void layer_norm_fast_kernel(const float* input, int in_off,
+                                        const float* weight, int w_off, int has_weight,
+                                        const float* bias, int b_off, int has_bias,
+                                        float* output, int out_off,
+                                        float* save_mean, int sm_off,
+                                        float* save_var, int sv_off,
+                                        int N, int M, float eps) {
+    int r = blockIdx.x;
+    if (r >= N) return;
+    int tid = threadIdx.x;
+    const float* in_row = input + in_off + (int64_t)r * M;
+    float* out_row = output + out_off + (int64_t)r * M;
+    bool aligned = ((reinterpret_cast<uintptr_t>(in_row) & 15) == 0) &&
+                   ((reinterpret_cast<uintptr_t>(out_row) & 15) == 0);
+    __shared__ float sdata[256];
+
+    float tsum = 0.0f;
+    int vec_n = M >> 2;
+    if (aligned) {
+        const float4* in4 = reinterpret_cast<const float4*>(in_row);
+        for (int i = tid; i < vec_n; i += 256) {
+            float4 v = in4[i];
+            tsum += v.x + v.y + v.z + v.w;
+        }
+    }
+    for (int i = (aligned ? (vec_n << 2) : 0) + tid; i < M; i += 256) {
+        tsum += in_row[i];
+    }
+    sdata[tid] = tsum;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float mean = sdata[0] / (float)M;
+
+    float tvar = 0.0f;
+    if (aligned) {
+        const float4* in4 = reinterpret_cast<const float4*>(in_row);
+        for (int i = tid; i < vec_n; i += 256) {
+            float4 v = in4[i];
+            float d0 = v.x - mean, d1 = v.y - mean, d2 = v.z - mean, d3 = v.w - mean;
+            tvar += d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+        }
+    }
+    for (int i = (aligned ? (vec_n << 2) : 0) + tid; i < M; i += 256) {
+        float d = in_row[i] - mean;
+        tvar += d * d;
+    }
+    sdata[tid] = tvar;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float inv_std = rsqrtf(sdata[0] / (float)M + eps);
+    if (tid == 0) {
+        if (save_mean) save_mean[sm_off + r] = mean;
+        if (save_var) save_var[sv_off + r] = inv_std;
+    }
+
+    for (int i = tid; i < M; i += 256) {
+        float x_hat = (in_row[i] - mean) * inv_std;
+        float w = (has_weight && weight) ? weight[w_off + i] : 1.0f;
+        float b = (has_bias && bias) ? bias[b_off + i] : 0.0f;
+        out_row[i] = w * x_hat + b;
     }
 }
 

@@ -75,12 +75,12 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
 extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
-    const __half alpha = __float2half(1.0f);
-    const __half beta = __float2half(0.0f);
+    float alpha = 1.0f;
+    float beta = 0.0f;
     const __half* a_ptr = (const __half*)A + a_off;
     const __half* b_ptr = (const __half*)B + b_off;
     __half* c_ptr = (__half*)C + c_off;
-    cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N);
+    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16F, N, a_ptr, CUDA_R_16F, K, &beta, c_ptr, CUDA_R_16F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
 #else
     rocblas_handle handle = get_rocblas_handle();
     const __half alpha_h = __float2half(1.0f);
@@ -97,15 +97,15 @@ extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, 
 extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle();
-    const __half alpha = __float2half(1.0f);
-    const __half beta = __float2half(0.0f);
+    float alpha = 1.0f;
+    float beta = 0.0f;
     const __half* a_ptr = (const __half*)A + a_off;
     const __half* b_ptr = (const __half*)B + b_off;
     __half* c_ptr = (__half*)C + c_off;
     long long strideA = M * K;
     long long strideB = K * N;
     long long strideC = M * N;
-    cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size);
+    cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16F, N, strideB, a_ptr, CUDA_R_16F, K, strideA, &beta, c_ptr, CUDA_R_16F, N, strideC, batch_size, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
 #else
     rocblas_handle handle = get_rocblas_handle();
     const __half alpha_h = __float2half(1.0f);

@@ -959,6 +959,10 @@ PYBIND11_MODULE(litetorch, m) {
 
     m.def("empty_cache", []() {
         CachingAllocator::get().empty_cache();
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend && backend->is_available()) {
+            backend->empty_cache();
+        }
     });
 
     m.def("set_max_cpu_cache_size", [](size_t bytes) {

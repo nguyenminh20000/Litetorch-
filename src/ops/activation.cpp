@@ -518,20 +518,37 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
     
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::SoftmaxForward);
-        if (kernel) {
-            run_gpu = true;
-            cl_mem a_mem = a_c->gpu_data();
-            int a_off = a_c->offset;
-            cl_mem b_mem = out->gpu_data();
-            int b_off = out->offset;
-            int d_size = dim_size;
-            int i_size = inner_size;
-            int o_size = outer_size;
-            int total = o_size * i_size;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total)}, {},
-                {&a_mem, &a_off, &b_mem, &b_off, &d_size, &i_size, &o_size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+        if (inner_size == 1) {
+            auto fast = CLBackend::get().get_kernel(KernelID::SoftmaxFastForward);
+            if (fast) {
+                run_gpu = true;
+                cl_mem a_mem = a_c->gpu_data();
+                int a_off = a_c->offset;
+                cl_mem b_mem = out->gpu_data();
+                int b_off = out->offset;
+                int d_size = dim_size;
+                int o_size = outer_size;
+                CLBackend::get().launch(fast, {static_cast<size_t>(o_size) * 256}, {},
+                    {&a_mem, &a_off, &b_mem, &b_off, &d_size, &o_size},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+            }
+        }
+        if (!run_gpu) {
+            auto kernel = CLBackend::get().get_kernel(KernelID::SoftmaxForward);
+            if (kernel) {
+                run_gpu = true;
+                cl_mem a_mem = a_c->gpu_data();
+                int a_off = a_c->offset;
+                cl_mem b_mem = out->gpu_data();
+                int b_off = out->offset;
+                int d_size = dim_size;
+                int i_size = inner_size;
+                int o_size = outer_size;
+                int total = o_size * i_size;
+                CLBackend::get().launch(kernel, {static_cast<size_t>(total)}, {},
+                    {&a_mem, &a_off, &b_mem, &b_off, &d_size, &i_size, &o_size},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
         }
     }
     if (!run_gpu) {

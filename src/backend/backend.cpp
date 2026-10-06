@@ -9,6 +9,7 @@ namespace litetorch {
 typedef bool (*gpu_init_t)();
 typedef void* (*gpu_allocate_t)(size_t);
 typedef void (*gpu_free_t)(void*);
+typedef void (*gpu_empty_cache_t)();
 typedef void (*gpu_read_t)(void*, size_t, void*, size_t);
 typedef void (*gpu_write_t)(void*, size_t, const void*, size_t);
 typedef void (*gpu_copy_t)(void*, void*, size_t, size_t, size_t);
@@ -65,6 +66,7 @@ public:
     gpu_set_device_t gpu_set_device_fn = nullptr;
     gpu_allocate_t gpu_allocate_fn = nullptr;
     gpu_free_t gpu_free_fn = nullptr;
+    gpu_empty_cache_t gpu_empty_cache_fn = nullptr;
     gpu_read_t gpu_read_fn = nullptr;
     gpu_write_t gpu_write_fn = nullptr;
     gpu_copy_t gpu_copy_fn = nullptr;
@@ -167,6 +169,7 @@ public:
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
         gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
         gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
+        gpu_empty_cache_fn = (gpu_empty_cache_t)dlsym(handle, "gpu_empty_cache");
         gpu_read_fn = (gpu_read_t)dlsym(handle, "gpu_read");
         gpu_write_fn = (gpu_write_t)dlsym(handle, "gpu_write");
         gpu_copy_fn = (gpu_copy_t)dlsym(handle, "gpu_copy");
@@ -227,6 +230,7 @@ public:
     bool is_available() const override { return is_ok; }
     void* allocate(size_t size) override { return gpu_allocate_fn(size); }
     void free(void* ptr) override { gpu_free_fn(ptr); }
+    void empty_cache() override { if (gpu_empty_cache_fn) gpu_empty_cache_fn(); }
     void read(void* ptr, size_t size, void* host_ptr, size_t offset = 0) override { gpu_read_fn(ptr, size, host_ptr, offset); }
     void write(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) override { gpu_write_fn(ptr, size, host_ptr, offset); }
     void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) override { if (gpu_read_async_fn) gpu_read_async_fn(ptr, size, host_ptr, offset); else gpu_read_fn(ptr, size, host_ptr, offset); }

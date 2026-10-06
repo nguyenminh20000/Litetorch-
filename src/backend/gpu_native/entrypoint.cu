@@ -4,6 +4,9 @@
 #include <fstream>
 #include <sstream>
 #include <unistd.h>
+#include <mutex>
+#include <map>
+#include <unordered_map>
 #include "math/gemm.cu"
 #include "math/reduction.cu"
 #include "elementwise/elementwise_ops.cu"
@@ -214,16 +217,76 @@ extern "C" void gpu_free_graph(void* graph) {
 #endif
 }
 
+struct GpuMemPool {
+    std::mutex mutex_;
+    std::map<size_t, std::vector<void*>> free_;
+    std::unordered_map<void*, size_t> live_;
+};
+
+static GpuMemPool& gpu_mem_pool() {
+    static GpuMemPool pool;
+    return pool;
+}
+
+static inline size_t gpu_pool_bucket(size_t size) {
+    size_t b = 512;
+    while (b < size) b <<= 1;
+    return b;
+}
+
 extern "C" void* gpu_allocate(size_t size) {
+    if (size == 0) return nullptr;
+    size_t bucket = gpu_pool_bucket(size);
+    auto& pool = gpu_mem_pool();
+    {
+        std::lock_guard<std::mutex> lock(pool.mutex_);
+        auto it = pool.free_.find(bucket);
+        if (it != pool.free_.end() && !it->second.empty()) {
+            void* ptr = it->second.back();
+            it->second.pop_back();
+            pool.live_[ptr] = bucket;
+            return ptr;
+        }
+    }
     void* ptr = nullptr;
-    GPU_API(Malloc)(&ptr, size);
+    GPU_API(Malloc)(&ptr, bucket);
+    if (!ptr) {
+        std::lock_guard<std::mutex> lock(pool.mutex_);
+        for (auto& kv : pool.free_) {
+            for (void* p : kv.second) GPU_API(Free)(p);
+            kv.second.clear();
+        }
+        ptr = nullptr;
+        GPU_API(Malloc)(&ptr, bucket);
+        if (!ptr) return nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> lock(pool.mutex_);
+        pool.live_[ptr] = bucket;
+    }
     return ptr;
 }
 
-extern "C" void gpu_free(void* ptr) {
-    if (ptr) {
-        GPU_API(Free)(ptr);
+extern "C" void gpu_empty_cache() {
+    auto& pool = gpu_mem_pool();
+    std::lock_guard<std::mutex> lock(pool.mutex_);
+    for (auto& kv : pool.free_) {
+        for (void* p : kv.second) GPU_API(Free)(p);
+        kv.second.clear();
     }
+}
+
+extern "C" void gpu_free(void* ptr) {
+    if (!ptr) return;
+    auto& pool = gpu_mem_pool();
+    std::lock_guard<std::mutex> lock(pool.mutex_);
+    auto it = pool.live_.find(ptr);
+    if (it == pool.live_.end()) {
+        GPU_API(Free)(ptr);
+        return;
+    }
+    pool.free_[it->second].push_back(ptr);
+    pool.live_.erase(it);
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
@@ -298,6 +361,8 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "conv2d_backward_gw") return (void*)&conv2d_backward_gw;
     if (sname == "conv2d_backward_gdx") return (void*)&conv2d_backward_gdx;
     if (sname == "im2col_kernel") return (void*)&im2col_kernel;
+    if (sname == "im2col_batched_kernel") return (void*)&im2col_batched_kernel;
+    if (sname == "broadcast_batch_kernel") return (void*)&broadcast_batch_kernel;
     if (sname == "add_bias_2d") return (void*)&add_bias_2d;
     if (sname == "conv3d_kernel") return (void*)&conv3d_kernel;
     if (sname == "conv3d_backward_gb") return (void*)&conv3d_backward_gb;
@@ -319,7 +384,9 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "maxpool3d_backward_kernel") return (void*)&maxpool3d_backward_kernel;
     if (sname == "softmax_forward_kernel") return (void*)&softmax_forward_kernel;
     if (sname == "softmax_backward_kernel") return (void*)&softmax_backward_kernel;
+    if (sname == "softmax_fast_kernel") return (void*)&softmax_fast_kernel;
     if (sname == "layer_norm_forward_kernel") return (void*)&layer_norm_forward_kernel;
+    if (sname == "layer_norm_fast_kernel") return (void*)&layer_norm_fast_kernel;
     if (sname == "fused_add_layer_norm_forward_kernel") return (void*)&fused_add_layer_norm_forward_kernel;
     if (sname == "layer_norm_backward_dx_kernel") return (void*)&layer_norm_backward_dx_kernel;
     if (sname == "layer_norm_backward_dw_kernel") return (void*)&layer_norm_backward_dw_kernel;

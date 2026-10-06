@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend.h"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -451,27 +452,81 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     StorageUseGuard guard({input_c->storage, weight_c->storage, bias_c ? bias_c->storage : nullptr, out->storage});
 
     if (input->device.type == DeviceType::GPU) {
-        auto kernel_conv = CLBackend::get().get_kernel(KernelID::Conv2dForward);
-        if (!kernel_conv) {
-            throw std::runtime_error("[litetorch Error] Conv2dForward kernel not available");
+        bool done = false;
+        auto native = BackendDispatcher::get().get_backend();
+        auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colBatched);
+        auto bcast_k = CLBackend::get().get_kernel(KernelID::BroadcastBatch);
+        if (native && native->is_available() && im2col_k && bcast_k) {
+            int64_t K = (int64_t)C_in * KH * KW;
+            int64_t HW_out = (int64_t)H_out * W_out;
+            auto col = Tensor::create({N, K, HW_out}, input_c->device);
+            auto w_exp = Tensor::create({N, C_out, K}, weight_c->device);
+            {
+                cl_mem in_mem = input_c->gpu_data();
+                int in_off = input_c->offset;
+                int n_v = N, ci_v = C_in, hi_v = H_in, wi_v = W_in;
+                int kh_v = KH, kw_v = KW, pad_v = padding, st_v = stride;
+                int ho_v = H_out, wo_v = W_out;
+                cl_mem col_mem = col->gpu_data();
+                int col_off = col->offset;
+                size_t total = (size_t)N * (size_t)K * (size_t)HW_out;
+                CLBackend::get().launch(im2col_k, {total}, {},
+                    {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
+                    {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
+            }
+            {
+                cl_mem w_mem = weight_c->gpu_data();
+                int w_off = weight_c->offset;
+                cl_mem we_mem = w_exp->gpu_data();
+                int we_off = w_exp->offset;
+                int n_v = N, co_v = C_out;
+                int k_v = (int)K;
+                size_t total = (size_t)N * (size_t)C_out * (size_t)K;
+                CLBackend::get().launch(bcast_k, {total}, {},
+                    {&w_mem, &w_off, &we_mem, &we_off, &n_v, &co_v, &k_v},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
+            native->bmm(w_exp->gpu_data(), w_exp->offset, col->gpu_data(), col->offset,
+                        out->gpu_data(), out->offset, N, C_out, HW_out, K);
+            if (bias_c) {
+                auto bias_k = CLBackend::get().get_kernel(KernelID::AddBias2d);
+                if (bias_k) {
+                    cl_mem out_mem = out->gpu_data();
+                    int out_off = out->offset;
+                    cl_mem b_mem = bias_c->gpu_data();
+                    int b_off = bias_c->offset;
+                    int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
+                    size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
+                    CLBackend::get().launch(bias_k, {total}, {},
+                        {&out_mem, &out_off, &b_mem, &b_off, &n_v, &co_v, &ho_v, &wo_v},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                }
+            }
+            done = true;
         }
-        {
-            cl_mem in_mem = input_c->gpu_data();
-            int in_off = input_c->offset;
-            cl_mem w_mem = weight_c->gpu_data();
-            int w_off = weight_c->offset;
-            cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;
-            int b_off = bias_c ? bias_c->offset : 0;
-            int has_bias = bias_c ? 1 : 0;
-            cl_mem out_mem = out->gpu_data();
-            int out_off = out->offset;
-            int total_threads = N * C_out * H_out * W_out;
+        if (!done) {
+            auto kernel_conv = CLBackend::get().get_kernel(KernelID::Conv2dForward);
+            if (!kernel_conv) {
+                throw std::runtime_error("[litetorch Error] Conv2dForward kernel not available");
+            }
+            {
+                cl_mem in_mem = input_c->gpu_data();
+                int in_off = input_c->offset;
+                cl_mem w_mem = weight_c->gpu_data();
+                int w_off = weight_c->offset;
+                cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;
+                int b_off = bias_c ? bias_c->offset : 0;
+                int has_bias = bias_c ? 1 : 0;
+                cl_mem out_mem = out->gpu_data();
+                int out_off = out->offset;
+                int total_threads = N * C_out * H_out * W_out;
 
-            CLBackend::get().launch(kernel_conv, {static_cast<size_t>(total_threads)}, {},
-                {&in_mem, &in_off, &w_mem, &w_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off,
-                 &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),
-                 sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                CLBackend::get().launch(kernel_conv, {static_cast<size_t>(total_threads)}, {},
+                    {&in_mem, &in_off, &w_mem, &w_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off,
+                     &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),
+                     sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
         }
     } else {
         const float* in_ptr = input_c->data_ptr();
