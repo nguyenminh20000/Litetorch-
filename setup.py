@@ -1,12 +1,17 @@
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
-import pybind11
 import os
 import sys
 import glob
 import shutil
 import subprocess
 import tempfile
+
+try:
+    import pybind11
+except ImportError:
+    sys.stderr.write("pybind11 is required to build litetorch: pip install pybind11\n")
+    raise
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -69,9 +74,10 @@ class BuildExt(build_ext):
                 if nvcc_bin and not use_rocm:
                     cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
                     if os.path.exists(cu_src):
+                        cuda_arch = os.environ.get("LITETORCH_CUDA_ARCH", "native")
                         cmd = [
                             nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
-                            "-arch=native",
+                            f"-arch={cuda_arch}",
                             f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                             cu_src, "-o", out_so,
                             "-lcublas", "-lcublasLt"
@@ -177,10 +183,4 @@ setup(
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExt},
     zip_safe=False,
-    entry_points={
-        "console_scripts": [
-            "demo_run.py=tests.demo_run:main",
-            "test_litetorch.py=tests.test_litetorch:main",
-        ],
-    },
 )
