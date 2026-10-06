@@ -87,7 +87,7 @@ def build_lt():
         lt.nn.Conv2d(3, 32, 3, padding=1), lt.nn.ReLU(), lt.nn.MaxPool2d(2),
         lt.nn.Conv2d(32, 64, 3, padding=1), lt.nn.ReLU(), lt.nn.MaxPool2d(2),
         lt.nn.Conv2d(64, 128, 3, padding=1), lt.nn.ReLU(),
-        lt.nn.AdaptiveAvgPool2d(4),
+        lt.nn.AdaptiveAvgPool2d(4, 4),
         lt.nn.Flatten(),
         lt.nn.Linear(128 * 16, 64), lt.nn.ReLU(),
         lt.nn.Linear(64, 2),
@@ -150,7 +150,7 @@ def train_lt(x_train, y_train, x_test, y_test):
         t0 = time.perf_counter()
         for xb, yb in batches(x_train, y_train, BATCH):
             b = len(xb)
-            xt = lt.Tensor.from_vector(xb.reshape(b, -1).tolist(), [b, 3, 32, 32], dev)
+            xt = lt.Tensor.from_vector(xb.reshape(-1).tolist(), [b, 3, 32, 32], dev)
             yt = lt.Tensor.from_vector([float(v) for v in yb], [b], dev)
             opt.zero_grad()
             loss = lt.Ops.cross_entropy_loss(model.forward(xt), yt)
@@ -171,7 +171,7 @@ def eval_lt(model, x_test, y_test, dev):
     correct = total = 0
     for xb, yb in batches(x_test, y_test, 512, shuffle=False):
         b = len(xb)
-        xt = lt.Tensor.from_vector(xb.reshape(b, -1).tolist(), [b, 3, 32, 32], dev)
+        xt = lt.Tensor.from_vector(xb.reshape(-1).tolist(), [b, 3, 32, 32], dev)
         out = model.forward(xt)
         pred = np.array(out.to(lt.Device("cpu")).to_vector()).reshape(b, 2).argmax(1)
         correct += (pred == yb).sum()

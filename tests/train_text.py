@@ -110,6 +110,8 @@ def build_lt(vocab):
     dev = lt.Device("gpu:0")
     emb = lt.nn.Embedding(vocab, EMB_DIM)
     emb.to(dev)
+    emb.weight = emb.weight.to(dev)
+    print(f"[lt] emb.weight device: {emb.weight.device}", flush=True)
     cnn = lt.nn.Sequential(
         [
             lt.nn.Conv2d(1, N_FILTERS, 3, padding=1),
