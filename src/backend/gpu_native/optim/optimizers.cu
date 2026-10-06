@@ -5,17 +5,26 @@ extern "C" __global__ void adamw_step_kernel_native(
     const float* G, int g_off,
     float* M, int m_off,
     float* V, int v_off,
-    int size, float lr_t, float beta1, float beta2, float eps, float weight_decay)
+    int size, float lr, float beta1, float beta2, float eps, float weight_decay,
+    float bias_correction1, float bias_correction2)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         float p = P[p_off + idx];
-        float g = G[g_off + idx] + weight_decay * p;
+        float g = G[g_off + idx];
         float m = beta1 * M[m_off + idx] + (1.0f - beta1) * g;
         float v = beta2 * V[v_off + idx] + (1.0f - beta2) * g * g;
         M[m_off + idx] = m;
         V[v_off + idx] = v;
-        P[p_off + idx] = p - lr_t * m / (sqrtf(v) + eps);
+        float m_hat = m / bias_correction1;
+        float v_hat = v / bias_correction2;
+        float update = m_hat / (sqrtf(v_hat) + eps);
+        // Decoupled weight decay (AdamW), matching the CPU/TPU implementation.
+        if (weight_decay != 0.0f) {
+            P[p_off + idx] = p - lr * (weight_decay * p + update);
+        } else {
+            P[p_off + idx] = p - lr * update;
+        }
     }
 }
 

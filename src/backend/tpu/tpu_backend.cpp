@@ -62,9 +62,9 @@ void TPUBackend::launch(void*, const std::vector<size_t>&, const std::vector<siz
 
 void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
-    const float* a_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(A) + a_off);
-    const float* b_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(B) + b_off);
-    float* c_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(C) + c_off);
+    const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
+    const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
+    float* c_ptr = reinterpret_cast<float*>(C) + c_off;
     tpu_internal::tpu_systolic_matmul(a_ptr, b_ptr, c_ptr, M, N, K);
 }
 
@@ -72,17 +72,17 @@ void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                            void* B, int64_t b_off, bool trans_b, int64_t ldb,
                            void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
-    const float* a_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(A) + a_off);
-    const float* b_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(B) + b_off);
-    float* c_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(C) + c_off);
+    const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
+    const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
+    float* c_ptr = reinterpret_cast<float*>(C) + c_off;
     tpu_internal::tpu_systolic_matmul_ex(a_ptr, trans_a, lda, b_ptr, trans_b, ldb, c_ptr, M, N, K);
 }
 
 void TPUBackend::bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
-    const float* a_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(A) + a_off);
-    const float* b_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(B) + b_off);
-    float* c_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(C) + c_off);
+    const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
+    const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
+    float* c_ptr = reinterpret_cast<float*>(C) + c_off;
     tpu_internal::tpu_systolic_bmm(a_ptr, b_ptr, c_ptr, B_batch, M, N, K);
 }
 
@@ -104,8 +104,8 @@ void TPUBackend::matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, voi
 
 void TPUBackend::sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
     if (!A || !B || size <= 0) return;
-    const float* a_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(A) + a_off);
-    float* b_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(B) + b_off);
+    const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
+    float* b_ptr = reinterpret_cast<float*>(B) + b_off;
     float total = 0.0f;
     for (int64_t i = 0; i < size; ++i) {
         total += a_ptr[i];
@@ -115,8 +115,8 @@ void TPUBackend::sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t siz
 
 void TPUBackend::max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
     if (!A || !B || size <= 0) return;
-    const float* a_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(A) + a_off);
-    float* b_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(B) + b_off);
+    const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
+    float* b_ptr = reinterpret_cast<float*>(B) + b_off;
     float max_val = a_ptr[0];
     for (int64_t i = 0; i < size; ++i) {
         if (a_ptr[i] > max_val) max_val = a_ptr[i];
@@ -126,19 +126,19 @@ void TPUBackend::max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t siz
 
 void TPUBackend::adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1, float bias_correction2) {
     if (!P || !G || !M || !V || size <= 0) return;
-    float* p = reinterpret_cast<float*>(reinterpret_cast<char*>(P) + p_off);
-    const float* g = reinterpret_cast<const float*>(reinterpret_cast<const char*>(G) + g_off);
-    float* m = reinterpret_cast<float*>(reinterpret_cast<char*>(M) + m_off);
-    float* v = reinterpret_cast<float*>(reinterpret_cast<char*>(V) + v_off);
+    float* p = reinterpret_cast<float*>(P) + p_off;
+    const float* g = reinterpret_cast<const float*>(G) + g_off;
+    float* m = reinterpret_cast<float*>(M) + m_off;
+    float* v = reinterpret_cast<float*>(V) + v_off;
     tpu_internal::tpu_adamw_update(p, g, m, v, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
 }
 
 void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
     if (!Q || !K || !V || !O) return;
-    const float* q_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(Q) + q_off);
-    const float* k_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(K) + k_off);
-    const float* v_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(V) + v_off);
-    float* o_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(O) + o_off);
+    const float* q_ptr = reinterpret_cast<const float*>(Q) + q_off;
+    const float* k_ptr = reinterpret_cast<const float*>(K) + k_off;
+    const float* v_ptr = reinterpret_cast<const float*>(V) + v_off;
+    float* o_ptr = reinterpret_cast<float*>(O) + o_off;
     tpu_internal::tpu_flash_attention_forward(q_ptr, k_ptr, v_ptr, o_ptr, B, H, H_kv, Tq, Tk, D, scale);
 }
 
@@ -151,14 +151,14 @@ void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, in
                                           void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
                                           int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
     if (!dQ || !dK || !dV || !O || !dO || !Q || !K || !V) return;
-    float* dq_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dQ) + dq_off);
-    float* dk_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dK) + dk_off);
-    float* dv_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(dV) + dv_off);
-    const float* o_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(O) + o_off);
-    const float* do_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(dO) + do_off);
-    const float* q_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(Q) + q_off);
-    const float* k_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(K) + k_off);
-    const float* v_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(V) + v_off);
+    float* dq_ptr = reinterpret_cast<float*>(dQ) + dq_off;
+    float* dk_ptr = reinterpret_cast<float*>(dK) + dk_off;
+    float* dv_ptr = reinterpret_cast<float*>(dV) + dv_off;
+    const float* o_ptr = reinterpret_cast<const float*>(O) + o_off;
+    const float* do_ptr = reinterpret_cast<const float*>(dO) + do_off;
+    const float* q_ptr = reinterpret_cast<const float*>(Q) + q_off;
+    const float* k_ptr = reinterpret_cast<const float*>(K) + k_off;
+    const float* v_ptr = reinterpret_cast<const float*>(V) + v_off;
     tpu_internal::tpu_flash_attention_backward(q_ptr, k_ptr, v_ptr, o_ptr, do_ptr, dq_ptr, dk_ptr, dv_ptr, B, H, H_kv, Tq, Tk, D, scale);
 }
 
@@ -171,8 +171,8 @@ void TPUBackend::flash_attention_backward_half(void* dQ, int64_t dq_off, void* d
 
 void TPUBackend::cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) {
     if (!input || !output) return;
-    const float* in_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(input) + in_off);
-    float* out_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(output) + out_off);
+    const float* in_ptr = reinterpret_cast<const float*>(input) + in_off;
+    float* out_ptr = reinterpret_cast<float*>(output) + out_off;
     for (int64_t i = 0; i < outer_size; ++i) {
         const float* src = in_ptr + i * dim_size * inner_size;
         float* dst = out_ptr + (i * concat_dim_size + offset) * inner_size;
@@ -182,8 +182,8 @@ void TPUBackend::cat_forward(void* input, int64_t in_off, void* output, int64_t 
 
 void TPUBackend::cat_backward(void* grad_output, int64_t gout_off, void* grad_input, int64_t gin_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) {
     if (!grad_output || !grad_input) return;
-    const float* gout_ptr = reinterpret_cast<const float*>(reinterpret_cast<const char*>(grad_output) + gout_off);
-    float* gin_ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(grad_input) + gin_off);
+    const float* gout_ptr = reinterpret_cast<const float*>(grad_output) + gout_off;
+    float* gin_ptr = reinterpret_cast<float*>(grad_input) + gin_off;
     for (int64_t i = 0; i < outer_size; ++i) {
         const float* src = gout_ptr + (i * concat_dim_size + offset) * inner_size;
         float* dst = gin_ptr + i * dim_size * inner_size;
