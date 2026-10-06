@@ -26,7 +26,7 @@ conv.weight = wt
 conv.bias = bt
 
 out = conv.forward(xt)
-out.creator.backward(gt)
+out.backward(gt)
 
 def to_np(t, shape):
     v = t.to(lt.Device("cpu")).tolist()
