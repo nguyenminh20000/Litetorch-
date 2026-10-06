@@ -165,7 +165,7 @@ if os.path.exists(readme_file):
 
 setup(
     name="litetorch",
-    version="0.3.37",
+    version="0.3.38",
     author="LiteTorch Team",
     description="Python bindings for LiteTorch deep learning framework",
     long_description=long_desc,
