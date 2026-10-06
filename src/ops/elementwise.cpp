@@ -106,7 +106,11 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape);
 
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape) {
-    if (grad->shape == orig_shape) return grad;
+    // Must return a distinct tensor object: callers (e.g. Add/Sub/Mul/Div
+    // backward) request one grad per input from the same grad_output. Returning
+    // grad itself would alias the results, and the in-place grad accumulation
+    // in Autograd::backward would then corrupt them.
+    if (grad->shape == orig_shape) return grad->clone();
 
     std::shared_ptr<Tensor> current = grad;
     int diff = grad->shape.size() - orig_shape.size();
@@ -794,9 +798,10 @@ public:
 };
 
 std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -813,7 +818,7 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = std::pow(a_ptr[i], exponent);
@@ -851,9 +856,10 @@ public:
 };
 
 std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -870,7 +876,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = std::sqrt(a_ptr[i]);
@@ -907,9 +913,10 @@ public:
 };
 
 std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -926,7 +933,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = std::exp(a_ptr[i]);
@@ -962,9 +969,10 @@ public:
 };
 
 std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -981,7 +989,7 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = std::log(a_ptr[i]);
@@ -1026,9 +1034,10 @@ public:
 };
 
 std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1045,7 +1054,7 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = std::fabs(a_ptr[i]);
@@ -1080,9 +1089,10 @@ public:
 };
 
 std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
-    auto out = Tensor::create(a->shape, a->device);
-    StorageUseGuard guard({a->storage, out->storage});
-    int size = a->numel();
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    int size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1099,7 +1109,7 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
         }
     }
     if (!run_gpu) {
-        float* a_ptr = a->data_ptr();
+        float* a_ptr = a_c->data_ptr();
         float* out_ptr = out->data_ptr();
         ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
             out_ptr[i] = -a_ptr[i];

@@ -1889,7 +1889,10 @@ inline float fp8_e4m3_to_float(uchar val) {
     uint sign = (val >> 7) & 1;
     uint exp = (val >> 3) & 0x0F;
     uint mant = val & 0x07;
-    if (exp == 15) return NAN;
+    if (exp == 15) {
+        if (mant == 7) return NAN;
+        return (sign ? -1.0f : 1.0f) * pow(2.0f, 8.0f) * (1.0f + (float)mant / 8.0f);
+    }
     if (exp == 0) {
         if (mant == 0) return sign ? -0.0f : 0.0f;
         return (sign ? -1.0f : 1.0f) * pow(2.0f, -6.0f) * ((float)mant / 8.0f);
@@ -1913,7 +1916,7 @@ inline uchar float_to_fp8_e5m2(float val) {
         m >>= shift;
         return (uchar)((sign << 7) | m);
     } else if (new_exp >= 31) {
-        return (uchar)((sign << 7) | 0x7E);
+        return (uchar)((sign << 7) | 0x7B);
     }
     uint m = mant >> 21;
     return (uchar)((sign << 7) | (new_exp << 2) | m);
@@ -1923,7 +1926,10 @@ inline float fp8_e5m2_to_float(uchar val) {
     uint sign = (val >> 7) & 1;
     uint exp = (val >> 2) & 0x1F;
     uint mant = val & 0x03;
-    if (exp == 31) return NAN;
+    if (exp == 31) {
+        if (mant == 0) return sign ? -INFINITY : INFINITY;
+        return NAN;
+    }
     if (exp == 0) {
         if (mant == 0) return sign ? -0.0f : 0.0f;
         return (sign ? -1.0f : 1.0f) * pow(2.0f, -14.0f) * ((float)mant / 4.0f);

@@ -63,7 +63,10 @@ float fp8_e4m3_to_float(uint8_t val) {
     uint32_t sign = (val >> 7) & 1;
     uint32_t exp = (val >> 3) & 0x0F;
     uint32_t mant = val & 0x07;
-    if (exp == 15) return std::numeric_limits<float>::quiet_NaN();
+    if (exp == 15) {
+        if (mant == 7) return std::numeric_limits<float>::quiet_NaN();
+        return (sign ? -1.0f : 1.0f) * std::pow(2.0f, 8.0f) * (1.0f + static_cast<float>(mant) / 8.0f);
+    }
     if (exp == 0) {
         if (mant == 0) return sign ? -0.0f : 0.0f;
         return (sign ? -1.0f : 1.0f) * std::pow(2.0f, -6.0f) * (static_cast<float>(mant) / 8.0f);
@@ -88,7 +91,7 @@ uint8_t float_to_fp8_e5m2(float val) {
         m >>= shift;
         return (sign << 7) | m;
     } else if (new_exp >= 31) {
-        return (sign << 7) | 0x7E;
+        return (sign << 7) | 0x7B;
     }
     uint32_t m = mant >> 21;
     return (sign << 7) | (new_exp << 2) | m;
@@ -98,7 +101,10 @@ float fp8_e5m2_to_float(uint8_t val) {
     uint32_t sign = (val >> 7) & 1;
     uint32_t exp = (val >> 2) & 0x1F;
     uint32_t mant = val & 0x03;
-    if (exp == 31) return std::numeric_limits<float>::quiet_NaN();
+    if (exp == 31) {
+        if (mant == 0) return sign ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity();
+        return std::numeric_limits<float>::quiet_NaN();
+    }
     if (exp == 0) {
         if (mant == 0) return sign ? -0.0f : 0.0f;
         return (sign ? -1.0f : 1.0f) * std::pow(2.0f, -14.0f) * (static_cast<float>(mant) / 4.0f);
@@ -174,6 +180,14 @@ public:
 class ContiguousNode : public Node {
 public:
     ContiguousNode() : Node("Contiguous") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        return { grad_output };
+    }
+};
+
+class ToNode : public Node {
+public:
+    ToNode() : Node("To") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         return { grad_output };
     }
@@ -464,6 +478,13 @@ std::shared_ptr<Tensor> Tensor::to(const Device& target_device) {
     }
     
     auto new_tensor = std::make_shared<Tensor>(new_storage, shape, strides, offset, final_device, requires_grad);
+    if (requires_grad) {
+        auto node = std::make_shared<ToNode>();
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->output = new_tensor;
+        new_tensor->creator = node;
+    }
     return new_tensor;
 }
 
@@ -492,6 +513,13 @@ std::shared_ptr<Tensor> Tensor::to_device_async(const Device& target_device) {
     }
     
     auto new_tensor = std::make_shared<Tensor>(new_storage, shape, strides, offset, final_device, requires_grad);
+    if (requires_grad) {
+        auto node = std::make_shared<ToNode>();
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->output = new_tensor;
+        new_tensor->creator = node;
+    }
     return new_tensor;
 }
 

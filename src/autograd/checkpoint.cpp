@@ -30,15 +30,9 @@ public:
             Autograd::backward(recomputed_output, false);
         }
 
-        if (input_copy_->requires_grad && recomputed_input->grad) {
-            if (!input_copy_->grad) {
-                input_copy_->grad = Tensor::create(recomputed_input->grad->shape, recomputed_input->grad->device, false, recomputed_input->grad->dtype);
-                input_copy_->grad->copy_(recomputed_input->grad);
-            } else {
-                input_copy_->grad->add_(recomputed_input->grad);
-            }
-        }
-
+        // Return the recomputed grad and let Autograd::backward accumulate it
+        // into the original input exactly once. (Manually copying it into
+        // input_copy_->grad here as well would double-count the gradient.)
         return { recomputed_input->grad };
     }
 };

@@ -164,8 +164,19 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
     bool a_trans = (a->shape.size() == 2 && a->strides[0] == 1 && a->strides[1] == a->shape[0]);
     bool b_trans = (b->shape.size() == 2 && b->strides[0] == 1 && b->strides[1] == b->shape[0]);
 
-    auto a_c = a_trans ? a : (a->is_contiguous() ? a : a->contiguous());
-    auto b_c = b_trans ? b : (b->is_contiguous() ? b : b->contiguous());
+    // Only the native GPU / TPU backends accept transposed inputs via
+    // transpose flags (matmul_ex). Every other path (CPU, OpenCL) assumes
+    // dense row-major data, so feed them contiguous copies instead.
+    bool trans_aware = false;
+    if (a->device.type == DeviceType::GPU) {
+        auto native = BackendDispatcher::get().get_backend();
+        trans_aware = native && native->is_available();
+    } else if (a->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        trans_aware = tpu && tpu->is_available();
+    }
+    auto a_c = (trans_aware && a_trans) ? a : (a->is_contiguous() ? a : a->contiguous());
+    auto b_c = (trans_aware && b_trans) ? b : (b->is_contiguous() ? b : b->contiguous());
     int M = a->shape[0];
     int K = a->shape[1];
     int N = b->shape[1];

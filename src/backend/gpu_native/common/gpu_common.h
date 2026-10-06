@@ -165,7 +165,10 @@ __device__ inline float dev_fp8_e4m3_to_float(unsigned char val) {
     unsigned int sign_bit = (val >> 7) & 1;
     unsigned int exp_bits = (val >> 3) & 0x0F;
     unsigned int mant_bits = val & 0x07;
-    if (exp_bits == 15) return NAN;
+    if (exp_bits == 15) {
+        if (mant_bits == 7) return NAN;
+        return (sign_bit ? -1.0f : 1.0f) * powf(2.0f, 8.0f) * (1.0f + static_cast<float>(mant_bits) / 8.0f);
+    }
     if (exp_bits == 0) {
         if (mant_bits == 0) return sign_bit ? -0.0f : 0.0f;
         return (sign_bit ? -1.0f : 1.0f) * powf(2.0f, -6.0f) * (static_cast<float>(mant_bits) / 8.0f);
@@ -189,7 +192,7 @@ __device__ inline unsigned char dev_float_to_fp8_e5m2(float val) {
         m >>= shift;
         return static_cast<unsigned char>((sign_bit << 7) | m);
     } else if (new_exp >= 31) {
-        return static_cast<unsigned char>((sign_bit << 7) | 0x7E);
+        return static_cast<unsigned char>((sign_bit << 7) | 0x7B);
     }
     unsigned int m = mant_bits >> 21;
     return static_cast<unsigned char>((sign_bit << 7) | (new_exp << 2) | m);
@@ -199,7 +202,10 @@ __device__ inline float dev_fp8_e5m2_to_float(unsigned char val) {
     unsigned int sign_bit = (val >> 7) & 1;
     unsigned int exp_bits = (val >> 2) & 0x1F;
     unsigned int mant_bits = val & 0x03;
-    if (exp_bits == 31) return NAN;
+    if (exp_bits == 31) {
+        if (mant_bits == 0) return sign_bit ? -INFINITY : INFINITY;
+        return NAN;
+    }
     if (exp_bits == 0) {
         if (mant_bits == 0) return sign_bit ? -0.0f : 0.0f;
         return (sign_bit ? -1.0f : 1.0f) * powf(2.0f, -14.0f) * (static_cast<float>(mant_bits) / 4.0f);
