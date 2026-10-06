@@ -88,127 +88,49 @@ public:
                               gout_c->storage, grad_input->storage, grad_weight->storage, grad_bias ? grad_bias->storage : nullptr});
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto native = BackendDispatcher::get().get_backend();
-            bool use_gemm = native && native->is_available();
-            auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
-            auto transp_inv_k = CLBackend::get().get_kernel(KernelID::TransposeConvOutInv);
-            auto col2im_k = CLBackend::get().get_kernel(KernelID::Col2Im);
-            if (use_gemm && im2col_k && transp_inv_k && col2im_k) {
-                int64_t K = (int64_t)C_in * KH * KW;
-                int64_t HW_out = (int64_t)H_out * W_out;
-                int64_t NHW = (int64_t)N * HW_out;
-                cl_mem in_mem = input_c->gpu_data();
-                int in_off = input_c->offset;
-                cl_mem w_mem = weight_c->gpu_data();
-                int w_off = weight_c->offset;
-                cl_mem gout_mem = gout_c->gpu_data();
-                int gout_off = gout_c->offset;
-                auto gout_2d = Tensor::create({C_out, NHW}, input_c->device);
-                {
-                    cl_mem g2_mem = gout_2d->gpu_data();
-                    int g2_off = gout_2d->offset;
-                    int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
-                    size_t total = (size_t)C_out * (size_t)NHW;
-                    CLBackend::get().launch(transp_inv_k, {total}, {},
-                        {&gout_mem, &gout_off, &g2_mem, &g2_off, &n_v, &co_v, &ho_v, &wo_v},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            cl_mem in_mem = input_c->gpu_data();
+            int in_off = input_c->offset;
+            cl_mem w_mem = weight_c->gpu_data();
+            int w_off = weight_c->offset;
+            cl_mem gout_mem = gout_c->gpu_data();
+            int gout_off = gout_c->offset;
+            cl_mem gin_mem = grad_input->gpu_data();
+            int gin_off = grad_input->offset;
+            cl_mem gw_mem = grad_weight->gpu_data();
+            int gw_off = grad_weight->offset;
+
+            if (bias) {
+                auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                if (!kernel_gb) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardBias kernel not available");
                 }
-                auto col = Tensor::create({K, NHW}, input_c->device);
-                {
-                    cl_mem col_mem = col->gpu_data();
-                    int col_off = col->offset;
-                    int n_v = N, ci_v = C_in, hi_v = H_in, wi_v = W_in;
-                    int kh_v = KH, kw_v = KW, pad_v = padding, st_v = stride;
-                    int ho_v = H_out, wo_v = W_out;
-                    size_t total = (size_t)K * (size_t)NHW;
-                    CLBackend::get().launch(im2col_k, {total}, {},
-                        {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
-                        {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
+                cl_mem gb_mem = grad_bias->gpu_data();
+                int gb_off = grad_bias->offset;
+                CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
+                    {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &H_out, &W_out},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
+
+            {
+                auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv2dBackwardWeight);
+                if (!kernel_gw) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
                 }
-                auto gw_2d = Tensor::create({C_out, K}, input_c->device);
-                gw_2d->storage = grad_weight->storage;
-                gw_2d->offset = grad_weight->offset;
-                gw_2d->requires_grad = false;
-                native->matmul_ex(gout_2d->gpu_data(), gout_2d->offset, false, NHW,
-                                  col->gpu_data(), col->offset, true, NHW,
-                                  gw_2d->gpu_data(), gw_2d->offset, C_out, K, NHW);
-                auto dcol = Tensor::create({K, NHW}, input_c->device);
-                auto w_2d = Tensor::create({C_out, K}, weight_c->device);
-                w_2d->storage = weight_c->storage;
-                w_2d->offset = weight_c->offset;
-                w_2d->requires_grad = false;
-                native->matmul_ex(w_2d->gpu_data(), w_2d->offset, true, K,
-                                  gout_2d->gpu_data(), gout_2d->offset, false, NHW,
-                                  dcol->gpu_data(), dcol->offset, K, NHW, C_out);
-                {
-                    std::vector<float> zeros(grad_input->numel(), 0.0f);
-                    CLBackend::get().write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), grad_input->offset);
+                int total_gw = C_out * C_in * KH * KW;
+                CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
+                    {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
+
+            {
+                auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv2dBackwardInput);
+                if (!kernel_gdx) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
                 }
-                {
-                    cl_mem dc_mem = dcol->gpu_data();
-                    int dc_off = dcol->offset;
-                    cl_mem gin_mem = grad_input->gpu_data();
-                    int gin_off = grad_input->offset;
-                    int n_v = N, ci_v = C_in, hi_v = H_in, wi_v = W_in;
-                    int kh_v = KH, kw_v = KW, pad_v = padding, st_v = stride;
-                    int ho_v = H_out, wo_v = W_out;
-                    size_t total = (size_t)K * (size_t)NHW;
-                    CLBackend::get().launch(col2im_k, {total}, {},
-                        {&dc_mem, &dc_off, &gin_mem, &gin_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                }
-                if (bias) {
-                    auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
-                    if (kernel_gb) {
-                        cl_mem gb_mem = grad_bias->gpu_data();
-                        int gb_off = grad_bias->offset;
-                        CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
-                            {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &H_out, &W_out},
-                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                    }
-                }
-            } else {
-                cl_mem in_mem = input_c->gpu_data();
-                int in_off = input_c->offset;
-                cl_mem w_mem = weight_c->gpu_data();
-                int w_off = weight_c->offset;
-                cl_mem gout_mem = gout_c->gpu_data();
-                int gout_off = gout_c->offset;
-                cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
-                cl_mem gw_mem = grad_weight->gpu_data();
-                int gw_off = grad_weight->offset;
-                if (bias) {
-                    auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
-                    if (!kernel_gb) {
-                        throw std::runtime_error("[litetorch Error] Conv2dBackwardBias kernel not available");
-                    }
-                    cl_mem gb_mem = grad_bias->gpu_data();
-                    int gb_off = grad_bias->offset;
-                    CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
-                        {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &H_out, &W_out},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                }
-                {
-                    auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv2dBackwardWeight);
-                    if (!kernel_gw) {
-                        throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
-                    }
-                    int total_gw = C_out * C_in * KH * KW;
-                    CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
-                        {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                }
-                {
-                    auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv2dBackwardInput);
-                    if (!kernel_gdx) {
-                        throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
-                    }
-                    int total_gdx = N * C_in * H_in * W_in;
-                    CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
-                        {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                }
+                int total_gdx = N * C_in * H_in * W_in;
+                CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
+                    {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
         } else {
             float* in_ptr = input_c->data_ptr();
