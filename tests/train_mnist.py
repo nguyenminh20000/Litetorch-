@@ -83,7 +83,7 @@ def build_torch():
 
 def build_lt():
     dev = lt.Device("gpu:0")
-    m = lt.nn.Sequential(
+    m = lt.nn.Sequential([
         lt.nn.Conv2d(1, 32, 3, padding=1),
         lt.nn.ReLU(),
         lt.nn.MaxPool2d(2),
@@ -94,7 +94,7 @@ def build_lt():
         lt.nn.Linear(64 * 7 * 7, 128),
         lt.nn.ReLU(),
         lt.nn.Linear(128, 10),
-    )
+    ])
     m.to(dev)
     return m
 
