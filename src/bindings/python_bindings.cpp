@@ -221,6 +221,7 @@ PYBIND11_MODULE(litetorch, m) {
         .value("NF4", DataType::NF4)
         .value("FP4_E2M1", DataType::FP4_E2M1)
         .value("FP4", DataType::FP4_E2M1)
+        .value("INT32", DataType::INT32)
         .export_values();
 
     py::class_<Tensor, std::shared_ptr<Tensor>>(m, "Tensor")

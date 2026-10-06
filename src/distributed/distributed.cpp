@@ -785,6 +785,8 @@ NCCLBridge::~NCCLBridge() {
     shutdown();
 }
 
+struct ncclUniqueId { char internal[128]; };
+
 void NCCLBridge::init(int rank, int world_size) {
     if (initialized_) return;
 
@@ -888,8 +890,8 @@ void NCCLBridge::init(int rank, int world_size) {
         }
     }
 
-    typedef int (*init_rank_t)(void**, int, void*, int);
-    int res = ((init_rank_t)comm_init_rank_fn)(&comm_, world_size, unique_id, rank);
+    typedef int (*init_rank_t)(void**, int, ncclUniqueId, int);
+    int res = ((init_rank_t)comm_init_rank_fn)(&comm_, world_size, *reinterpret_cast<ncclUniqueId*>(unique_id), rank);
     if (res != 0) {
         dlclose(lib_handle_);
         lib_handle_ = nullptr;
@@ -921,11 +923,11 @@ void NCCLBridge::init_groups(int rank, int world_size, int tp_size, int pp_size)
     split(comm_, tp_color, tp_key, &tp_comm_, nullptr);
 
     int dp_size = world_size / (tp_size * pp_size);
-    int dp_color = (rank % (tp_size * pp_size)) / tp_size;
+    int dp_color = rank % (tp_size * pp_size);
     int dp_key = rank / (tp_size * pp_size);
     split(comm_, dp_color, dp_key, &dp_comm_, nullptr);
 
-    int pp_color = rank % (tp_size * dp_size);
+    int pp_color = (rank / (tp_size * pp_size)) * tp_size + rank % tp_size;
     int pp_key = rank / (tp_size * dp_size);
     split(comm_, pp_color, pp_key, &pp_comm_, nullptr);
 

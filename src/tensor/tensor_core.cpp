@@ -6,6 +6,7 @@
 #include "litetorch/allocator.h"
 #include "litetorch/backend.h"
 #include <numeric>
+#include <cstdint>
 #include <stdexcept>
 #include <random>
 #include <algorithm>
@@ -302,6 +303,7 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
     if (device.type == DeviceType::GPU) {
         size_t num_elements = numel();
         int ndims_val = static_cast<int>(shape.size());
+        if (ndims_val > 8) throw std::runtime_error("contiguous(): ndims > 8 not supported by GPU kernel");
         
         int shape_arr[8] = {0};
         int strides_arr[8] = {0};
@@ -508,6 +510,11 @@ std::shared_ptr<Tensor> Tensor::to_device_async(const Device& target_device) {
         if (storage->get_gpu_ptr() && new_storage->get_gpu_ptr()) {
             CLBackend::get().copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
         }
+    } else if (device.type == DeviceType::CPU && final_device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu && new_storage->get_gpu_ptr()) {
+            tpu->write_async(new_storage->get_gpu_ptr(), storage->size * elem_sz, storage->get_cpu_ptr());
+        }
     } else {
         std::memcpy(new_storage->get_cpu_ptr(), storage->get_cpu_ptr(), storage->size * elem_sz);
     }
@@ -583,6 +590,9 @@ std::shared_ptr<Tensor> Tensor::transpose(int64_t dim0, int64_t dim1) {
     int64_t ndims = shape.size();
     if (dim0 < 0) dim0 += ndims;
     if (dim1 < 0) dim1 += ndims;
+    if (dim0 < 0 || dim0 >= ndims || dim1 < 0 || dim1 >= ndims) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range in transpose");
+    }
 
     std::vector<int64_t> new_shape = shape;
     std::vector<int64_t> new_strides = strides;
@@ -625,6 +635,7 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
         if (device.type == DeviceType::GPU) {
             size_t num_elements = numel();
             int ndims_val = static_cast<int>(shape.size());
+            if (ndims_val > 8) throw std::runtime_error("to(): ndims > 8 not supported by GPU kernel");
             
             int shape_arr[8] = {0};
             int strides_arr[8] = {0};
@@ -707,6 +718,9 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
 void Tensor::add_(std::shared_ptr<Tensor> other) {
     if (shape != other->shape) {
         throw std::runtime_error("[litetorch Error] Shape mismatch in add_");
+    }
+    if (other->dtype != dtype) {
+        throw std::runtime_error("[litetorch Error] Dtype mismatch in add_");
     }
     if (other->device != device) {
         other = other->to(device);
@@ -1076,7 +1090,30 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
     // Linear reads below assume a dense layout; make the source contiguous
     // so views/slices/transposes (non-contiguous or offset != 0) are read
     // correctly (mirrors the GPU path's self_c handling above).
-    auto src_tensor = is_contiguous() ? shared_from_this() : contiguous();
+    // Note: this must not call contiguous() here: contiguous() routes
+    // non-FP32 tensors back through cast(), which would recurse forever.
+    std::shared_ptr<Tensor> src_tensor;
+    if (is_contiguous() && offset == 0) {
+        src_tensor = shared_from_this();
+    } else {
+        src_tensor = create(shape, Device(DeviceType::CPU, 0), false, dtype);
+        size_t esz = storage->element_size();
+        storage->ensure_cpu();
+        const char* src_base = reinterpret_cast<const char*>(storage->get_cpu_ptr()) + offset * esz;
+        char* dst_base = reinterpret_cast<char*>(src_tensor->storage->get_cpu_ptr());
+        int64_t nd = static_cast<int64_t>(shape.size());
+        int64_t n = numel();
+        for (int64_t lin = 0; lin < n; ++lin) {
+            int64_t rem = lin;
+            int64_t src_off = 0;
+            for (int64_t d = nd - 1; d >= 0; --d) {
+                int64_t c = rem % shape[d];
+                rem /= shape[d];
+                src_off += c * strides[d];
+            }
+            std::memcpy(dst_base + lin * esz, src_base + src_off * esz, esz);
+        }
+    }
     src_tensor->storage->ensure_cpu();
     void* src_cpu = (void*)src_tensor->storage->get_cpu_ptr();
     void* dst_cpu = (void*)out->storage->get_cpu_ptr();
@@ -1127,6 +1164,18 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
         }
     } else if (dtype == DataType::INT16 && target_dtype == DataType::FP32) {
         int16_t* src = (int16_t*)src_cpu;
+        float* dst = (float*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (float)src[i];
+        }
+    } else if (dtype == DataType::FP32 && target_dtype == DataType::INT32) {
+        float* src = (float*)src_cpu;
+        int32_t* dst = (int32_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (int32_t)src[i];
+        }
+    } else if (dtype == DataType::INT32 && target_dtype == DataType::FP32) {
+        int32_t* src = (int32_t*)src_cpu;
         float* dst = (float*)dst_cpu;
         for (size_t i = 0; i < numel_; ++i) {
             dst[i] = (float)src[i];

@@ -7,6 +7,7 @@ static inline void* get_scratch_storage(size_t required_bytes) {
     if (required_bytes == 0) return nullptr;
     if (required_bytes > s_temp_storage_allocated) {
         if (s_temp_storage) {
+            GPU_API(StreamSynchronize)(g_compute_stream);
             GPU_API(Free)(s_temp_storage);
             s_temp_storage = nullptr;
             s_temp_storage_allocated = 0;

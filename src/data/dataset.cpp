@@ -1,5 +1,6 @@
 #include "litetorch/data.h"
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 
 namespace litetorch {
@@ -18,18 +19,20 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> TensorDataset::get(s
 
     std::vector<int64_t> item_shape_x(x->shape.begin() + 1, x->shape.end());
     if (item_shape_x.empty()) item_shape_x = {1};
-    auto item_x = Tensor::create(item_shape_x, Device(DeviceType::CPU, 0));
-    float* x_src = x->data_ptr() + index * item_x->numel();
-    std::copy(x_src, x_src + item_x->numel(), item_x->data_ptr());
+    auto item_x = Tensor::create(item_shape_x, Device(DeviceType::CPU, 0), false, x->dtype);
+    size_t elem_sz_x = x->storage->element_size();
+    char* x_src = (char*)x->data_ptr() + index * x->strides[0] * elem_sz_x;
+    std::memcpy(item_x->data_ptr(), x_src, item_x->numel() * elem_sz_x);
     if (x->device.type == DeviceType::GPU) {
         item_x = item_x->to(x->device);
     }
 
     std::vector<int64_t> item_shape_y(y->shape.begin() + 1, y->shape.end());
     if (item_shape_y.empty()) item_shape_y = {1};
-    auto item_y = Tensor::create(item_shape_y, Device(DeviceType::CPU, 0));
-    float* y_src = y->data_ptr() + index * item_y->numel();
-    std::copy(y_src, y_src + item_y->numel(), item_y->data_ptr());
+    auto item_y = Tensor::create(item_shape_y, Device(DeviceType::CPU, 0), false, y->dtype);
+    size_t elem_sz_y = y->storage->element_size();
+    char* y_src = (char*)y->data_ptr() + index * y->strides[0] * elem_sz_y;
+    std::memcpy(item_y->data_ptr(), y_src, item_y->numel() * elem_sz_y);
     if (y->device.type == DeviceType::GPU) {
         item_y = item_y->to(y->device);
     }

@@ -61,7 +61,7 @@ static void shard_module_parameters(std::shared_ptr<nn::Module> module,
         size_t shard_size = (total_elements + world_size - 1) / world_size;
         
         std::vector<int64_t> shard_shape = { (int64_t)shard_size };
-        auto shard = Tensor::create(shard_shape, p->device, p->requires_grad, p->dtype);
+        auto shard = Tensor::create(shard_shape, Device(DeviceType::CPU, 0), p->requires_grad, p->dtype);
         size_t start_idx = rank * shard_size;
         size_t copy_size = std::min(shard_size, total_elements > start_idx ? total_elements - start_idx : 0);
         
@@ -71,8 +71,8 @@ static void shard_module_parameters(std::shared_ptr<nn::Module> module,
                 std::memcpy(shard->data_ptr(), p->data_ptr() + start_idx, copy_size * p->storage->element_size());
             } else {
                 auto cpu_p = p->to(Device(DeviceType::CPU, 0));
-                std::memcpy(shard->storage->get_cpu_ptr(), cpu_p->data_ptr() + start_idx, copy_size * p->storage->element_size());
-                shard->to(p->device);
+                std::memcpy(shard->data_ptr(), cpu_p->data_ptr() + start_idx, copy_size * p->storage->element_size());
+                shard = shard->to(p->device);
             }
         }
         

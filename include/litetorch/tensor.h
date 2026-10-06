@@ -24,7 +24,8 @@ enum class DataType {
     FP8_E4M3,
     FP8_E5M2,
     NF4,
-    FP4_E2M1
+    FP4_E2M1,
+    INT32
 };
 
 class Node;
@@ -38,7 +39,7 @@ public:
     DataType dtype = DataType::FP32;
     float* cpu_data = nullptr;
     cl_mem gpu_data = nullptr;
-    bool is_swapped = false;
+    std::atomic<bool> is_swapped{false};
     mutable std::atomic<bool> in_use{false};
     bool has_lru_iterator = false;
     std::list<StorageImpl*>::iterator lru_iterator;

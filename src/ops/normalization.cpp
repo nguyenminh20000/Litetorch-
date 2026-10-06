@@ -346,11 +346,23 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
     auto bias_c = bias ? (bias->is_contiguous() ? bias : bias->contiguous()) : nullptr;
+    int64_t in_ndim = static_cast<int64_t>(input_c->shape.size());
+    if (normalized_shape.size() > static_cast<size_t>(in_ndim)) {
+        throw std::runtime_error("[litetorch Error] LayerNorm: normalized_shape rank must be within input rank");
+    }
+    for (size_t i = 0; i < normalized_shape.size(); ++i) {
+        if (input_c->shape[in_ndim - normalized_shape.size() + i] != normalized_shape[i]) {
+            throw std::runtime_error("[litetorch Error] LayerNorm: normalized_shape must match input trailing dims");
+        }
+    }
     auto out = Tensor::create(input_c->shape, input_c->device);
     StorageUseGuard guard({input_c->storage, weight_c ? weight_c->storage : nullptr, bias_c ? bias_c->storage : nullptr, out->storage});
     
     int64_t M = 1;
     for (auto s : normalized_shape) M *= s;
+    if (M <= 0 || input_c->numel() % M != 0) {
+        throw std::runtime_error("[litetorch Error] LayerNorm: input numel must be divisible by normalized numel");
+    }
     int64_t N = input_c->numel() / M;
     
     auto save_mean = Tensor::create({N}, input_c->device, false, DataType::FP32);
@@ -437,11 +449,23 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
     auto residual_c = residual->is_contiguous() ? residual : residual->contiguous();
     auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
     auto bias_c = bias ? (bias->is_contiguous() ? bias : bias->contiguous()) : nullptr;
+    int64_t in_ndim = static_cast<int64_t>(input_c->shape.size());
+    if (normalized_shape.size() > static_cast<size_t>(in_ndim)) {
+        throw std::runtime_error("[litetorch Error] FusedAddLayerNorm: normalized_shape rank must be within input rank");
+    }
+    for (size_t i = 0; i < normalized_shape.size(); ++i) {
+        if (input_c->shape[in_ndim - normalized_shape.size() + i] != normalized_shape[i]) {
+            throw std::runtime_error("[litetorch Error] FusedAddLayerNorm: normalized_shape must match input trailing dims");
+        }
+    }
     auto out = Tensor::create(input_c->shape, input_c->device);
     StorageUseGuard guard({input_c->storage, residual_c->storage, weight_c ? weight_c->storage : nullptr, bias_c ? bias_c->storage : nullptr, out->storage});
     
     int64_t M = 1;
     for (auto s : normalized_shape) M *= s;
+    if (M <= 0 || input_c->numel() % M != 0) {
+        throw std::runtime_error("[litetorch Error] FusedAddLayerNorm: input numel must be divisible by normalized numel");
+    }
     int64_t N = input_c->numel() / M;
     
     auto save_mean = Tensor::create({N}, input_c->device, false, DataType::FP32);

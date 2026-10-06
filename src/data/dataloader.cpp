@@ -94,15 +94,17 @@ void DataLoader::reset() {
         auto epoch_x_cpu = Tensor::create(epoch_x_shape, Device(DeviceType::CPU, 0), false, x_tensor->dtype);
         auto epoch_y_cpu = Tensor::create(epoch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
 
-        float* ex_ptr = epoch_x_cpu->data_ptr();
-        float* ey_ptr = epoch_y_cpu->data_ptr();
-        float* x_ptr = x_tensor->data_ptr();
-        float* y_ptr = y_tensor->data_ptr();
+        size_t x_elem_sz = x_tensor->storage->element_size();
+        size_t y_elem_sz = y_tensor->storage->element_size();
+        char* ex_ptr = (char*)epoch_x_cpu->data_ptr();
+        char* ey_ptr = (char*)epoch_y_cpu->data_ptr();
+        char* x_ptr = (char*)x_tensor->data_ptr();
+        char* y_ptr = (char*)y_tensor->data_ptr();
 
         for (size_t i = 0; i < n; ++i) {
             size_t idx = indices[i];
-            std::memcpy(ex_ptr + i * D, x_ptr + idx * D, D * sizeof(float));
-            std::memcpy(ey_ptr + i * Dy, y_ptr + idx * Dy, Dy * sizeof(float));
+            std::memcpy(ex_ptr + i * D * x_elem_sz, x_ptr + idx * D * x_elem_sz, D * x_elem_sz);
+            std::memcpy(ey_ptr + i * Dy * y_elem_sz, y_ptr + idx * Dy * y_elem_sz, Dy * y_elem_sz);
         }
 
         epoch_x_gpu = epoch_x_cpu->to(device);
@@ -201,15 +203,17 @@ void DataLoader::worker_loop() {
                 auto batch_x_cpu = Tensor::create(batch_x_shape, Device(DeviceType::CPU, 0), false, x_tensor->dtype);
                 auto batch_y_cpu = Tensor::create(batch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
 
-                float* bx_ptr = batch_x_cpu->data_ptr();
-                float* by_ptr = batch_y_cpu->data_ptr();
-                float* x_ptr = x_tensor->data_ptr();
-                float* y_ptr = y_tensor->data_ptr();
+                size_t x_elem_sz = x_tensor->storage->element_size();
+                size_t y_elem_sz = y_tensor->storage->element_size();
+                char* bx_ptr = (char*)batch_x_cpu->data_ptr();
+                char* by_ptr = (char*)batch_y_cpu->data_ptr();
+                char* x_ptr = (char*)x_tensor->data_ptr();
+                char* y_ptr = (char*)y_tensor->data_ptr();
 
                 for (size_t i = 0; i < batch_len; ++i) {
                     size_t idx = batch_indices[i];
-                    std::memcpy(bx_ptr + i * D, x_ptr + idx * D, D * sizeof(float));
-                    by_ptr[i] = y_ptr[idx];
+                    std::memcpy(bx_ptr + i * D * x_elem_sz, x_ptr + idx * D * x_elem_sz, D * x_elem_sz);
+                    std::memcpy(by_ptr + i * Dy * y_elem_sz, y_ptr + idx * Dy * y_elem_sz, Dy * y_elem_sz);
                 }
                 batch.x = batch_x_cpu;
                 batch.y = batch_y_cpu;

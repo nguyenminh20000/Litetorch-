@@ -138,7 +138,7 @@ extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, v
     float beta = 0.0f;
     const void* a_ptr = (const char*)A + a_off;
     const void* b_ptr = (const char*)B + b_off;
-    void* c_ptr = (char*)C + c_off;
+    void* c_ptr = (char*)C + c_off * sizeof(__half);
     
     cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, g_compute_stream);
     

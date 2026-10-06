@@ -313,13 +313,30 @@ bool ProcessGroup::all_gather_shm(std::shared_ptr<Tensor> shard, std::shared_ptr
         }
     }
 
-    if (full->device.type == DeviceType::GPU) {
+    size_t N = full->numel();
+    bool need_pad = (N != S * (size_t)world_size_);
+    auto full_eff = full;
+    if (need_pad) {
+        full_eff = Tensor::create({(int64_t)(S * world_size_)}, full->device, false, full->dtype);
+    }
+
+    if (full_eff->device.type == DeviceType::GPU) {
         for (int r = 0; r < world_size_; ++r) {
-            CLBackend::get().write(full->gpu_data(), S * elem_sz, shm_buffers_[r], (full->offset + r * S) * elem_sz);
+            CLBackend::get().write(full_eff->gpu_data(), S * elem_sz, shm_buffers_[r], (full_eff->offset + r * S) * elem_sz);
         }
     } else {
         for (int r = 0; r < world_size_; ++r) {
-            std::memcpy((char*)full->data_ptr() + r * S * elem_sz, shm_buffers_[r], S * elem_sz);
+            std::memcpy((char*)full_eff->data_ptr() + r * S * elem_sz, shm_buffers_[r], S * elem_sz);
+        }
+    }
+
+    if (need_pad) {
+        if (full->device.type == DeviceType::GPU) {
+            std::vector<char> tmp(N * elem_sz);
+            CLBackend::get().read(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
+            CLBackend::get().write(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
+        } else {
+            std::memcpy(full->data_ptr(), full_eff->data_ptr(), N * elem_sz);
         }
     }
 
@@ -340,10 +357,28 @@ bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared
     size_t total_bytes = S * world_size_ * elem_sz;
     if (total_bytes > shm_buffer_size_) return false;
 
-    if (full->device.type == DeviceType::GPU) {
-        CLBackend::get().read(full->gpu_data(), total_bytes, shm_buffers_[rank_], full->offset * elem_sz);
+    size_t N = full->numel();
+    auto full_eff = full;
+    if (N != S * (size_t)world_size_) {
+        full_eff = Tensor::create({(int64_t)(S * world_size_)}, full->device, false, full->dtype);
+        if (full->device.type == DeviceType::GPU) {
+            std::vector<char> tmp(N * elem_sz);
+            CLBackend::get().read(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
+            CLBackend::get().write(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
+            if (total_bytes > N * elem_sz) {
+                std::vector<char> zeros(total_bytes - N * elem_sz, 0);
+                CLBackend::get().write(full_eff->gpu_data(), zeros.size(), zeros.data(), (full_eff->offset * elem_sz) + N * elem_sz);
+            }
+        } else {
+            std::memcpy(full_eff->data_ptr(), full->data_ptr(), N * elem_sz);
+            std::memset((char*)full_eff->data_ptr() + N * elem_sz, 0, total_bytes - N * elem_sz);
+        }
+    }
+
+    if (full_eff->device.type == DeviceType::GPU) {
+        CLBackend::get().read(full_eff->gpu_data(), total_bytes, shm_buffers_[rank_], full_eff->offset * elem_sz);
     } else {
-        std::memcpy(shm_buffers_[rank_], full->data_ptr(), total_bytes);
+        std::memcpy(shm_buffers_[rank_], full_eff->data_ptr(), total_bytes);
     }
 
     int cur_step = shm_ctrl_->steps[rank_].load();

@@ -96,7 +96,7 @@ Embedding::Embedding(int num_embeddings, int embedding_dim)
 
 std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
     if (weight->device != input->device) {
-        weight = weight->to(input->device);
+        throw std::runtime_error("[litetorch Error] Embedding weight device does not match input device; call Embedding::to(device) before forward instead of relying on an implicit move");
     }
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();

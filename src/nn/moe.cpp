@@ -14,9 +14,11 @@ public:
     int top_k;
     std::shared_ptr<Tensor> indices;
     std::shared_ptr<Tensor> probs;
+    std::vector<int64_t> input_shape;
 
-    MoeForwardNode(int num_experts, int top_k, std::shared_ptr<Tensor> indices, std::shared_ptr<Tensor> probs)
-        : Node("MoeForwardNode"), num_experts(num_experts), top_k(top_k), indices(indices), probs(probs) {}
+    MoeForwardNode(int num_experts, int top_k, std::shared_ptr<Tensor> indices, std::shared_ptr<Tensor> probs,
+                   const std::vector<int64_t>& input_shape)
+        : Node("MoeForwardNode"), num_experts(num_experts), top_k(top_k), indices(indices), probs(probs), input_shape(input_shape) {}
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto input = saved_tensors[0];
@@ -24,7 +26,8 @@ public:
 
         int64_t N = input->shape[0];
         int64_t D = input->shape[1];
-        int64_t out_features = grad_output->shape[1];
+        int64_t out_features = grad_output->shape.back();
+        auto grad_out_flat = grad_output->reshape({N, out_features});
 
         auto grad_input = Tensor::zeros(input->shape, input->device, false);
         auto grad_gate_weight = Tensor::zeros(gate_weight->shape, gate_weight->device, false);
@@ -48,7 +51,7 @@ public:
                     void* b_ptr = b ? b->gpu_data() : nullptr;
                     int b_off = b ? b->offset : 0;
 
-                    backend->moe_expert_backward(grad_output->gpu_data(), grad_output->offset, input->gpu_data(), input->offset, w->gpu_data(), w->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, grad_input->gpu_data(), grad_input->offset, gw->gpu_data(), gw->offset, gb_ptr, gb_off, grad_probs->gpu_data(), grad_probs->offset, N, D, out_features, e, top_k);
+                    backend->moe_expert_backward(grad_out_flat->gpu_data(), grad_out_flat->offset, input->gpu_data(), input->offset, w->gpu_data(), w->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, grad_input->gpu_data(), grad_input->offset, gw->gpu_data(), gw->offset, gb_ptr, gb_off, grad_probs->gpu_data(), grad_probs->offset, N, D, out_features, e, top_k);
 
                     grads.push_back(gw);
                     grads.push_back(gb);
@@ -57,7 +60,7 @@ public:
         }
         
         if (!run_gpu) {
-            auto cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
+            auto cpu_gout = grad_out_flat->to(Device(DeviceType::CPU, 0));
             auto cpu_in = input->to(Device(DeviceType::CPU, 0));
             auto cpu_probs = probs->to(Device(DeviceType::CPU, 0));
             auto cpu_indices = indices->to(Device(DeviceType::CPU, 0));
@@ -138,6 +141,7 @@ public:
             }
         }
 
+        grads[0] = grads[0]->reshape(input_shape);
         return grads;
     }
 };
@@ -157,12 +161,15 @@ MoELinear::MoELinear(int in_features, int out_features, int num_experts, int top
 }
 
 std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
-    int64_t N = input->shape[0];
-    int64_t D = input->shape[1];
+    std::vector<int64_t> in_shape = input->shape;
+    int64_t D = input->shape.back();
+    int64_t N = input->numel() / D;
     int64_t out_features = experts[0]->weight->shape[0];
 
+    auto input_flat = input->reshape({N, D});
+
     std::shared_ptr<Tensor> indices;
-    auto probs = Ops::moe_gate(input, gate_weight, top_k, indices);
+    auto probs = Ops::moe_gate(input_flat, gate_weight, top_k, indices);
 
     auto out = Tensor::zeros({N, out_features}, input->device, false);
 
@@ -174,13 +181,13 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
             for (int e = 0; e < num_experts; ++e) {
                 void* b_ptr = experts[e]->bias ? experts[e]->bias->gpu_data() : nullptr;
                 int b_off = experts[e]->bias ? experts[e]->bias->offset : 0;
-                backend->moe_expert_forward(input->gpu_data(), input->offset, experts[e]->weight->gpu_data(), experts[e]->weight->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, out->gpu_data(), out->offset, N, D, out_features, e, top_k);
+                backend->moe_expert_forward(input_flat->gpu_data(), input_flat->offset, experts[e]->weight->gpu_data(), experts[e]->weight->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, out->gpu_data(), out->offset, N, D, out_features, e, top_k);
             }
         }
     }
     
     if (!run_gpu) {
-        auto cpu_in = input->to(Device(DeviceType::CPU, 0));
+        auto cpu_in = input_flat->to(Device(DeviceType::CPU, 0));
         auto cpu_probs = probs->to(Device(DeviceType::CPU, 0));
         auto cpu_indices = indices->to(Device(DeviceType::CPU, 0));
         auto cpu_out = out->to(Device(DeviceType::CPU, 0));
@@ -224,10 +231,10 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
 
     if (Autograd::active_tensors.size() > 0 || requires_grad) {
         out->requires_grad = requires_grad;
-        auto node = std::make_shared<MoeForwardNode>(num_experts, top_k, indices, probs);
+        auto node = std::make_shared<MoeForwardNode>(num_experts, top_k, indices, probs, in_shape);
         node->next_nodes = {input->creator, gate_weight->creator};
         node->inputs = {{input, input->requires_grad}, {gate_weight, gate_weight->requires_grad}};
-        node->saved_tensors = {input, gate_weight};
+        node->saved_tensors = {input_flat, gate_weight};
 
         for (int e = 0; e < num_experts; ++e) {
             node->next_nodes.push_back(experts[e]->weight->creator);
@@ -249,7 +256,9 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         node->output = out;
     }
 
-    return out;
+    std::vector<int64_t> out_shape = in_shape;
+    out_shape.back() = out_features;
+    return out->reshape(out_shape);
 }
 
 std::vector<std::shared_ptr<Tensor>> MoELinear::parameters() {

@@ -238,7 +238,9 @@ public:
     void matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
     void matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, void* B, int64_t b_off, bool trans_b, int64_t ldb, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
         if (gpu_matmul_ex_fn) gpu_matmul_ex_fn(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+        else if (trans_a || trans_b) throw std::runtime_error("gpu_native: matmul_ex not supported (transpose requested)");
         else if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+        else throw std::runtime_error("gpu_native: matmul_ex not supported");
     }
     void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
     void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_half_fn) gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
@@ -246,15 +248,15 @@ public:
     void matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float a_scale = 1.0f, float b_scale = 1.0f, float d_scale = 1.0f) override {
         if (gpu_matmul_fp8_fn) {
             gpu_matmul_fp8_fn(A, a_off, B, b_off, C, c_off, M, N, K, a_scale, b_scale, d_scale);
-        } else if (gpu_matmul_half_fn) {
-            gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+        } else {
+            throw std::runtime_error("gpu_native: matmul_fp8 not supported");
         }
     }
     void matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
         if (gpu_matmul_bf16_fn) {
             gpu_matmul_bf16_fn(A, a_off, B, b_off, C, c_off, M, N, K);
-        } else if (gpu_matmul_half_fn) {
-            gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+        } else {
+            throw std::runtime_error("gpu_native: matmul_bf16 not supported");
         }
     }
     void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M_state, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {

@@ -100,6 +100,9 @@ public:
 
             if (bias) {
                 auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                if (!kernel_gb) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardBias kernel not available");
+                }
                 cl_mem gb_mem = grad_bias->gpu_data();
                 int gb_off = grad_bias->offset;
                 CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
@@ -109,6 +112,9 @@ public:
 
             {
                 auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv2dBackwardWeight);
+                if (!kernel_gw) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
+                }
                 int total_gw = C_out * C_in * KH * KW;
                 CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
@@ -117,6 +123,9 @@ public:
 
             {
                 auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv2dBackwardInput);
+                if (!kernel_gdx) {
+                    throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
+                }
                 int total_gdx = N * C_in * H_in * W_in;
                 CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                     {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
@@ -265,6 +274,9 @@ public:
 
             if (bias) {
                 auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv3dBackwardBias);
+                if (!kernel_gb) {
+                    throw std::runtime_error("[litetorch Error] Conv3dBackwardBias kernel not available");
+                }
                 cl_mem gb_mem = grad_bias->gpu_data();
                 int gb_off = grad_bias->offset;
                 CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
@@ -274,6 +286,9 @@ public:
 
             {
                 auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv3dBackwardWeight);
+                if (!kernel_gw) {
+                    throw std::runtime_error("[litetorch Error] Conv3dBackwardWeight kernel not available");
+                }
                 int total_gw = C_out * C_in * KD * KH * KW;
                 CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
@@ -282,6 +297,9 @@ public:
 
             {
                 auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv3dBackwardInput);
+                if (!kernel_gdx) {
+                    throw std::runtime_error("[litetorch Error] Conv3dBackwardInput kernel not available");
+                }
                 int total_gdx = N * C_in * D_in * H_in * W_in;
                 CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                     {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
@@ -410,6 +428,10 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     if (input->shape.size() != 4 || weight->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] Conv2d requires 4D input and weight");
     }
+    if (input->dtype != DataType::FP32 || weight->dtype != DataType::FP32 ||
+        (bias && bias->dtype != DataType::FP32)) {
+        throw std::runtime_error("[litetorch Error] Conv2d requires FP32 input, weight and bias");
+    }
 
     int N = input->shape[0];
     int C_in = input->shape[1];
@@ -430,7 +452,10 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
 
     if (input->device.type == DeviceType::GPU) {
         auto kernel_conv = CLBackend::get().get_kernel(KernelID::Conv2dForward);
-        if (kernel_conv) {
+        if (!kernel_conv) {
+            throw std::runtime_error("[litetorch Error] Conv2dForward kernel not available");
+        }
+        {
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem w_mem = weight_c->gpu_data();
@@ -509,6 +534,10 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     if (input->shape.size() != 5 || weight->shape.size() != 5) {
         throw std::runtime_error("[litetorch Error] Conv3d requires 5D input and weight");
     }
+    if (input->dtype != DataType::FP32 || weight->dtype != DataType::FP32 ||
+        (bias && bias->dtype != DataType::FP32)) {
+        throw std::runtime_error("[litetorch Error] Conv3d requires FP32 input, weight and bias");
+    }
 
     int N = input->shape[0];
     int C_in = input->shape[1];
@@ -530,6 +559,9 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
         auto bias_c = (bias && bias->is_contiguous()) ? bias : (bias ? bias->contiguous() : nullptr);
         auto kernel = CLBackend::get().get_kernel(KernelID::Conv3dForward);
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] Conv3dForward kernel not available");
+        }
         cl_mem in_mem = input_c->gpu_data();
         cl_mem w_mem = weight_c->gpu_data();
         cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;

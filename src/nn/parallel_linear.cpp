@@ -74,7 +74,7 @@ RowParallelLinear::RowParallelLinear(int in_features, int out_features, bool has
 
     if (has_bias) {
         bias = Tensor::create({out_features}, Device(DeviceType::CPU, 0), true);
-        float bound = 1.0f / std::sqrt(static_cast<float>(in_features_per_rank));
+        float bound = 1.0f / std::sqrt(static_cast<float>(in_features));
         std::mt19937& gen = get_generator();
         std::uniform_real_distribution<float> dis(-bound, bound);
         float* data = bias->data_ptr();

@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 
 namespace litetorch {
@@ -55,15 +56,15 @@ public:
         if (input_c->device.type == DeviceType::GPU) {
             auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
             int gin_size = grad_input->numel();
+            int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_size}, {sizeof(cl_mem), sizeof(int)});
+            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool2dBackward);
             cl_mem ind_mem = ind_c->gpu_data();
             cl_mem gout_mem = gout_c->gpu_data();
             int ind_off = ind_c->offset;
             int gout_off = gout_c->offset;
-            int gin_off = grad_input->offset;
 
             int total_threads = N * C * H_out * W_out;
             CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
@@ -72,7 +73,7 @@ public:
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
                                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
-            float* ind_ptr = ind_c->data_ptr();
+            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->data_ptr());
             float* gout_ptr = gout_c->data_ptr();
             float* gin_ptr = grad_input->data_ptr();
             std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
@@ -82,7 +83,7 @@ public:
                 for (int ho = 0; ho < H_out; ++ho) {
                     for (int wo = 0; wo < W_out; ++wo) {
                         int out_idx = ((b * C + c) * H_out + ho) * W_out + wo;
-                        int max_idx = (int)ind_ptr[out_idx];
+                        int max_idx = ind_ptr[out_idx];
                         if (max_idx >= 0) {
                             gin_ptr[max_idx] += gout_ptr[out_idx];
                         }
@@ -127,15 +128,15 @@ public:
         if (input_c->device.type == DeviceType::GPU) {
             auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
             int gin_size = grad_input->numel();
+            int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_size}, {sizeof(cl_mem), sizeof(int)});
+            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool3dBackward);
             cl_mem ind_mem = ind_c->gpu_data();
             cl_mem gout_mem = gout_c->gpu_data();
             int ind_off = ind_c->offset;
             int gout_off = gout_c->offset;
-            int gin_off = grad_input->offset;
 
             int total_threads = N * C * D_out * H_out * W_out;
             CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
@@ -144,7 +145,7 @@ public:
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
                                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
-            float* ind_ptr = ind_c->data_ptr();
+            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->data_ptr());
             float* gout_ptr = gout_c->data_ptr();
             float* gin_ptr = grad_input->data_ptr();
             std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
@@ -155,7 +156,7 @@ public:
                     for (int ho = 0; ho < H_out; ++ho) {
                         for (int wo = 0; wo < W_out; ++wo) {
                             int out_idx = (((b * C + c) * D_out + do_) * H_out + ho) * W_out + wo;
-                            int max_idx = (int)ind_ptr[out_idx];
+                            int max_idx = ind_ptr[out_idx];
                             if (max_idx >= 0) {
                                 gin_ptr[max_idx] += gout_ptr[out_idx];
                             }
@@ -188,13 +189,13 @@ public:
         if (input_c->device.type == DeviceType::GPU) {
             auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
             int gin_size = grad_input->numel();
+            int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_size}, {sizeof(cl_mem), sizeof(int)});
+            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = CLBackend::get().get_kernel(KernelID::AdaptiveAvgPool2dBackward);
             cl_mem gout_mem = gout_c->gpu_data();
             int gout_off = gout_c->offset;
-            int gin_off = grad_input->offset;
 
             int total_threads = N * C * H * W;
             CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
@@ -241,6 +242,12 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
     if (input->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] MaxPool2d requires 4D input");
     }
+    if (kernel_size <= 0 || stride <= 0) {
+        throw std::runtime_error("[litetorch Error] MaxPool2d requires kernel_size > 0 and stride > 0");
+    }
+    if (padding < 0 || padding > kernel_size / 2) {
+        throw std::runtime_error("[litetorch Error] MaxPool2d requires 0 <= padding <= kernel_size / 2");
+    }
 
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     int N = input_c->shape[0];
@@ -249,8 +256,11 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
     int W_in = input_c->shape[3];
     int H_out = (H_in - kernel_size + 2 * padding) / stride + 1;
     int W_out = (W_in - kernel_size + 2 * padding) / stride + 1;
+    if (H_out <= 0 || W_out <= 0) {
+        throw std::runtime_error("[litetorch Error] MaxPool2d output dimensions must be positive");
+    }
     auto out = Tensor::create({N, C, H_out, W_out}, input_c->device);
-    auto save_indices = Tensor::create({N, C, H_out, W_out}, input_c->device);
+    auto save_indices = Tensor::create({N, C, H_out, W_out}, input_c->device, false, DataType::INT32);
     StorageUseGuard guard({input_c->storage, out->storage, save_indices->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
@@ -292,7 +302,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
                     }
                     int out_idx = ((b * C + c) * H_out + ho) * W_out + wo;
                     out_ptr[out_idx] = max_val;
-                    save_indices->data_ptr()[out_idx] = (float)max_idx;
+                    reinterpret_cast<int32_t*>(save_indices->data_ptr())[out_idx] = max_idx;
                 }
             }
         });
@@ -316,6 +326,12 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
     if (input->shape.size() != 5) {
         throw std::runtime_error("[litetorch Error] MaxPool3d requires 5D input");
     }
+    if (kernel_size <= 0 || stride <= 0) {
+        throw std::runtime_error("[litetorch Error] MaxPool3d requires kernel_size > 0 and stride > 0");
+    }
+    if (padding < 0 || padding > kernel_size / 2) {
+        throw std::runtime_error("[litetorch Error] MaxPool3d requires 0 <= padding <= kernel_size / 2");
+    }
 
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     int N = input_c->shape[0];
@@ -326,8 +342,11 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
     int D_out = (D_in - kernel_size + 2 * padding) / stride + 1;
     int H_out = (H_in - kernel_size + 2 * padding) / stride + 1;
     int W_out = (W_in - kernel_size + 2 * padding) / stride + 1;
+    if (D_out <= 0 || H_out <= 0 || W_out <= 0) {
+        throw std::runtime_error("[litetorch Error] MaxPool3d output dimensions must be positive");
+    }
     auto out = Tensor::create({N, C, D_out, H_out, W_out}, input_c->device);
-    auto save_indices = Tensor::create({N, C, D_out, H_out, W_out}, input_c->device);
+    auto save_indices = Tensor::create({N, C, D_out, H_out, W_out}, input_c->device, false, DataType::INT32);
     StorageUseGuard guard({input_c->storage, out->storage, save_indices->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
@@ -353,7 +372,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
             int b = job / (D_out * C);
 
             float* out_slice = out_ptr + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
-            float* ind_slice = save_indices->data_ptr() + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
+            int32_t* ind_slice = reinterpret_cast<int32_t*>(save_indices->data_ptr()) + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
 
             for (int ho = 0; ho < H_out; ++ho) {
                 for (int wo = 0; wo < W_out; ++wo) {
@@ -381,7 +400,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
                         }
                     }
                     out_slice[ho * W_out + wo] = max_val;
-                    ind_slice[ho * W_out + wo] = (float)max_idx;
+                    ind_slice[ho * W_out + wo] = max_idx;
                 }
             }
         });

@@ -95,6 +95,16 @@ std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> 
     int64_t T = x->shape[2];
     int64_t D = x->shape[3];
 
+    if (D % 2 != 0) {
+        throw std::runtime_error("[litetorch Error] RoPE head dim D must be even");
+    }
+    if (cos->shape.size() != 2 || cos->shape[0] != T || cos->shape[1] != D / 2) {
+        throw std::runtime_error("[litetorch Error] RoPE cos must have shape {T, D/2}");
+    }
+    if (sin->shape.size() != 2 || sin->shape[0] != T || sin->shape[1] != D / 2) {
+        throw std::runtime_error("[litetorch Error] RoPE sin must have shape {T, D/2}");
+    }
+
     auto x_c = x->is_contiguous() ? x : x->contiguous();
     auto cos_c = cos->is_contiguous() ? cos : cos->contiguous();
     auto sin_c = sin->is_contiguous() ? sin : sin->contiguous();

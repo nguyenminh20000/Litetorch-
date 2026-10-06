@@ -36,12 +36,17 @@ public:
         std::shared_ptr<Tensor> grad_a = nullptr;
         std::shared_ptr<Tensor> grad_b = nullptr;
         if (inputs.size() > 0 && inputs[0].requires_grad) {
-            auto b_t = b->transpose(0, 1);
+            int64_t ndim_b = static_cast<int64_t>(b->shape.size());
+            auto b_t = b->transpose(ndim_b - 2, ndim_b - 1);
             grad_a = Ops::matmul(grad_output, b_t);
         }
         if (inputs.size() > 1 && inputs[1].requires_grad) {
-            auto a_t = a->transpose(0, 1);
+            int64_t ndim_a = static_cast<int64_t>(a->shape.size());
+            auto a_t = a->transpose(ndim_a - 2, ndim_a - 1);
             grad_b = Ops::matmul(a_t, grad_output);
+            if (grad_b && grad_b->shape != b->shape) {
+                grad_b = Ops::reduce_broadcast(grad_b, b->shape);
+            }
         }
         return { grad_a, grad_b };
     }
@@ -185,6 +190,9 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
 
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
+        if (a_c->dtype != b_c->dtype) {
+            throw std::runtime_error("[litetorch Error] matmul requires a and b to have the same dtype on GPU");
+        }
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
@@ -326,6 +334,9 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     StorageUseGuard guard({a_c->storage, b_c->storage, out->storage});
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
+        if (a_c->dtype != b_c->dtype) {
+            throw std::runtime_error("[litetorch Error] bmm requires a and b to have the same dtype on GPU");
+        }
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;

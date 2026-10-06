@@ -447,7 +447,7 @@ extern "C" __global__ void conv3d_backward_gdx(
 
 extern "C" __global__ void maxpool2d_kernel(const float* input, int in_off,
                                float* output, int out_off,
-                               float* indices, int ind_off,
+                               int* indices, int ind_off,
                                int batch_size, int channels, int in_h, int in_w,
                                int out_h, int out_w, int kernel_size, int stride, int padding) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x);
@@ -476,11 +476,11 @@ extern "C" __global__ void maxpool2d_kernel(const float* input, int in_off,
         }
     }
     output[out_off + idx] = max_val;
-    indices[ind_off + idx] = (float)max_idx;
+    indices[ind_off + idx] = max_idx;
 }
 
 extern "C" __global__ void maxpool2d_backward_kernel(
-    const float* indices, int ind_off,
+    const int* indices, int ind_off,
     const float* grad_output, int gout_off,
     float* grad_input, int gin_off,
     int batch_size, int channels, int in_h, int in_w,
@@ -490,7 +490,7 @@ extern "C" __global__ void maxpool2d_backward_kernel(
     int total_threads = batch_size * channels * out_h * out_w;
     if (idx >= total_threads) return;
 
-    int max_idx = static_cast<int>(indices[ind_off + idx]);
+    int max_idx = indices[ind_off + idx];
     if (max_idx >= 0) {
         atomic_add_float(&grad_input[gin_off + max_idx], grad_output[gout_off + idx]);
     }
@@ -570,7 +570,7 @@ extern "C" __global__ void adaptive_avg_pool2d_backward_kernel(
 extern "C" __global__ void maxpool3d_kernel(
     const float* input, int in_off,
     float* output, int out_off,
-    float* save_indices, int ind_off,
+    int* save_indices, int ind_off,
     int batch_size, int channels, int in_d, int in_h, int in_w,
     int out_d, int out_h, int out_w, int kernel_size, int stride, int padding)
 {
@@ -608,11 +608,11 @@ extern "C" __global__ void maxpool3d_kernel(
         }
     }
     output[out_off + idx] = max_val;
-    save_indices[ind_off + idx] = static_cast<float>(max_idx);
+    save_indices[ind_off + idx] = max_idx;
 }
 
 extern "C" __global__ void maxpool3d_backward_kernel(
-    const float* save_indices, int ind_off,
+    const int* save_indices, int ind_off,
     const float* grad_output, int gout_off,
     float* grad_input, int gin_off,
     int batch_size, int channels, int in_d, int in_h, int in_w,
@@ -622,7 +622,7 @@ extern "C" __global__ void maxpool3d_backward_kernel(
     int total_threads = batch_size * channels * out_d * out_h * out_w;
     if (idx >= total_threads) return;
 
-    int max_idx = static_cast<int>(save_indices[ind_off + idx]);
+    int max_idx = save_indices[ind_off + idx];
     if (max_idx >= 0) {
         atomic_add_float(&grad_input[gin_off + max_idx], grad_output[gout_off + idx]);
     }

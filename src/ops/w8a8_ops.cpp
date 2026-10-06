@@ -34,6 +34,9 @@ std::shared_ptr<Tensor> w8a8_matmul(
     if (x->shape.size() != 2 || w->shape.size() != 2) {
         throw std::runtime_error("[litetorch Error] w8a8_matmul expects 2D inputs");
     }
+    if (x->dtype != DataType::FP32 || w->dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] w8a8_matmul requires FP32 inputs");
+    }
 
     int64_t M = x->shape[0];
     int64_t K = x->shape[1];

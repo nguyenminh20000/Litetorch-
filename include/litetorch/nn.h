@@ -141,6 +141,7 @@ public:
 class Sequential : public Module {
 public:
     std::vector<std::shared_ptr<Module>> modules;
+    std::shared_ptr<Tensor> compiled_graph_output = nullptr;
 
     Sequential() = default;
     Sequential(const std::vector<std::shared_ptr<Module>>& modules);

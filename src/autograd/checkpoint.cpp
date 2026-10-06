@@ -8,6 +8,7 @@ class CheckpointNode : public Node {
 public:
     CheckpointFunction function_;
     std::shared_ptr<Tensor> input_copy_;
+    bool create_graph_ = false;
 
     CheckpointNode(CheckpointFunction fn, std::shared_ptr<Tensor> input)
         : Node("CheckpointNode"), function_(fn), input_copy_(input) {
@@ -25,9 +26,10 @@ public:
 
         std::shared_ptr<Tensor> recomputed_output = function_(recomputed_input);
 
+        create_graph_ = Autograd::is_create_graph_;
         if (recomputed_output && recomputed_output->requires_grad) {
             recomputed_output->grad = grad_output;
-            Autograd::backward(recomputed_output, false);
+            Autograd::backward(recomputed_output, create_graph_);
         }
 
         // Return the recomputed grad and let Autograd::backward accumulate it

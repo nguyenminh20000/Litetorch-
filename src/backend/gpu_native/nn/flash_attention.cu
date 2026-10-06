@@ -193,6 +193,7 @@ static size_t g_attn_scratch_elements = 0;
 
 static void ensure_attn_scratch(size_t elements) {
     if (elements > g_attn_scratch_elements) {
+        GPU_API(StreamSynchronize)(g_compute_stream);
         if (g_attn_scratch_s) GPU_API(Free)(g_attn_scratch_s);
         if (g_attn_scratch_p) GPU_API(Free)(g_attn_scratch_p);
         if (g_attn_scratch_dp) GPU_API(Free)(g_attn_scratch_dp);

@@ -16,11 +16,7 @@ std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
         if (backend && backend->is_available()) {
             if (compiled_graph_exec) {
                 backend->launch_graph(compiled_graph_exec);
-                auto out = input;
-                for (auto& module : modules) {
-                    out = module->forward(out);
-                }
-                return out;
+                return compiled_graph_output;
             } else if (!is_graph_recorded) {
                 backend->start_recording();
                 auto out = input;
@@ -28,6 +24,7 @@ std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
                     out = module->forward(out);
                 }
                 compiled_graph_exec = backend->stop_recording(nullptr);
+                compiled_graph_output = out;
                 is_graph_recorded = true;
                 return out;
             }

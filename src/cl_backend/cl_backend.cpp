@@ -541,7 +541,8 @@ void CLBackend::copy(cl_mem src, cl_mem dst, size_t size, size_t src_offset, siz
 cl_kernel CLBackend::get_kernel(KernelID id) {
     auto native = BackendDispatcher::get().get_backend();
     if (native && native->is_available()) {
-        std::string name = g_precompiled_kernel_names[static_cast<size_t>(id)];
+        const char* name = g_precompiled_kernel_names[static_cast<size_t>(id)];
+        if (!name) return nullptr;
         return (cl_kernel)native->get_kernel("", "", name);
     }
     std::lock_guard<std::mutex> lock(mutex_);

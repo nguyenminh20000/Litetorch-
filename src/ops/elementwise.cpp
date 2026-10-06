@@ -107,6 +107,7 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape);
 
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape) {
+    if (!grad->is_contiguous()) grad = grad->contiguous();
     // Must return a distinct tensor object: callers (e.g. Add/Sub/Mul/Div
     // backward) request one grad per input from the same grad_output. Returning
     // grad itself would alias the results, and the in-place grad accumulation
@@ -1446,6 +1447,9 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
 
     int64_t ndim = tensors[0]->shape.size();
     if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range for cat");
+    }
 
     std::vector<int64_t> out_shape = tensors[0]->shape;
     int64_t concat_dim_size = 0;
@@ -1535,20 +1539,23 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
 class SqueezeNode : public Node {
 public:
     std::vector<int64_t> input_shape;
-    SqueezeNode(const std::vector<int64_t>& input_shape) : Node("Squeeze"), input_shape(input_shape) {}
+    std::vector<int64_t> input_strides;
+    SqueezeNode(const std::vector<int64_t>& input_shape, const std::vector<int64_t>& input_strides) : Node("Squeeze"), input_shape(input_shape), input_strides(input_strides) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
-        auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, default_strides(input_shape), grad_output->offset, grad_output->device, false);
+        auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, input_strides, grad_output->offset, grad_output->device, false);
         return { grad_input };
     }
 };
 
 std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
     std::vector<int64_t> new_shape;
+    std::vector<int64_t> new_strides;
     int64_t ndim = a->shape.size();
     if (dim < 0) {
         for (int64_t i = 0; i < ndim; ++i) {
             if (a->shape[i] != 1) {
                 new_shape.push_back(a->shape[i]);
+                new_strides.push_back(a->strides[i]);
             }
         }
     } else {
@@ -1556,13 +1563,14 @@ std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
         for (int64_t i = 0; i < ndim; ++i) {
             if (i != dim || a->shape[i] != 1) {
                 new_shape.push_back(a->shape[i]);
+                new_strides.push_back(a->strides[i]);
             }
         }
     }
 
-    auto out = std::make_shared<Tensor>(a->storage, new_shape, default_strides(new_shape), a->offset, a->device, a->requires_grad);
+    auto out = std::make_shared<Tensor>(a->storage, new_shape, new_strides, a->offset, a->device, a->requires_grad);
     if (a->requires_grad) {
-        auto node = std::make_shared<SqueezeNode>(a->shape);
+        auto node = std::make_shared<SqueezeNode>(a->shape, a->strides);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->output = out;
@@ -1574,9 +1582,10 @@ std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
 class UnsqueezeNode : public Node {
 public:
     std::vector<int64_t> input_shape;
-    UnsqueezeNode(const std::vector<int64_t>& input_shape) : Node("Unsqueeze"), input_shape(input_shape) {}
+    std::vector<int64_t> input_strides;
+    UnsqueezeNode(const std::vector<int64_t>& input_shape, const std::vector<int64_t>& input_strides) : Node("Unsqueeze"), input_shape(input_shape), input_strides(input_strides) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
-        auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, default_strides(input_shape), grad_output->offset, grad_output->device, false);
+        auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, input_strides, grad_output->offset, grad_output->device, false);
         return { grad_input };
     }
 };
@@ -1587,18 +1596,21 @@ std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim) {
     if (dim < 0 || dim > ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for unsqueeze");
 
     std::vector<int64_t> new_shape;
+    std::vector<int64_t> new_strides;
     for (int64_t i = 0; i <= ndim; ++i) {
         if (i == dim) {
             new_shape.push_back(1);
+            new_strides.push_back(i < ndim ? a->strides[i] : 1);
         }
         if (i < ndim) {
             new_shape.push_back(a->shape[i]);
+            new_strides.push_back(a->strides[i]);
         }
     }
 
-    auto out = std::make_shared<Tensor>(a->storage, new_shape, default_strides(new_shape), a->offset, a->device, a->requires_grad);
+    auto out = std::make_shared<Tensor>(a->storage, new_shape, new_strides, a->offset, a->device, a->requires_grad);
     if (a->requires_grad) {
-        auto node = std::make_shared<UnsqueezeNode>(a->shape);
+        auto node = std::make_shared<UnsqueezeNode>(a->shape, a->strides);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->output = out;

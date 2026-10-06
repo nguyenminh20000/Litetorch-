@@ -24,7 +24,8 @@ std::shared_ptr<Tensor> context_parallel_forward(std::shared_ptr<Tensor> input, 
     int64_t batch_size = shape[0];
     int64_t total_seq_len = shape[1];
     int64_t shard_seq_len = (total_seq_len + cp_group_size - 1) / cp_group_size;
-    int64_t start_idx = rank * shard_seq_len;
+    int cp_rank = rank % cp_group_size;
+    int64_t start_idx = cp_rank * shard_seq_len;
     int64_t end_idx = std::min(start_idx + shard_seq_len, total_seq_len);
     int64_t local_seq_len = std::max<int64_t>(0, end_idx - start_idx);
 
@@ -37,24 +38,25 @@ std::shared_ptr<Tensor> context_parallel_forward(std::shared_ptr<Tensor> input, 
         hidden_dim *= shape[i];
     }
 
+    size_t elem_sz = input->storage->element_size();
     if (input->device.type == DeviceType::CPU) {
         input->storage->ensure_cpu();
-        float* src = input->data_ptr();
-        float* dst = local_tensor->data_ptr();
+        char* src = (char*)input->data_ptr();
+        char* dst = (char*)local_tensor->data_ptr();
         for (int64_t b = 0; b < batch_size; ++b) {
-            float* b_src = src + (b * total_seq_len + start_idx) * hidden_dim;
-            float* b_dst = dst + (b * local_seq_len) * hidden_dim;
-            std::memcpy(b_dst, b_src, local_seq_len * hidden_dim * sizeof(float));
+            char* b_src = src + (b * total_seq_len + start_idx) * hidden_dim * elem_sz;
+            char* b_dst = dst + (b * local_seq_len) * hidden_dim * elem_sz;
+            std::memcpy(b_dst, b_src, local_seq_len * hidden_dim * elem_sz);
         }
     } else {
         auto cpu_input = input->to(Device(DeviceType::CPU, 0));
-        float* src = cpu_input->data_ptr();
+        char* src = (char*)cpu_input->data_ptr();
         auto cpu_local = Tensor::create(shard_shape, Device(DeviceType::CPU, 0), false, input->dtype);
-        float* dst = cpu_local->data_ptr();
+        char* dst = (char*)cpu_local->data_ptr();
         for (int64_t b = 0; b < batch_size; ++b) {
-            float* b_src = src + (b * total_seq_len + start_idx) * hidden_dim;
-            float* b_dst = dst + (b * local_seq_len) * hidden_dim;
-            std::memcpy(b_dst, b_src, local_seq_len * hidden_dim * sizeof(float));
+            char* b_src = src + (b * total_seq_len + start_idx) * hidden_dim * elem_sz;
+            char* b_dst = dst + (b * local_seq_len) * hidden_dim * elem_sz;
+            std::memcpy(b_dst, b_src, local_seq_len * hidden_dim * elem_sz);
         }
         local_tensor = cpu_local->to(input->device);
     }

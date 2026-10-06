@@ -5,6 +5,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/amp.h"
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <limits>
@@ -370,16 +371,21 @@ std::shared_ptr<Tensor> paged_attention(
     if (head_dim > 128) {
         throw std::runtime_error("[litetorch Error] paged_attention: head_dim must be <= 128");
     }
+    if (block_tables->dtype != DataType::INT32 || context_lens->dtype != DataType::INT32) {
+        throw std::runtime_error("[litetorch Error] paged_attention: block_tables and context_lens must be INT32");
+    }
 
     if (q->device.type == DeviceType::CPU) {
+        auto bt_c = block_tables->is_contiguous() ? block_tables : block_tables->contiguous();
+        auto cl_c = context_lens->is_contiguous() ? context_lens : context_lens->contiguous();
         float* q_ptr = q->data_ptr();
         void* k_void = k_cache->storage->cpu_data;
         void* v_void = v_cache->storage->cpu_data;
         DataType k_dtype = k_cache->dtype;
         DataType v_dtype = v_cache->dtype;
 
-        int* bt_ptr = reinterpret_cast<int*>(block_tables->storage->cpu_data);
-        int* cl_ptr = reinterpret_cast<int*>(context_lens->storage->cpu_data);
+        int32_t* bt_ptr = reinterpret_cast<int32_t*>(bt_c->data_ptr());
+        int32_t* cl_ptr = reinterpret_cast<int32_t*>(cl_c->data_ptr());
         float* out_ptr = out->data_ptr();
 
         auto get_val = [](void* ptr, int64_t idx, DataType dtype) -> float {
