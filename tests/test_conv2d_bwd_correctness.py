@@ -16,8 +16,8 @@ b_np = np.random.randn(C_out).astype(np.float32)
 g_np = np.random.randn(N, C_out, 6, 6).astype(np.float32)
 
 xt = lt.Tensor.from_vector(x_np.reshape(-1).tolist(), [N, C_in, H, W], dev)
-wt = lt.Tensor.from_vector(w_np.reshape(-1).tolist(), [C_out, C_in, KH, KW], dev)
-bt = lt.Tensor.from_vector(b_np.tolist(), [C_out], dev)
+wt = lt.Tensor.from_vector(w_np.reshape(-1).tolist(), [C_out, C_in, KH, KW], dev, True)
+bt = lt.Tensor.from_vector(b_np.tolist(), [C_out], dev, True)
 gt = lt.Tensor.from_vector(g_np.reshape(-1).tolist(), [N, C_out, 6, 6], dev)
 
 conv = lt.nn.Conv2d(C_in, C_out, 3, padding=0)
