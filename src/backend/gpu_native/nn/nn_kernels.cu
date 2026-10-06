@@ -1771,3 +1771,51 @@ extern "C" void gpu_moe_expert_backward(void* grad_output, int gout_off, void* i
     hipLaunchKernelGGL(moe_expert_backward_kernel, dim3(blocks), dim3(threads), 0, g_compute_stream, (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
 #endif
 }
+
+extern "C" __global__ void transpose_conv_out_inv_kernel(
+    const float* src, int s_off,
+    float* dst, int d_off,
+    int N, int C, int H, int W)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t HW = (int64_t)H * W;
+    int64_t NHW = (int64_t)N * HW;
+    int64_t total = (int64_t)C * NHW;
+    if (idx >= total) return;
+    int64_t tmp = idx;
+    int64_t hw = tmp % HW; tmp /= HW;
+    int64_t n = tmp % N; tmp /= N;
+    int64_t c = tmp;
+    int64_t src_idx = ((n * C + c) * H + hw / W) * W + hw % W;
+    dst[d_off + idx] = src[s_off + src_idx];
+}
+
+extern "C" __global__ void col2im_kernel(
+    const float* col, int col_off,
+    float* im, int im_off,
+    int N, int C, int H, int W,
+    int KH, int KW, int pad, int stride,
+    int H_out, int W_out)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t K = (int64_t)C * KH * KW;
+    int64_t HW_out = (int64_t)H_out * W_out;
+    int64_t NHW = (int64_t)N * HW_out;
+    int64_t total = K * NHW;
+    if (idx >= total) return;
+    int64_t tmp = idx;
+    int64_t hw_out = tmp % HW_out; tmp /= HW_out;
+    int64_t n = tmp % N; tmp /= N;
+    int64_t k = tmp;
+    int64_t kw = k % KW; tmp = k / KW;
+    int64_t kh = tmp % KH; tmp /= KH;
+    int64_t c = tmp;
+    int64_t ho = hw_out / W_out;
+    int64_t wo = hw_out % W_out;
+    int64_t h = ho * stride - pad + kh;
+    int64_t w = wo * stride - pad + kw;
+    if (h >= 0 && h < H && w >= 0 && w < W) {
+        int64_t im_idx = ((n * C + c) * H + h) * W + w;
+        atomicAdd(&im[im_off + im_idx], col[col_off + idx]);
+    }
+}
