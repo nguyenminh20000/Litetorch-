@@ -161,22 +161,25 @@ def train_lt(data):
     sync()
     print(f"[lt] preload done in {time.perf_counter()-t_pre:.2f}s", flush=True)
     times = []
+    forward = model.forward
+    xent = lt.Ops.cross_entropy_loss
+    zero_grad = opt.zero_grad
+    step = opt.step
     for ep in range(EPOCHS):
         t0 = time.perf_counter()
         t_fwd = t_bwd = t_opt = 0.0
         for xt, yt in lt_batches:
-            opt.zero_grad()
+            zero_grad()
             ta = time.perf_counter()
-            out = model.forward(xt)
-            loss = lt.Ops.cross_entropy_loss(out, yt)
+            out = forward(xt)
+            loss = xent(out, yt)
             sync(); t_fwd += time.perf_counter() - ta
             ta = time.perf_counter()
             loss.backward()
             sync(); t_bwd += time.perf_counter() - ta
             ta = time.perf_counter()
-            opt.step()
+            step()
             sync(); t_opt += time.perf_counter() - ta
-        sync()
         dt = time.perf_counter() - t0
         times.append(dt)
         print(f"[lt] epoch {ep+1}/{EPOCHS}: {dt:.2f}s ({n/dt:.0f} samples/s) fwd={t_fwd:.2f}s bwd={t_bwd:.2f}s opt={t_opt:.2f}s", flush=True)
@@ -188,12 +191,13 @@ def train_lt(data):
 
 
 def eval_lt(model, x_test, y_test, dev):
+    cpu = lt.Device("cpu")
     correct = total = 0
     for xb, yb in batches(x_test, y_test, 512, shuffle=False):
         b = len(xb)
         xt = lt.Tensor.from_vector(xb.reshape(-1).tolist(), [b, 1, 28, 28], dev)
         out = model.forward(xt)
-        pred = np.array(out.to(lt.Device("cpu")).to_vector()).reshape(b, 10).argmax(1)
+        pred = np.array(out.to(cpu).to_vector()).reshape(b, 10).argmax(1)
         correct += (pred == yb).sum()
         total += len(yb)
     sync()
