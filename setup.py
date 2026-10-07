@@ -156,10 +156,15 @@ class BuildExt(build_ext):
             use_cuda = bool(os.environ.get("LITETORCH_CUDA"))
             nvcc_bin = None
             if not use_rocm:
-                for candidate in [shutil.which("nvcc"), "/usr/local/cuda/bin/nvcc", "/usr/bin/nvcc", "/usr/local/cuda-12/bin/nvcc", "/usr/local/cuda-11/bin/nvcc"]:
+                for candidate in [shutil.which("nvcc"), "/usr/local/cuda/bin/nvcc", "/usr/bin/nvcc",
+                                  "/usr/local/cuda-13/bin/nvcc", "/usr/local/cuda-12/bin/nvcc",
+                                  "/usr/local/cuda-11/bin/nvcc", "/opt/cuda/bin/nvcc"]:
                     if candidate and os.path.exists(candidate):
                         nvcc_bin = candidate
                         break
+            if use_cuda and not nvcc_bin and not os.environ.get("LITETORCH_NO_NATIVE_GPU"):
+                sys.stdout.write("[litetorch] WARNING: LITETORCH_CUDA=1 but nvcc not found; native GPU lib will NOT be built\n")
+                sys.stdout.flush()
             hipcc_bin = None
             if not use_cuda:
                 rocm_candidates = [shutil.which("hipcc")]
@@ -226,8 +231,13 @@ class BuildExt(build_ext):
                                 ] + cudnn_args
                                 res = subprocess.run(cmd_fallback, capture_output=True, text=True)
                             build_success = (res.returncode == 0)
-                        except Exception:
-                            pass
+                            if build_success:
+                                sys.stdout.write("[litetorch] native GPU lib built: %s\n" % out_so)
+                                sys.stdout.flush()
+                            else:
+                                sys.stderr.write("[litetorch] WARNING: nvcc build failed:\n%s\n%s\n" % (res.stdout[-2000:], res.stderr[-2000:]))
+                        except Exception as e:
+                            sys.stderr.write("[litetorch] WARNING: nvcc build exception: %s\n" % e)
                 elif hipcc_bin:
                     hip_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.hip")
                     if os.path.exists(hip_src):
