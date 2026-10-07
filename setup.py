@@ -15,6 +15,94 @@ except ImportError:
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# --- cuDNN detection (begin) ---
+def _cudnn_link_files(shared_libs):
+    by_base = {}
+    for path in sorted(shared_libs):
+        base = os.path.basename(path)
+        key = base.split(".so")[0].split(".dylib")[0]
+        by_base.setdefault(key, []).append(path)
+    chosen = []
+    for key in sorted(by_base):
+        paths = by_base[key]
+        plain = [p for p in paths if os.path.basename(p) in (key + ".so", key + ".dylib")]
+        chosen.append(plain[0] if plain else sorted(paths)[-1])
+    return chosen
+
+def _cudnn_major(include_dir):
+    for name in ("cudnn_version.h", "cudnn.h"):
+        version_file = os.path.join(include_dir, name)
+        if not os.path.isfile(version_file):
+            continue
+        try:
+            with open(version_file, "r", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) == 3 and parts[0] == "#define" and parts[1] == "CUDNN_MAJOR":
+                        return parts[2]
+        except Exception:
+            pass
+    return "?"
+
+def _cudnn_layout(root):
+    if not root or not os.path.isdir(root):
+        return None
+    inc = None
+    for d in (os.path.join(root, "include"), root):
+        if os.path.isfile(os.path.join(d, "cudnn.h")):
+            inc = d
+            break
+    lib = None
+    found = []
+    for d in (os.path.join(root, "lib"), os.path.join(root, "lib64"), root):
+        hits = sorted(glob.glob(os.path.join(d, "libcudnn*.so*"))) + \
+               sorted(glob.glob(os.path.join(d, "libcudnn*.dylib")))
+        if hits:
+            lib = d
+            found = hits
+            break
+    if inc and lib and found:
+        return {
+            "include_dir": inc,
+            "lib_dir": lib,
+            "link_files": _cudnn_link_files(found),
+            "major": _cudnn_major(inc),
+        }
+    return None
+
+def find_cudnn():
+    if os.environ.get("LITETORCH_USE_CUDNN", "").strip() == "0":
+        return None
+    explicit = os.environ.get("LITETORCH_CUDNN_ROOT", "").strip()
+    if explicit:
+        info = _cudnn_layout(explicit)
+        if info:
+            return info
+    candidates = []
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("nvidia.cudnn")
+        if spec and spec.submodule_search_locations:
+            candidates.extend(spec.submodule_search_locations)
+    except Exception:
+        pass
+    try:
+        import torch
+        torch_site = os.path.dirname(os.path.dirname(os.path.abspath(torch.__file__)))
+        candidates.append(os.path.join(torch_site, "nvidia", "cudnn"))
+    except Exception:
+        pass
+    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    if cuda_home:
+        candidates.append(cuda_home)
+    candidates.extend(["/usr/local/cuda", "/usr", "/opt/cuda"])
+    for root in candidates:
+        info = _cudnn_layout(root)
+        if info:
+            return info
+    return None
+# --- cuDNN detection (end) ---
+
 cpp_sources = sorted(glob.glob(os.path.join(SCRIPT_DIR, "src", "**", "*.cpp"), recursive=True))
 
 inc_dirs = [
@@ -75,13 +163,30 @@ class BuildExt(build_ext):
                     cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
                     if os.path.exists(cu_src):
                         cuda_arch = os.environ.get("LITETORCH_CUDA_ARCH", "native")
+                        cudnn_args = []
+                        cudnn_info = find_cudnn()
+                        if cudnn_info:
+                            cudnn_args = [
+                                "-DUSE_CUDNN",
+                                "-I" + cudnn_info["include_dir"],
+                                "-L" + cudnn_info["lib_dir"],
+                            ] + cudnn_info["link_files"] + [
+                                "-Xlinker", "-rpath", "-Xlinker", cudnn_info["lib_dir"],
+                            ]
+                            sys.stdout.write(
+                                "[litetorch] cuDNN %s detected at %s, enabling USE_CUDNN\n"
+                                % (cudnn_info["major"], cudnn_info["lib_dir"]))
+                            sys.stdout.flush()
+                        else:
+                            sys.stdout.write("[litetorch] cuDNN not found, building GPU lib without cuDNN\n")
+                            sys.stdout.flush()
                         cmd = [
                             nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
                             f"-arch={cuda_arch}",
                             f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                             cu_src, "-o", out_so,
                             "-lcublas", "-lcublasLt"
-                        ]
+                        ] + cudnn_args
                         try:
                             res = subprocess.run(cmd, capture_output=True, text=True)
                             if res.returncode != 0:
@@ -90,7 +195,7 @@ class BuildExt(build_ext):
                                     f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                                     cu_src, "-o", out_so,
                                     "-lcublas", "-lcublasLt"
-                                ]
+                                ] + cudnn_args
                                 res = subprocess.run(cmd_fallback, capture_output=True, text=True)
                             build_success = (res.returncode == 0)
                         except Exception:

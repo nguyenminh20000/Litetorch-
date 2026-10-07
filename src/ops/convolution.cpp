@@ -5,6 +5,7 @@
 #include "litetorch/backend.h"
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace litetorch {
@@ -532,9 +533,27 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     if (input->device.type == DeviceType::GPU) {
         bool done = false;
         auto native = BackendDispatcher::get().get_backend();
+        typedef void (*Conv2dCudnnFn)(
+            const float*, int, const float*, int, const float*, int, int,
+            float*, int, int, int, int, int, int, int, int, int, int, int, int);
+        Conv2dCudnnFn cudnn_conv2d = nullptr;
+        if (native && native->is_available() && !std::getenv("LITETORCH_NO_CUDNN")) {
+            cudnn_conv2d = reinterpret_cast<Conv2dCudnnFn>(
+                native->get_kernel("", "", "conv2d_cudnn"));
+        }
+        if (cudnn_conv2d) {
+            cudnn_conv2d(
+                static_cast<const float*>(input_c->gpu_data()), input_c->offset,
+                static_cast<const float*>(weight_c->gpu_data()), weight_c->offset,
+                bias_c ? static_cast<const float*>(bias_c->gpu_data()) : nullptr,
+                bias_c ? bias_c->offset : 0, bias_c ? 1 : 0,
+                static_cast<float*>(out->gpu_data()), out->offset,
+                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+            done = true;
+        }
         auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
         auto transp_k = CLBackend::get().get_kernel(KernelID::TransposeConvOut);
-        if (native && native->is_available() && im2col_k && transp_k) {
+        if (!done && native && native->is_available() && im2col_k && transp_k) {
             int64_t K = (int64_t)C_in * KH * KW;
             int64_t HW_out = (int64_t)H_out * W_out;
             int64_t NHW = (int64_t)N * HW_out;
