@@ -90,7 +90,10 @@ public:
 
         if (input_c->device.type == DeviceType::GPU) {
             auto native = BackendDispatcher::get().get_backend();
-            bool use_gemm = native && native->is_available();
+            bool native_gemm = native && native->is_available();
+            auto matmul_k = CLBackend::get().get_kernel(KernelID::MatMul);
+            auto transpose_k = CLBackend::get().get_kernel(KernelID::Transpose);
+            bool use_gemm = native_gemm || (matmul_k && transpose_k);
             auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
             auto transp_inv_k = CLBackend::get().get_kernel(KernelID::TransposeConvOutInv);
             auto col2im_k = CLBackend::get().get_kernel(KernelID::Col2Im);
@@ -130,17 +133,75 @@ public:
                 gw_2d->storage = grad_weight->storage;
                 gw_2d->offset = grad_weight->offset;
                 gw_2d->requires_grad = false;
-                native->matmul_ex(gout_2d->gpu_data(), gout_2d->offset, false, NHW,
-                                  col->gpu_data(), col->offset, true, NHW,
-                                  gw_2d->gpu_data(), gw_2d->offset, C_out, K, NHW);
+                if (native_gemm) {
+                    native->matmul_ex(gout_2d->gpu_data(), gout_2d->offset, false, NHW,
+                                      col->gpu_data(), col->offset, true, NHW,
+                                      gw_2d->gpu_data(), gw_2d->offset, C_out, K, NHW);
+                } else {
+                    auto col_t = Tensor::create({NHW, K}, input_c->device);
+                    {
+                        cl_mem s_mem = col->gpu_data();
+                        int s_off = col->offset;
+                        cl_mem d_mem = col_t->gpu_data();
+                        int d_off = col_t->offset;
+                        int rows_v = (int)K, cols_v = (int)NHW;
+                        size_t total = (size_t)K * (size_t)NHW;
+                        CLBackend::get().launch(transpose_k, {total}, {},
+                            {&s_mem, &s_off, &d_mem, &d_off, &rows_v, &cols_v},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+                    }
+                    {
+                        cl_mem a_mem = gout_2d->gpu_data();
+                        int a_off = gout_2d->offset;
+                        cl_mem b_mem = col_t->gpu_data();
+                        int b_off = col_t->offset;
+                        cl_mem c_mem = gw_2d->gpu_data();
+                        int c_off = gw_2d->offset;
+                        int m_v = (int)C_out, k_v = (int)NHW, n_v = (int)K;
+                        size_t gx = (size_t)((m_v + 15) / 16 * 16);
+                        size_t gy = (size_t)((n_v + 15) / 16 * 16);
+                        CLBackend::get().launch(matmul_k, {gx, gy}, {16, 16},
+                            {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &m_v, &k_v, &n_v},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                    }
+                }
                 auto dcol = Tensor::create({K, NHW}, input_c->device);
                 auto w_2d = Tensor::create({C_out, K}, weight_c->device);
                 w_2d->storage = weight_c->storage;
                 w_2d->offset = weight_c->offset;
                 w_2d->requires_grad = false;
-                native->matmul_ex(w_2d->gpu_data(), w_2d->offset, true, K,
-                                  gout_2d->gpu_data(), gout_2d->offset, false, NHW,
-                                  dcol->gpu_data(), dcol->offset, K, NHW, C_out);
+                if (native_gemm) {
+                    native->matmul_ex(w_2d->gpu_data(), w_2d->offset, true, K,
+                                      gout_2d->gpu_data(), gout_2d->offset, false, NHW,
+                                      dcol->gpu_data(), dcol->offset, K, NHW, C_out);
+                } else {
+                    auto w_t = Tensor::create({K, C_out}, input_c->device);
+                    {
+                        cl_mem s_mem = w_2d->gpu_data();
+                        int s_off = w_2d->offset;
+                        cl_mem d_mem = w_t->gpu_data();
+                        int d_off = w_t->offset;
+                        int rows_v = (int)C_out, cols_v = (int)K;
+                        size_t total = (size_t)C_out * (size_t)K;
+                        CLBackend::get().launch(transpose_k, {total}, {},
+                            {&s_mem, &s_off, &d_mem, &d_off, &rows_v, &cols_v},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+                    }
+                    {
+                        cl_mem a_mem = w_t->gpu_data();
+                        int a_off = w_t->offset;
+                        cl_mem b_mem = gout_2d->gpu_data();
+                        int b_off = gout_2d->offset;
+                        cl_mem c_mem = dcol->gpu_data();
+                        int c_off = dcol->offset;
+                        int m_v = (int)K, k_v = (int)C_out, n_v = (int)NHW;
+                        size_t gx = (size_t)((m_v + 15) / 16 * 16);
+                        size_t gy = (size_t)((n_v + 15) / 16 * 16);
+                        CLBackend::get().launch(matmul_k, {gx, gy}, {16, 16},
+                            {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &m_v, &k_v, &n_v},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                    }
+                }
                 {
                     std::vector<float> zeros(grad_input->numel(), 0.0f);
                     CLBackend::get().write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(grad_input->offset) * sizeof(float));

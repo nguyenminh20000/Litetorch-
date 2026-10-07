@@ -758,25 +758,55 @@ __kernel void conv2d_backward_gw(__global const float* input, int in_off,
     int idx = get_global_id(0);
     int total = C_out * C_in * KH * KW;
     if (idx >= total) return;
-    
+
     int kw = idx % KW;
-    int kh = (idx / KW) % KH;
-    int ci = (idx / (KW * KH)) % C_in;
-    int co = idx / (KW * KH * C_in);
-    
+    int tmp = idx / KW;
+    int kh = tmp % KH;
+    tmp /= KH;
+    int ci = tmp % C_in;
+    int co = tmp / C_in;
+
+    int p_kh = padding - kh;
+    int p_kw = padding - kw;
+    int ho_lo, ho_hi, wo_lo, wo_hi;
+    if (stride == 1) {
+        ho_lo = p_kh < 0 ? 0 : p_kh;
+        ho_hi = H_in + p_kh;
+        if (ho_hi > H_out) ho_hi = H_out;
+        wo_lo = p_kw < 0 ? 0 : p_kw;
+        wo_hi = W_in + p_kw;
+        if (wo_hi > W_out) wo_hi = W_out;
+    } else {
+        ho_lo = p_kh <= 0 ? 0 : (p_kh + stride - 1) / stride;
+        int qh = H_in + p_kh;
+        ho_hi = qh <= 0 ? qh / stride : (qh + stride - 1) / stride;
+        if (ho_hi > H_out) ho_hi = H_out;
+        wo_lo = p_kw <= 0 ? 0 : (p_kw + stride - 1) / stride;
+        int qw = W_in + p_kw;
+        wo_hi = qw <= 0 ? qw / stride : (qw + stride - 1) / stride;
+        if (wo_hi > W_out) wo_hi = W_out;
+    }
+    if (ho_lo >= ho_hi || wo_lo >= wo_hi) {
+        grad_weight[gw_off + idx] = 0.0f;
+        return;
+    }
+
+    int y0 = ho_lo * stride - padding + kh;
+    int x0 = wo_lo * stride - padding + kw;
+    int gout_plane = H_out * W_out;
+    int in_plane = H_in * W_in;
+
     float sum_val = 0.0f;
     for (int b = 0; b < N; ++b) {
-        for (int ho = 0; ho < H_out; ++ho) {
-            int y = ho * stride - padding + kh;
-            if (y >= 0 && y < H_in) {
-                for (int wo = 0; wo < W_out; ++wo) {
-                    int x = wo * stride - padding + kw;
-                    if (x >= 0 && x < W_in) {
-                        int gout_idx = ((b * C_out + co) * H_out + ho) * W_out + wo;
-                        int in_idx = ((b * C_in + ci) * H_in + y) * W_in + x;
-                        sum_val += grad_output[gout_off + gout_idx] * input[in_off + in_idx];
-                    }
-                }
+        __global const float* gout_b = grad_output + gout_off + (b * C_out + co) * gout_plane;
+        __global const float* in_b = input + in_off + (b * C_in + ci) * in_plane;
+        int y = y0;
+        for (int ho = ho_lo; ho < ho_hi; ++ho, y += stride) {
+            __global const float* gout_row = gout_b + ho * W_out;
+            __global const float* in_row = in_b + y * W_in;
+            int x = x0;
+            for (int wo = wo_lo; wo < wo_hi; ++wo, x += stride) {
+                sum_val += gout_row[wo] * in_row[x];
             }
         }
     }
@@ -791,30 +821,69 @@ __kernel void conv2d_backward_gdx(__global const float* grad_output, int gout_of
     int idx = get_global_id(0);
     int total = N * C_in * H_in * W_in;
     if (idx >= total) return;
-    
+
     int x = idx % W_in;
-    int y = (idx / W_in) % H_in;
-    int ci = (idx / (W_in * H_in)) % C_in;
-    int b = idx / (W_in * H_in * C_in);
-    
+    int tmp = idx / W_in;
+    int y = tmp % H_in;
+    tmp /= H_in;
+    int ci = tmp % C_in;
+    int b = tmp / C_in;
+
+    int y_p = y + padding;
+    int x_p = x + padding;
+    int gout_plane = H_out * W_out;
+    int w_plane = KH * KW;
+
     float sum_val = 0.0f;
-    for (int co = 0; co < C_out; ++co) {
-        for (int kh = 0; kh < KH; ++kh) {
-            int ho_temp = y + padding - kh;
-            if (ho_temp % stride == 0) {
-                int ho = ho_temp / stride;
-                if (ho >= 0 && ho < H_out) {
-                    for (int kw = 0; kw < KW; ++kw) {
-                        int wo_temp = x + padding - kw;
-                        if (wo_temp % stride == 0) {
-                            int wo = wo_temp / stride;
-                            if (wo >= 0 && wo < W_out) {
-                                int gout_idx = ((b * C_out + co) * H_out + ho) * W_out + wo;
-                                int w_idx = ((co * C_in + ci) * KH + kh) * KW + kw;
-                                sum_val += grad_output[gout_off + gout_idx] * weight[w_off + w_idx];
-                            }
-                        }
-                    }
+    if (stride == 1) {
+        int kh_lo = y_p - H_out + 1;
+        if (kh_lo < 0) kh_lo = 0;
+        int kh_hi = y_p + 1;
+        if (kh_hi > KH) kh_hi = KH;
+        int kw_lo = x_p - W_out + 1;
+        if (kw_lo < 0) kw_lo = 0;
+        int kw_hi = x_p + 1;
+        if (kw_hi > KW) kw_hi = KW;
+        for (int co = 0; co < C_out; ++co) {
+            __global const float* gout_co = grad_output + gout_off + (b * C_out + co) * gout_plane;
+            __global const float* w_co = weight + w_off + (co * C_in + ci) * w_plane;
+            int ho = y_p - kh_lo;
+            for (int kh = kh_lo; kh < kh_hi; ++kh, --ho) {
+                __global const float* gout_row = gout_co + ho * W_out;
+                __global const float* w_row = w_co + kh * KW;
+                int wo = x_p - kw_lo;
+                for (int kw = kw_lo; kw < kw_hi; ++kw, --wo) {
+                    sum_val += gout_row[wo] * w_row[kw];
+                }
+            }
+        }
+    } else {
+        int r_kh = y_p % stride;
+        int r_kw = x_p % stride;
+        int kh_lo = y_p - H_out * stride + 1;
+        if (kh_lo < 0) kh_lo = 0;
+        int kh_hi = y_p + 1;
+        if (kh_hi > KH) kh_hi = KH;
+        int d = r_kh - kh_lo % stride;
+        if (d < 0) d += stride;
+        kh_lo += d;
+        int kw_lo = x_p - W_out * stride + 1;
+        if (kw_lo < 0) kw_lo = 0;
+        int kw_hi = x_p + 1;
+        if (kw_hi > KW) kw_hi = KW;
+        d = r_kw - kw_lo % stride;
+        if (d < 0) d += stride;
+        kw_lo += d;
+        for (int co = 0; co < C_out; ++co) {
+            __global const float* gout_co = grad_output + gout_off + (b * C_out + co) * gout_plane;
+            __global const float* w_co = weight + w_off + (co * C_in + ci) * w_plane;
+            int ho = (y_p - kh_lo) / stride;
+            for (int kh = kh_lo; kh < kh_hi; kh += stride, --ho) {
+                __global const float* gout_row = gout_co + ho * W_out;
+                __global const float* w_row = w_co + kh * KW;
+                int wo = (x_p - kw_lo) / stride;
+                for (int kw = kw_lo; kw < kw_hi; kw += stride, --wo) {
+                    sum_val += gout_row[wo] * w_row[kw];
                 }
             }
         }
@@ -2039,3 +2108,11 @@ __kernel void cast_fp8_e5m2_to_fp32(__global const uchar* src, int src_off, __gl
 
 
 
+__kernel void transpose_kernel(__global const float* src, int s_off, __global float* dst, int d_off, int rows, int cols) {
+    int idx = get_global_id(0);
+    int total = rows * cols;
+    if (idx >= total) return;
+    int r = idx / cols;
+    int c = idx - r * cols;
+    dst[d_off + c * rows + r] = src[s_off + idx];
+}

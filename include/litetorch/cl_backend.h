@@ -115,6 +115,7 @@ enum class KernelID {
     TransposeConvOut,
     TransposeConvOutInv,
     Col2Im,
+    Transpose,
     BroadcastBatch,
     AddBias2d,
     FusedAddLayerNormForward,
