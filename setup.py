@@ -1,5 +1,6 @@
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
+from setuptools.command.install import install
 import os
 import sys
 import glob
@@ -289,6 +290,21 @@ ext_modules = [
     ),
 ]
 
+
+class InstallLib(install):
+    def run(self):
+        super().run()
+        lib_name = "liblitetorch_gpu.dll" if sys.platform.startswith("win") else "liblitetorch_gpu.so"
+        built = os.path.join(self.build_lib, lib_name)
+        if os.path.exists(built):
+            dest = os.path.join(self.install_lib, lib_name)
+            try:
+                shutil.copyfile(built, dest)
+                sys.stdout.write("[litetorch] installed %s -> %s\n" % (lib_name, dest))
+                sys.stdout.flush()
+            except Exception as e:
+                sys.stderr.write("[litetorch] warning: could not install %s: %s\n" % (lib_name, e))
+
 readme_file = os.path.join(SCRIPT_DIR, "README.md")
 long_desc = ""
 if os.path.exists(readme_file):
@@ -313,6 +329,6 @@ setup(
     ],
     python_requires=">=3.8",
     ext_modules=ext_modules,
-    cmdclass={"build_ext": BuildExt},
+    cmdclass={"build_ext": BuildExt, "install": InstallLib},
     zip_safe=False,
 )
