@@ -552,8 +552,11 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
             done = true;
         }
         auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
-        auto transp_k = CLBackend::get().get_kernel(KernelID::TransposeConvOut);
-        if (!done && native && native->is_available() && im2col_k && transp_k) {
+        void* epilogue_k = nullptr;
+        if (native && native->is_available()) {
+            epilogue_k = native->get_kernel("", "", "transpose_conv_out_bias_relu_kernel");
+        }
+        if (!done && native && native->is_available() && im2col_k && epilogue_k) {
             int64_t K = (int64_t)C_in * KH * KW;
             int64_t HW_out = (int64_t)H_out * W_out;
             int64_t NHW = (int64_t)N * HW_out;
@@ -581,27 +584,17 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
             {
                 cl_mem tmp_mem = tmp->gpu_data();
                 int tmp_off = tmp->offset;
+                cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;
+                int b_off = bias_c ? bias_c->offset : 0;
+                int has_bias = bias_c ? 1 : 0;
+                int apply_relu = 0;
                 cl_mem out_mem = out->gpu_data();
                 int out_off = out->offset;
                 int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
                 size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
-                CLBackend::get().launch(transp_k, {total}, {},
-                    {&tmp_mem, &tmp_off, &out_mem, &out_off, &n_v, &co_v, &ho_v, &wo_v},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-            }
-            if (bias_c) {
-                auto bias_k = CLBackend::get().get_kernel(KernelID::AddBias2d);
-                if (bias_k) {
-                    cl_mem out_mem = out->gpu_data();
-                    int out_off = out->offset;
-                    cl_mem b_mem = bias_c->gpu_data();
-                    int b_off = bias_c->offset;
-                    int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
-                    size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
-                    CLBackend::get().launch(bias_k, {total}, {},
-                        {&out_mem, &out_off, &b_mem, &b_off, &n_v, &co_v, &ho_v, &wo_v},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
-                }
+                CLBackend::get().launch(epilogue_k, {total}, {},
+                    {&tmp_mem, &tmp_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &apply_relu, &n_v, &co_v, &ho_v, &wo_v},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
             done = true;
         }

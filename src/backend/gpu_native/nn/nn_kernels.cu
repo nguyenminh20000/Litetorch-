@@ -312,29 +312,31 @@ extern "C" __global__ void im2col_flat_kernel(
 {
     int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
     int64_t HW_out = (int64_t)H_out * W_out;
+    int64_t NHW = (int64_t)N * HW_out;
     int64_t K = (int64_t)C * KH * KW;
-    int64_t total = K * (int64_t)N * HW_out;
+    int64_t total = K * NHW;
     if (idx >= total) return;
 
-    int64_t tmp = idx;
-    int j = tmp % ((int64_t)N * HW_out); tmp /= ((int64_t)N * HW_out);
-    int k = tmp;
-    int n = j / HW_out;
-    int hw = j % HW_out;
+    int k = (int)(idx / NHW);
+    int j = (int)(idx - (int64_t)k * NHW);
+    int hw_out = (int)HW_out;
+    int n = j / hw_out;
+    int hw = j - n * hw_out;
     int h_out = hw / W_out;
-    int w_out = hw % W_out;
+    int w_out = hw - h_out * W_out;
     int kw = k % KW;
-    int kh = (k / KW) % KH;
-    int c = k / (KH * KW);
+    int khw = k / KW;
+    int kh = khw % KH;
+    int c = khw / KH;
 
     int im_row = h_out * stride - padding + kh;
     int im_col = w_out * stride - padding + kw;
 
     float v = 0.0f;
     if (im_row >= 0 && im_row < H && im_col >= 0 && im_col < W) {
-        v = im[im_off + ((int64_t)n * C + c) * H * W + im_row * W + im_col];
+        v = im[im_off + ((int64_t)n * C + c) * H * W + (int64_t)im_row * W + im_col];
     }
-    col[col_off + (int64_t)k * N * HW_out + j] = v;
+    col[col_off + (int64_t)k * NHW + j] = v;
 }
 
 extern "C" __global__ void transpose_conv_out_kernel(
@@ -1818,4 +1820,28 @@ extern "C" __global__ void col2im_kernel(
         int64_t im_idx = ((n * C + c) * H + h) * W + w;
         atomicAdd(&im[im_off + im_idx], col[col_off + idx]);
     }
+}
+
+extern "C" __global__ void transpose_conv_out_bias_relu_kernel(
+    const float* src, int s_off,
+    const float* bias, int b_off, int has_bias,
+    float* dst, int d_off, int apply_relu,
+    int N, int C, int H, int W)
+{
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t HW = (int64_t)H * W;
+    int64_t NHW = (int64_t)N * HW;
+    int64_t total = (int64_t)C * NHW;
+    if (idx >= total) return;
+    int64_t hw = idx % HW;
+    int64_t c = (idx / HW) % C;
+    int64_t n = idx / (HW * (int64_t)C);
+    float v = src[s_off + c * NHW + n * HW + hw];
+    if (has_bias) {
+        v += bias[b_off + c];
+    }
+    if (apply_relu && v < 0.0f) {
+        v = 0.0f;
+    }
+    dst[d_off + idx] = v;
 }
