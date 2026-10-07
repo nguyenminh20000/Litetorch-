@@ -111,7 +111,7 @@ def main():
             yt = lt.Tensor.from_vector([float(v) for v in yb.reshape(-1)], [b*SEQ_LEN], dev)
             opt.zero_grad()
             logits = lt_forward(emb, pos, layers, fc, xt, dev)
-            logits2d = lt.Ops.reshape(logits, [b*SEQ_LEN, vocab])
+            logits2d = logits.reshape([b*SEQ_LEN, vocab])
             loss = lt.Ops.cross_entropy_loss(logits2d, yt)
             loss.backward()
             opt.step()
