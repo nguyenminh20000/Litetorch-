@@ -467,7 +467,7 @@ extern "C" void* gpu_compile_kernel(const char* source, const char* name) {
     ofs << source;
     ofs.close();
 
-    char cmd[1024];
+    char cmd[2048];
 #ifndef __HIP_PLATFORM_AMD__
     snprintf(cmd, sizeof(cmd), "nvcc -O3 --shared -Xcompiler -fPIC %s -o %s > /dev/null 2>&1", temp_src, temp_so);
 #else
