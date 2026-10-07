@@ -848,20 +848,14 @@ __kernel void embedding_backward(__global const float* input, int in_off,
                                  __global const float* grad_output, int gout_off,
                                  __global float* grad_weight, int gw_off,
                                  int num_indices, int num_embeddings, int embedding_dim) {
-    int idx_thread = get_global_id(0);
-    if (idx_thread >= num_embeddings * embedding_dim) return;
-
-    int idx = idx_thread / embedding_dim;
-    int d = idx_thread % embedding_dim;
-
-    float sum = 0.0f;
-    for (int i = 0; i < num_indices; ++i) {
-        int input_val = (int)input[in_off + i];
-        if (input_val == idx) {
-            sum += grad_output[gout_off + i * embedding_dim + d];
-        }
+    int i = get_global_id(0);
+    if (i >= num_indices) return;
+    int idx = (int)input[in_off + i];
+    if (idx < 0 || idx >= num_embeddings) return;
+    for (int d = 0; d < embedding_dim; ++d) {
+        atomic_add_float(&grad_weight[gw_off + idx * embedding_dim + d],
+                         grad_output[gout_off + i * embedding_dim + d]);
     }
-    grad_weight[gw_off + idx_thread] = sum;
 }
 __kernel void sum_backward(__global float* grad_input, int gin_off,
                            __global const float* grad_output, int gout_off,

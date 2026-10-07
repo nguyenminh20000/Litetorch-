@@ -334,10 +334,10 @@ extern "C" __global__ void elementwise_broadcast_div(
     C[c_off + gid] = A[a_idx] / B[b_idx];
 }
 
-extern "C" __global__ void fill_zero(float* data, int size) {
+extern "C" __global__ void fill_zero(float* data, int data_off, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        data[idx] = 0.0f;
+        data[data_off + idx] = 0.0f;
     }
 }
 

@@ -24,8 +24,7 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
             gpu_data = CLBackend::get().allocate(size * element_size());
             if (!gpu_data) {
                 MemoryManager::get().unregister_gpu_impl(this);
-                this->device = Device(DeviceType::CPU, 0);
-                cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
+                throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes");
             }
         } else {
             this->device = Device(DeviceType::CPU, 0);
