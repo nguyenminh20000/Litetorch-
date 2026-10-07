@@ -71,18 +71,27 @@ def _cudnn_layout(root):
 
 def find_cudnn():
     if os.environ.get("LITETORCH_USE_CUDNN", "").strip() == "0":
+        print("[litetorch] cuDNN disabled via LITETORCH_USE_CUDNN=0")
         return None
     explicit = os.environ.get("LITETORCH_CUDNN_ROOT", "").strip()
     if explicit:
         info = _cudnn_layout(explicit)
         if info:
+            print(f"[litetorch] cuDNN {info['major']} detected via LITETORCH_CUDNN_ROOT={explicit}")
             return info
     candidates = []
+    for mod in ("nvidia.cudnn",):
+        try:
+            m = __import__(mod, fromlist=[""])
+            paths = list(getattr(m, "__path__", []))
+            candidates.extend(paths)
+        except Exception:
+            pass
     try:
         import importlib.util
         spec = importlib.util.find_spec("nvidia.cudnn")
         if spec and spec.submodule_search_locations:
-            candidates.extend(spec.submodule_search_locations)
+            candidates.extend([str(p) for p in spec.submodule_search_locations])
     except Exception:
         pass
     try:
