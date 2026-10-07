@@ -15,7 +15,6 @@ except ImportError:
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- cuDNN detection (begin) ---
 def _cudnn_link_files(shared_libs):
     by_base = {}
     for path in sorted(shared_libs):
@@ -101,7 +100,6 @@ def find_cudnn():
         if info:
             return info
     return None
-# --- cuDNN detection (end) ---
 
 cpp_sources = sorted(glob.glob(os.path.join(SCRIPT_DIR, "src", "**", "*.cpp"), recursive=True))
 
