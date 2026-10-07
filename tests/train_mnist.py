@@ -214,9 +214,16 @@ def eval_lt(model, x_test, y_test, dev):
 
 
 def main():
+    import gc
     data = get_data()
     print("== MNIST: pytorch ==", flush=True)
     t_times, t_acc, t_model = train_torch(data)
+    gc.collect()
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
     print("== MNIST: litetorch ==", flush=True)
     l_times, l_acc = train_lt(data, t_model)
     tt, ll = sum(t_times) / len(t_times), sum(l_times) / len(l_times)

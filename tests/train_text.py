@@ -223,10 +223,17 @@ def eval_lt(emb, cnn, x_test, y_test, dev):
 
 
 def main():
+    import gc
     (x_train, y_train), (x_test, y_test), vocab = get_data()
     data = ((x_train, y_train), (x_test, y_test))
     print("== text: pytorch ==", flush=True)
     t_times, t_acc = train_torch(data, vocab)
+    gc.collect()
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
     print("== text: litetorch ==", flush=True)
     l_times, l_acc = train_lt(data, vocab)
     tt, ll = sum(t_times) / len(t_times), sum(l_times) / len(l_times)
