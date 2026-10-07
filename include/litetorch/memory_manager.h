@@ -32,7 +32,7 @@ public:
     void touch_impl(StorageImpl* storage);
     void evict_to_free_impl(size_t required_bytes);
 
-    std::mutex& get_mutex() { return mutex_; }
+    std::recursive_mutex& get_mutex() { return mutex_; }
 
 private:
     MemoryManager();
@@ -43,7 +43,7 @@ private:
 
     std::list<StorageImpl*> lru_list_;
     std::unordered_set<StorageImpl*> active_gpu_storages_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
 };
 
 }

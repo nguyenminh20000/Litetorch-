@@ -11,7 +11,7 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
     if (device.type == DeviceType::META) {
         return;
     }
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
@@ -52,7 +52,7 @@ StorageImpl::~StorageImpl() {
     if (device.type == DeviceType::META) {
         return;
     }
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     MemoryManager::get().unregister_gpu_impl(this);
     if (gpu_data) {
@@ -101,7 +101,7 @@ cl_mem StorageImpl::get_gpu_ptr() {
         return nullptr;
     }
     if (is_swapped) {
-        std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+        std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
         std::lock_guard<std::mutex> storage_lock(storage_mutex_);
         if (is_swapped) {
             swap_in_impl();
@@ -124,7 +124,7 @@ cl_mem StorageImpl::get_gpu_ptr() {
 }
 
 void StorageImpl::to(const Device& new_device) {
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (device == new_device) return;
 
@@ -229,7 +229,7 @@ void StorageImpl::evict_impl() {
 }
 
 void StorageImpl::evict() {
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     evict_impl();
 }
@@ -243,7 +243,7 @@ void StorageImpl::discard_gpu_impl() {
 }
 
 void StorageImpl::discard_gpu() {
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     discard_gpu_impl();
 }
@@ -275,7 +275,7 @@ void StorageImpl::swap_in_impl() {
 }
 
 void StorageImpl::swap_in() {
-    std::lock_guard<std::mutex> mem_lock(MemoryManager::get().get_mutex());
+    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     swap_in_impl();
 }

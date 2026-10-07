@@ -12,23 +12,23 @@ MemoryManager& MemoryManager::get() {
 }
 
 void MemoryManager::set_gpu_limit(size_t bytes) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     gpu_limit_ = bytes;
     evict_to_free_impl(0);
 }
 
 void MemoryManager::register_gpu(StorageImpl* storage) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     register_gpu_impl(storage);
 }
 
 void MemoryManager::unregister_gpu(StorageImpl* storage) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     unregister_gpu_impl(storage);
 }
 
 void MemoryManager::touch(StorageImpl* storage) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     touch_impl(storage);
 }
 
@@ -47,7 +47,7 @@ void MemoryManager::ensure_gpu(StorageImpl* storage) {
 }
 
 void MemoryManager::evict_to_free(size_t required_bytes) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     evict_to_free_impl(required_bytes);
 }
 
