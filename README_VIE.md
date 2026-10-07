@@ -76,7 +76,7 @@ pip install --upgrade litetorch
 ```
 
 #### Bước 3: (Tùy chọn) Kích hoạt tăng tốc GPU
-- **NVIDIA GPU**: Đảm bảo bộ công cụ NVIDIA CUDA Toolkit (`nvcc`) đã có trong biến môi trường `PATH`. LiteTorch sẽ tự động kích hoạt nhân Native CUDA (cuBLAS, cuDNN, FlashAttention).
+- **NVIDIA GPU**: Đảm bảo bộ công cụ NVIDIA CUDA Toolkit (`nvcc`) đã có trong biến môi trường `PATH`. LiteTorch sẽ tự động kích hoạt nhân Native CUDA (cuBLAS, FlashAttention; cuDNN nếu được cài riêng vì không kèm trong CUDA Toolkit).
 - **AMD GPU**: Đảm bảo driver ROCm/HIP (`hipcc`) đã được cài đặt.
 
 ---
