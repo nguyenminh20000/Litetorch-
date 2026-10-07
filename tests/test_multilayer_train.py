@@ -18,7 +18,7 @@ Y = np.random.randint(0, 2, N)
 
 w1 = to_lt(np.random.randn(8, 3, 3, 3).astype(np.float32) * 0.1)
 b1 = to_lt(np.zeros(8, dtype=np.float32))
-w2 = to_lt(np.random.randn(2, 8, 4, 4).astype(np.float32).reshape(2, 8, 4, 4) * 0.1)
+w2 = to_lt(np.random.randn(2, 8, 8, 8).astype(np.float32) * 0.1)
 b2 = to_lt(np.zeros(2, dtype=np.float32))
 params = [w1, b1, w2, b2]
 lr = 0.01
@@ -33,7 +33,7 @@ for epoch in range(5):
     loss = -np.log(p[np.arange(N), Y] + 1e-9).mean()
     pred = p.argmax(1)
     acc = (pred == Y).mean()
-    g = (p.copy())
+    g = p.copy()
     g[np.arange(N), Y] -= 1
     g /= N
     gl = to_lt(g.reshape(N, 2, 1, 1), False)
@@ -41,7 +41,7 @@ for epoch in range(5):
     for prm in params:
         gp = to_np(prm.grad)
         nv = to_np(prm) - lr * gp
-        prm.assign(to_lt(nv, False))
+        prm.copy_(to_lt(nv, False))
         prm.zero_grad()
     print(f"epoch {epoch}: loss={loss:.4f} acc={acc:.4f}")
 
