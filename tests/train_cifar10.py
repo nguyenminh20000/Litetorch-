@@ -96,6 +96,13 @@ def build_lt():
     return m
 
 
+def copy_init_from_torch(torch_model, lt_model, dev):
+    cpu = lt.Device("cpu")
+    for tp, lp in zip(torch_model.parameters(), lt_model.parameters()):
+        arr = tp.detach().cpu().numpy().astype(np.float32)
+        lp.copy_(lt.Tensor.from_vector(arr.reshape(-1).tolist(), list(lp.shape), cpu).to(dev))
+
+
 def sync():
     torch.cuda.synchronize()
 
@@ -124,7 +131,7 @@ def train_torch(x_train, y_train, x_test, y_test):
     print(f"[torch] test acc: {acc:.4f}", flush=True)
     os.makedirs(WEIGHT_DIR, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(WEIGHT_DIR, "cats_dogs_torch.pt"))
-    return times, acc
+    return times, acc, model
 
 
 @torch.no_grad()
@@ -140,9 +147,11 @@ def eval_torch(model, x_test, y_test):
     return correct / total
 
 
-def train_lt(x_train, y_train, x_test, y_test):
+def train_lt(x_train, y_train, x_test, y_test, torch_model=None):
     dev = lt.Device("gpu:0")
     model = build_lt()
+    if torch_model is not None:
+        copy_init_from_torch(torch_model, model, dev)
     opt = lt.optim.Adam(model.parameters(), lr=LR)
     n = len(x_train)
     print("[lt] preloading batches...", flush=True)
@@ -190,9 +199,9 @@ def eval_lt(model, x_test, y_test, dev):
 def main():
     x_train, y_train, x_test, y_test = get_data()
     print("== cats/dogs: pytorch ==", flush=True)
-    t_times, t_acc = train_torch(x_train, y_train, x_test, y_test)
+    t_times, t_acc, t_model = train_torch(x_train, y_train, x_test, y_test)
     print("== cats/dogs: litetorch ==", flush=True)
-    l_times, l_acc = train_lt(x_train, y_train, x_test, y_test)
+    l_times, l_acc = train_lt(x_train, y_train, x_test, y_test, t_model)
     tt, ll = sum(t_times) / len(t_times), sum(l_times) / len(l_times)
     print(f"CATS_DOGS RESULT: torch {tt:.2f}s/epoch acc={t_acc:.4f} | lt {ll:.2f}s/epoch acc={l_acc:.4f} | speedup x{tt/ll:.2f}", flush=True)
     print("TRAIN_DONE", flush=True)
