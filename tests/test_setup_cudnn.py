@@ -3,6 +3,7 @@ import glob
 import os
 import sys
 import tempfile
+from unittest import mock
 
 SETUP_PY = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "setup.py")
@@ -88,8 +89,17 @@ def test_env_root_invalid_falls_through():
         CUDA_HOME=None,
         CUDA_PATH=None,
     )
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.split(".")[0] in ("nvidia", "torch"):
+            raise ImportError("blocked for hermetic test")
+        return real_import(name, *args, **kwargs)
+
     try:
-        info = ns["find_cudnn"]()
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            with mock.patch("importlib.util.find_spec", return_value=None):
+                info = ns["find_cudnn"]()
     finally:
         restore_env(saved)
     assert info is None, "expected None when LITETORCH_CUDNN_ROOT is invalid and no fallback, got %r" % (info,)
