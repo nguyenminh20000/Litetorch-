@@ -69,6 +69,20 @@ def _cudnn_layout(root):
         }
     return None
 
+_CUDNN_SITE_PATTERNS = (
+    "/usr/local/lib/python*/dist-packages/nvidia/cudnn",
+    "/usr/lib/python*/dist-packages/nvidia/cudnn",
+    "/usr/local/lib/python*/site-packages/nvidia/cudnn",
+    "/usr/lib/python*/site-packages/nvidia/cudnn",
+    os.path.expanduser("~/.local/lib/python*/site-packages/nvidia/cudnn"),
+)
+
+def _cudnn_site_roots():
+    roots = []
+    for pattern in _CUDNN_SITE_PATTERNS:
+        roots.extend(sorted(glob.glob(pattern)))
+    return roots
+
 def find_cudnn():
     if os.environ.get("LITETORCH_USE_CUDNN", "").strip() == "0":
         print("[litetorch] cuDNN disabled via LITETORCH_USE_CUDNN=0")
@@ -78,6 +92,12 @@ def find_cudnn():
         info = _cudnn_layout(explicit)
         if info:
             print(f"[litetorch] cuDNN {info['major']} detected via LITETORCH_CUDNN_ROOT={explicit}")
+            return info
+        print(f"[litetorch] LITETORCH_CUDNN_ROOT={explicit} has no cuDNN layout, trying other locations")
+    for root in _cudnn_site_roots():
+        info = _cudnn_layout(root)
+        if info:
+            print(f"[litetorch] cuDNN {info['major']} detected at {root}")
             return info
     candidates = []
     for mod in ("nvidia.cudnn",):
