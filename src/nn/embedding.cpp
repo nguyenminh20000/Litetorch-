@@ -57,7 +57,7 @@ public:
             int embedding_dim_val = embedding_dim;
 
             std::vector<float> zeros(grad_weight->numel(), 0.0f);
-            CLBackend::get().write(gw_mem, zeros.size() * sizeof(float), zeros.data(), gw_off);
+            CLBackend::get().write(gw_mem, zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(gw_off) * sizeof(float));
             int total_threads = num_indices;
             CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
                 {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &num_indices, &num_embeddings_val, &embedding_dim_val},

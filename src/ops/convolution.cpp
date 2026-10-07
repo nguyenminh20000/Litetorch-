@@ -143,7 +143,7 @@ public:
                                   dcol->gpu_data(), dcol->offset, K, NHW, C_out);
                 {
                     std::vector<float> zeros(grad_input->numel(), 0.0f);
-                    CLBackend::get().write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), grad_input->offset);
+                    CLBackend::get().write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(grad_input->offset) * sizeof(float));
                 }
                 {
                     cl_mem dc_mem = dcol->gpu_data();

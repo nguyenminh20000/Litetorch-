@@ -1409,20 +1409,14 @@ extern "C" __global__ void embedding_backward(
     float* grad_weight, int gw_off,
     int num_indices, int num_embeddings, int embedding_dim)
 {
-    int idx_thread = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx_thread >= num_embeddings * embedding_dim) return;
-
-    int idx = idx_thread / embedding_dim;
-    int d = idx_thread % embedding_dim;
-
-    float sum = 0.0f;
-    for (int i = 0; i < num_indices; ++i) {
-        int input_val = static_cast<int>(input[in_off + i]);
-        if (input_val == idx) {
-            sum += grad_output[gout_off + i * embedding_dim + d];
-        }
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_indices) return;
+    int idx = static_cast<int>(input[in_off + i]);
+    if (idx < 0 || idx >= num_embeddings) return;
+    for (int d = 0; d < embedding_dim; ++d) {
+        atomicAdd(&grad_weight[gw_off + idx * embedding_dim + d],
+                  grad_output[gout_off + i * embedding_dim + d]);
     }
-    grad_weight[gw_off + idx_thread] = sum;
 }
 
 extern "C" __global__ void generate_dropout_mask(

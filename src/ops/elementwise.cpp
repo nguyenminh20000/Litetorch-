@@ -1222,7 +1222,7 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
         float* out_ptr = out->data_ptr();
         out_ptr[0] = total;
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
@@ -1354,7 +1354,7 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         float* out_ptr = out->data_ptr();
         out_ptr[0] = max_val;
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
+            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);

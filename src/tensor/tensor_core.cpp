@@ -275,8 +275,9 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
         } else {
             auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
             int size_val = static_cast<int>(tensor->numel());
+            int off_val = static_cast<int>(tensor->offset);
             cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-            CLBackend::get().launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &size_val}, {sizeof(cl_mem), sizeof(int)});
+            CLBackend::get().launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
