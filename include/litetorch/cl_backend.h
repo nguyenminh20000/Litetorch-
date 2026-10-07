@@ -20,6 +20,7 @@ typedef void* cl_event;
 typedef unsigned long cl_mem_flags;
 typedef unsigned int cl_uint;
 typedef int cl_int;
+typedef unsigned long long cl_ulong;
 typedef size_t cl_device_info;
 
 struct cl_buffer_region {
@@ -229,6 +230,7 @@ private:
 
 constexpr cl_uint CL_BUFFER_CREATE_TYPE_REGION = 0x1220;
 constexpr cl_device_info CL_DEVICE_MEM_BASE_ADDR_ALIGN = 0x1019;
+constexpr cl_device_info CL_DEVICE_GLOBAL_MEM_SIZE = 0x101F;
 
 }
 

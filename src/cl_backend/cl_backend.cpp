@@ -266,6 +266,13 @@ bool CLBackend::init() {
     mem_alignment_bytes_ = align_bits / 8;
     if (mem_alignment_bytes_ == 0) mem_alignment_bytes_ = 128;
 
+    if (p_clGetDeviceInfo) {
+        cl_ulong global_mem = 0;
+        if (p_clGetDeviceInfo(device_, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &global_mem, nullptr) == CL_SUCCESS && global_mem > 0) {
+            MemoryManager::get().set_gpu_limit(static_cast<size_t>(global_mem * 3 / 4));
+        }
+    }
+
     return true;
 }
 

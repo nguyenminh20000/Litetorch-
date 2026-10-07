@@ -265,9 +265,7 @@ void StorageImpl::swap_in_impl() {
     gpu_data = CLBackend::get().allocate(size * element_size());
     if (!gpu_data) {
         MemoryManager::get().unregister_gpu_impl(this);
-        is_swapped = false;
-        device = Device(DeviceType::CPU, 0);
-        return;
+        throw std::runtime_error("[litetorch Error] GPU out of memory: failed to swap in " + std::to_string(size * element_size()) + " bytes");
     }
 
     CLBackend::get().write(gpu_data, size * element_size(), cpu_data);
