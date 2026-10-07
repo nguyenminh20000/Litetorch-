@@ -76,7 +76,7 @@ pip install --upgrade litetorch
 ```
 
 #### Step 3: (Optional) GPU Acceleration
-- **NVIDIA GPU**: Ensure NVIDIA CUDA Toolkit (`nvcc`) is in your PATH. LiteTorch will automatically detect and engage native CUDA acceleration.
+- **NVIDIA GPU**: Ensure NVIDIA CUDA Toolkit (`nvcc`) is in your PATH. LiteTorch will automatically detect and engage native CUDA acceleration (cuBLAS, FlashAttention; cuDNN if installed separately as it is not bundled with the CUDA Toolkit).
 - **AMD GPU**: Ensure ROCm / HIP (`hipcc`) is installed.
 
 ---
