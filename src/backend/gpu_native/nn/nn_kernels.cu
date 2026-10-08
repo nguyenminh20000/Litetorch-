@@ -73,6 +73,24 @@ extern "C" void gpu_conv2d_cudnn(
     }
 }
 
+struct CudnnWorkspace {
+    void* ptr = nullptr;
+    size_t bytes = 0;
+};
+
+static void* cudnn_workspace(size_t need) {
+    thread_local CudnnWorkspace ws;
+    if (need == 0) return nullptr;
+    if (need > ws.bytes) {
+        if (ws.ptr) cudaFree(ws.ptr);
+        ws.ptr = nullptr;
+        ws.bytes = 0;
+        if (cudaMalloc(&ws.ptr, need) != cudaSuccess) return nullptr;
+        ws.bytes = need;
+    }
+    return ws.ptr;
+}
+
 extern "C" void gpu_conv2d_backward_data_cudnn(
     const float* gout, int gout_off,
     const float* weight, int w_off,
@@ -85,7 +103,13 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
-    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, 0, nullptr, 0, &beta, d.xDesc, gdx + gdx_off);
+    size_t ws_bytes = 0;
+    void* ws = nullptr;
+    if (g_cudnn.GetConvolutionBackwardDataWorkspaceSize &&
+        g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, 0, &ws_bytes) == 0) {
+        ws = cudnn_workspace(ws_bytes);
+    }
+    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, 0, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off);
 }
 
 extern "C" void gpu_conv2d_backward_filter_cudnn(
@@ -100,7 +124,13 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
-    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, 0, nullptr, 0, &beta, d.wDesc, gw + gw_off);
+    size_t ws_bytes = 0;
+    void* ws = nullptr;
+    if (g_cudnn.GetConvolutionBackwardFilterWorkspaceSize &&
+        g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, 0, &ws_bytes) == 0) {
+        ws = cudnn_workspace(ws_bytes);
+    }
+    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, 0, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off);
 }
 
 extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
