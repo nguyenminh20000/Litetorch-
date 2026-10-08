@@ -46,10 +46,29 @@ static CudnnConvDescs& get_cudnn_conv_descs(const CudnnConvKey& key) {
     g_cudnn.SetTensor4dDescriptor(d.xDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_in, key.H_in, key.W_in);
     g_cudnn.SetFilter4dDescriptor(d.wDesc, LT_CUDNN_DATA_FLOAT, LT_CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
     g_cudnn.SetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, LT_CUDNN_CROSS_CORRELATION, LT_CUDNN_DATA_FLOAT);
+    if (g_cudnn.SetConvolutionMathType) g_cudnn.SetConvolutionMathType(d.convDesc, 1);
     g_cudnn.SetTensor4dDescriptor(d.yDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_out, key.H_out, key.W_out);
     g_cudnn.SetTensor4dDescriptor(d.bDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, 1, key.C_out, 1, 1);
     auto inserted = cudnn_conv_cache.emplace(key, d);
     return inserted.first->second;
+}
+
+static lt_cudnnActivationDescriptor_t relu_act_desc = nullptr;
+static std::mutex relu_act_desc_mutex;
+
+static lt_cudnnActivationDescriptor_t get_relu_act_desc() {
+    std::lock_guard<std::mutex> lock(relu_act_desc_mutex);
+    if (!relu_act_desc) {
+        lt_cudnnActivationDescriptor_t d = nullptr;
+        if (g_cudnn.CreateActivationDescriptor && g_cudnn.SetActivationDescriptor &&
+            g_cudnn.CreateActivationDescriptor(&d) == 0 &&
+            g_cudnn.SetActivationDescriptor(d, LT_CUDNN_ACTIVATION_RELU, LT_CUDNN_NOT_PROPAGATE_NAN, 0.0) == 0) {
+            relu_act_desc = d;
+        } else if (d && g_cudnn.DestroyActivationDescriptor) {
+            g_cudnn.DestroyActivationDescriptor(d);
+        }
+    }
+    return relu_act_desc;
 }
 
 extern "C" void gpu_conv2d_cudnn(
@@ -59,13 +78,22 @@ extern "C" void gpu_conv2d_cudnn(
     float* output, int out_off,
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
-    int kh, int kw, int stride, int padding) {
+    int kh, int kw, int stride, int padding, int apply_relu) {
     lt_cudnnHandle_t handle = get_cudnn_handle();
     if (!handle) return;
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
 
     float alpha = 1.0f, beta = 0.0f;
+    lt_cudnnActivationDescriptor_t reluDesc = nullptr;
+    if (apply_relu && has_bias && bias && g_cudnn.ConvolutionBiasActivationForward) {
+        reluDesc = get_relu_act_desc();
+    }
+    if (reluDesc) {
+        int st = g_cudnn.ConvolutionBiasActivationForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, nullptr, nullptr, d.bDesc, bias + b_off, reluDesc, d.yDesc, output + out_off);
+        if (st == 0) return;
+    }
+
     g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, d.yDesc, output + out_off);
 
     if (has_bias && bias) {

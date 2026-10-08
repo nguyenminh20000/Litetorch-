@@ -14,6 +14,7 @@ typedef void* lt_cudnnHandle_t;
 typedef void* lt_cudnnTensorDescriptor_t;
 typedef void* lt_cudnnFilterDescriptor_t;
 typedef void* lt_cudnnConvolutionDescriptor_t;
+typedef void* lt_cudnnActivationDescriptor_t;
 
 enum {
     LT_CUDNN_TENSOR_NCHW = 0,
@@ -21,7 +22,9 @@ enum {
     LT_CUDNN_CROSS_CORRELATION = 1,
     LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM = 0,
     LT_CUDNN_SOFTMAX_ACCURATE = 1,
-    LT_CUDNN_SOFTMAX_MODE_CHANNEL = 1
+    LT_CUDNN_SOFTMAX_MODE_CHANNEL = 1,
+    LT_CUDNN_ACTIVATION_RELU = 1,
+    LT_CUDNN_NOT_PROPAGATE_NAN = 0
 };
 
 typedef int (*lt_cudnnCreate_fn)(lt_cudnnHandle_t*);
@@ -32,6 +35,7 @@ typedef int (*lt_cudnnCreateFilterDescriptor_fn)(lt_cudnnFilterDescriptor_t*);
 typedef int (*lt_cudnnSetFilter4dDescriptor_fn)(lt_cudnnFilterDescriptor_t, int, int, int, int, int, int);
 typedef int (*lt_cudnnCreateConvolutionDescriptor_fn)(lt_cudnnConvolutionDescriptor_t*);
 typedef int (*lt_cudnnSetConvolution2dDescriptor_fn)(lt_cudnnConvolutionDescriptor_t, int, int, int, int, int, int, int, int);
+typedef int (*lt_cudnnSetConvolutionMathType_fn)(lt_cudnnConvolutionDescriptor_t, int);
 typedef int (*lt_cudnnConvolutionForward_fn)(lt_cudnnHandle_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnFilterDescriptor_t, const void*, lt_cudnnConvolutionDescriptor_t, int, void*, size_t, const void*, lt_cudnnTensorDescriptor_t, void*);
 typedef int (*lt_cudnnConvolutionBackwardData_fn)(lt_cudnnHandle_t, const void*, lt_cudnnFilterDescriptor_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnConvolutionDescriptor_t, int, void*, size_t, const void*, lt_cudnnTensorDescriptor_t, void*);
 typedef int (*lt_cudnnConvolutionBackwardFilter_fn)(lt_cudnnHandle_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnConvolutionDescriptor_t, int, void*, size_t, const void*, lt_cudnnFilterDescriptor_t, void*);
@@ -42,6 +46,10 @@ typedef int (*lt_cudnnSoftmaxForward_fn)(lt_cudnnHandle_t, int, int, const void*
 typedef int (*lt_cudnnDestroyTensorDescriptor_fn)(lt_cudnnTensorDescriptor_t);
 typedef int (*lt_cudnnDestroyFilterDescriptor_fn)(lt_cudnnFilterDescriptor_t);
 typedef int (*lt_cudnnDestroyConvolutionDescriptor_fn)(lt_cudnnConvolutionDescriptor_t);
+typedef int (*lt_cudnnCreateActivationDescriptor_fn)(lt_cudnnActivationDescriptor_t*);
+typedef int (*lt_cudnnSetActivationDescriptor_fn)(lt_cudnnActivationDescriptor_t, int, int, double);
+typedef int (*lt_cudnnDestroyActivationDescriptor_fn)(lt_cudnnActivationDescriptor_t);
+typedef int (*lt_cudnnConvolutionBiasActivationForward_fn)(lt_cudnnHandle_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnFilterDescriptor_t, const void*, lt_cudnnConvolutionDescriptor_t, int, void*, size_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnTensorDescriptor_t, const void*, lt_cudnnActivationDescriptor_t, lt_cudnnTensorDescriptor_t, void*);
 typedef size_t (*lt_cudnnGetVersion_fn)();
 
 struct LtCudnnApi {
@@ -53,6 +61,7 @@ struct LtCudnnApi {
     lt_cudnnSetFilter4dDescriptor_fn SetFilter4dDescriptor;
     lt_cudnnCreateConvolutionDescriptor_fn CreateConvolutionDescriptor;
     lt_cudnnSetConvolution2dDescriptor_fn SetConvolution2dDescriptor;
+    lt_cudnnSetConvolutionMathType_fn SetConvolutionMathType;
     lt_cudnnConvolutionForward_fn ConvolutionForward;
     lt_cudnnConvolutionBackwardData_fn ConvolutionBackwardData;
     lt_cudnnConvolutionBackwardFilter_fn ConvolutionBackwardFilter;
@@ -63,6 +72,10 @@ struct LtCudnnApi {
     lt_cudnnDestroyTensorDescriptor_fn DestroyTensorDescriptor;
     lt_cudnnDestroyFilterDescriptor_fn DestroyFilterDescriptor;
     lt_cudnnDestroyConvolutionDescriptor_fn DestroyConvolutionDescriptor;
+    lt_cudnnCreateActivationDescriptor_fn CreateActivationDescriptor;
+    lt_cudnnSetActivationDescriptor_fn SetActivationDescriptor;
+    lt_cudnnDestroyActivationDescriptor_fn DestroyActivationDescriptor;
+    lt_cudnnConvolutionBiasActivationForward_fn ConvolutionBiasActivationForward;
     lt_cudnnGetVersion_fn GetVersion;
 };
 
@@ -94,8 +107,13 @@ inline bool cudnn_dyn_bind(void* lib) {
     LT_CUDNN_LOAD(DestroyTensorDescriptor);
     LT_CUDNN_LOAD(DestroyFilterDescriptor);
     LT_CUDNN_LOAD(DestroyConvolutionDescriptor);
+    LT_CUDNN_LOAD(CreateActivationDescriptor);
+    LT_CUDNN_LOAD(SetActivationDescriptor);
+    LT_CUDNN_LOAD(DestroyActivationDescriptor);
+    LT_CUDNN_LOAD(ConvolutionBiasActivationForward);
     LT_CUDNN_LOAD(GetVersion);
 #undef LT_CUDNN_LOAD
+    api.SetConvolutionMathType = reinterpret_cast<lt_cudnnSetConvolutionMathType_fn>(dlsym(lib, "cudnnSetConvolutionMathType"));
     if (!ok) return false;
     g_cudnn = api;
     g_cudnn_lib = lib;
