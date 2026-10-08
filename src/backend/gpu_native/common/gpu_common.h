@@ -15,9 +15,7 @@
 #include <cuda_fp16.h>
 #include <cublas_v2.h>
 #include <cub/cub.cuh>
-#ifdef USE_CUDNN
-#include <cudnn.h>
-#endif
+#include "cudnn_dyn.h"
 #define GPU_API(name) cuda##name
 #endif
 
@@ -42,9 +40,7 @@ extern GPU_API(Stream_t) g_compute_stream;
 #ifndef __HIP_PLATFORM_AMD__
 cublasHandle_t get_cublas_handle();
 cublasLtHandle_t get_cublaslt_handle();
-#ifdef USE_CUDNN
-cudnnHandle_t get_cudnn_handle();
-#endif
+lt_cudnnHandle_t get_cudnn_handle();
 #else
 rocblas_handle get_rocblas_handle();
 #ifdef USE_MIOPEN

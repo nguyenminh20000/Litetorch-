@@ -50,16 +50,15 @@ cublasLtHandle_t get_cublaslt_handle() {
     }
     return handle;
 }
-#ifdef USE_CUDNN
-cudnnHandle_t get_cudnn_handle() {
-    thread_local cudnnHandle_t handle = nullptr;
+lt_cudnnHandle_t get_cudnn_handle() {
+    thread_local lt_cudnnHandle_t handle = nullptr;
+    if (!g_cudnn_available) return nullptr;
     if (!handle) {
-        cudnnCreate(&handle);
-        cudnnSetStream(handle, g_compute_stream);
+        g_cudnn.Create(&handle);
+        g_cudnn.SetStream(handle, g_compute_stream);
     }
     return handle;
 }
-#endif
 #else
 rocblas_handle get_rocblas_handle() {
     thread_local rocblas_handle handle = nullptr;
@@ -95,6 +94,10 @@ extern "C" bool gpu_init() {
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+#ifndef __HIP_PLATFORM_AMD__
+    if (cudnn_dyn_init())
+        printf("[litetorch] cuDNN runtime: available v%zu (dynamic load)\n", g_cudnn.GetVersion());
+#endif
     const char* fa_paths[] = { "libflash_attn.so", "/usr/local/cuda/lib64/libflash_attn.so", "./libflash_attn.so" };
     for (const char* p : fa_paths) {
         g_fa3_handle = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
@@ -112,6 +115,9 @@ extern "C" bool gpu_init_device(int device_id) {
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+#ifndef __HIP_PLATFORM_AMD__
+    cudnn_dyn_init();
+#endif
     const char* fa_paths[] = { "libflash_attn.so", "/usr/local/cuda/lib64/libflash_attn.so", "./libflash_attn.so" };
     for (const char* p : fa_paths) {
         g_fa3_handle = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
@@ -373,9 +379,9 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "conv3d_backward_gb") return (void*)&conv3d_backward_gb;
     if (sname == "conv3d_backward_gw") return (void*)&conv3d_backward_gw;
     if (sname == "conv3d_backward_gdx") return (void*)&conv3d_backward_gdx;
-#ifdef USE_CUDNN
-    if (sname == "conv2d_cudnn") return (void*)&gpu_conv2d_cudnn;
-    if (sname == "softmax_cudnn") return (void*)&gpu_softmax_cudnn;
+#ifndef __HIP_PLATFORM_AMD__
+    if (sname == "conv2d_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_cudnn : nullptr;
+    if (sname == "softmax_cudnn") return g_cudnn_available ? (void*)&gpu_softmax_cudnn : nullptr;
 #endif
 #ifdef USE_MIOPEN
     if (sname == "conv2d_miopen") return (void*)&gpu_conv2d_miopen;

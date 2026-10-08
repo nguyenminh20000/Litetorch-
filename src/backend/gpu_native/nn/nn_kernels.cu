@@ -1,6 +1,6 @@
 #include "gpu_common.h"
 
-#ifdef USE_CUDNN
+#ifndef __HIP_PLATFORM_AMD__
 #include <unordered_map>
 #include <mutex>
 
@@ -25,9 +25,9 @@ struct CudnnConvKeyHash {
 };
 
 struct CudnnConvDescs {
-    cudnnTensorDescriptor_t xDesc, yDesc, bDesc;
-    cudnnFilterDescriptor_t wDesc;
-    cudnnConvolutionDescriptor_t convDesc;
+    lt_cudnnTensorDescriptor_t xDesc, yDesc, bDesc;
+    lt_cudnnFilterDescriptor_t wDesc;
+    lt_cudnnConvolutionDescriptor_t convDesc;
 };
 
 static std::unordered_map<CudnnConvKey, CudnnConvDescs, CudnnConvKeyHash> cudnn_conv_cache;
@@ -38,16 +38,16 @@ static CudnnConvDescs& get_cudnn_conv_descs(const CudnnConvKey& key) {
     auto it = cudnn_conv_cache.find(key);
     if (it != cudnn_conv_cache.end()) return it->second;
     CudnnConvDescs d;
-    cudnnCreateTensorDescriptor(&d.xDesc);
-    cudnnCreateTensorDescriptor(&d.yDesc);
-    cudnnCreateTensorDescriptor(&d.bDesc);
-    cudnnCreateFilterDescriptor(&d.wDesc);
-    cudnnCreateConvolutionDescriptor(&d.convDesc);
-    cudnnSetTensor4dDescriptor(d.xDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, key.N, key.C_in, key.H_in, key.W_in);
-    cudnnSetFilter4dDescriptor(d.wDesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
-    cudnnSetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
-    cudnnSetTensor4dDescriptor(d.yDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, key.N, key.C_out, key.H_out, key.W_out);
-    cudnnSetTensor4dDescriptor(d.bDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, key.C_out, 1, 1);
+    g_cudnn.CreateTensorDescriptor(&d.xDesc);
+    g_cudnn.CreateTensorDescriptor(&d.yDesc);
+    g_cudnn.CreateTensorDescriptor(&d.bDesc);
+    g_cudnn.CreateFilterDescriptor(&d.wDesc);
+    g_cudnn.CreateConvolutionDescriptor(&d.convDesc);
+    g_cudnn.SetTensor4dDescriptor(d.xDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_in, key.H_in, key.W_in);
+    g_cudnn.SetFilter4dDescriptor(d.wDesc, LT_CUDNN_DATA_FLOAT, LT_CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
+    g_cudnn.SetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, LT_CUDNN_CROSS_CORRELATION, LT_CUDNN_DATA_FLOAT);
+    g_cudnn.SetTensor4dDescriptor(d.yDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_out, key.H_out, key.W_out);
+    g_cudnn.SetTensor4dDescriptor(d.bDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, 1, key.C_out, 1, 1);
     auto inserted = cudnn_conv_cache.emplace(key, d);
     return inserted.first->second;
 }
@@ -60,29 +60,31 @@ extern "C" void gpu_conv2d_cudnn(
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding) {
-    cudnnHandle_t handle = get_cudnn_handle();
+    lt_cudnnHandle_t handle = get_cudnn_handle();
+    if (!handle) return;
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
 
     float alpha = 1.0f, beta = 0.0f;
-    cudnnConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, d.yDesc, output + out_off);
+    g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, d.yDesc, output + out_off);
 
     if (has_bias && bias) {
-        cudnnAddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
+        g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
     }
 }
 
 extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
-    cudnnHandle_t handle = get_cudnn_handle();
-    cudnnTensorDescriptor_t srcDesc, dstDesc;
-    cudnnCreateTensorDescriptor(&srcDesc);
-    cudnnCreateTensorDescriptor(&dstDesc);
-    cudnnSetTensor4dDescriptor(srcDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, N, C, H, W);
-    cudnnSetTensor4dDescriptor(dstDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, N, C, H, W);
+    lt_cudnnHandle_t handle = get_cudnn_handle();
+    if (!handle) return;
+    lt_cudnnTensorDescriptor_t srcDesc, dstDesc;
+    g_cudnn.CreateTensorDescriptor(&srcDesc);
+    g_cudnn.CreateTensorDescriptor(&dstDesc);
+    g_cudnn.SetTensor4dDescriptor(srcDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, N, C, H, W);
+    g_cudnn.SetTensor4dDescriptor(dstDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, N, C, H, W);
     float alpha = 1.0f, beta = 0.0f;
-    cudnnSoftmaxForward(handle, CUDNN_SOFTMAX_ACCURATE, CUDNN_SOFTMAX_MODE_CHANNEL, &alpha, srcDesc, input + in_off, &beta, dstDesc, output + out_off);
-    cudnnDestroyTensorDescriptor(srcDesc);
-    cudnnDestroyTensorDescriptor(dstDesc);
+    g_cudnn.SoftmaxForward(handle, LT_CUDNN_SOFTMAX_ACCURATE, LT_CUDNN_SOFTMAX_MODE_CHANNEL, &alpha, srcDesc, input + in_off, &beta, dstDesc, output + out_off);
+    g_cudnn.DestroyTensorDescriptor(srcDesc);
+    g_cudnn.DestroyTensorDescriptor(dstDesc);
 }
 #endif
 

@@ -196,30 +196,21 @@ class BuildExt(build_ext):
                     cu_src = os.path.join(SCRIPT_DIR, "src", "backend", "gpu_native", "kernels.cu")
                     if os.path.exists(cu_src):
                         cuda_arch = os.environ.get("LITETORCH_CUDA_ARCH", "native")
-                        cudnn_args = []
                         cudnn_info = find_cudnn()
                         if cudnn_info:
-                            cudnn_args = [
-                                "-DUSE_CUDNN",
-                                "-I" + cudnn_info["include_dir"],
-                                "-L" + cudnn_info["lib_dir"],
-                            ] + cudnn_info["link_files"] + [
-                                "-Xlinker", "-rpath", "-Xlinker", cudnn_info["lib_dir"],
-                            ]
                             sys.stdout.write(
-                                "[litetorch] cuDNN %s detected at %s, enabling USE_CUDNN\n"
+                                "[litetorch] cuDNN %s found at %s (runtime dynamic-load, not linked at build)\n"
                                 % (cudnn_info["major"], cudnn_info["lib_dir"]))
-                            sys.stdout.flush()
                         else:
-                            sys.stdout.write("[litetorch] cuDNN not found, building GPU lib without cuDNN\n")
-                            sys.stdout.flush()
+                            sys.stdout.write("[litetorch] cuDNN not found (runtime dynamic-load will fall back)\n")
+                        sys.stdout.flush()
                         cmd = [
                             nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
                             f"-arch={cuda_arch}",
                             f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                             cu_src, "-o", out_so,
                             "-lcublas", "-lcublasLt"
-                        ] + cudnn_args
+                        ]
                         try:
                             res = subprocess.run(cmd, capture_output=True, text=True)
                             if res.returncode != 0:
@@ -228,19 +219,8 @@ class BuildExt(build_ext):
                                     f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                                     cu_src, "-o", out_so,
                                     "-lcublas", "-lcublasLt"
-                                ] + cudnn_args
-                                res = subprocess.run(cmd_fallback, capture_output=True, text=True)
-                            if res.returncode != 0 and cudnn_args:
-                                cmd_no_cudnn = [
-                                    nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
-                                    f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
-                                    cu_src, "-o", out_so,
-                                    "-lcublas", "-lcublasLt"
                                 ]
-                                res = subprocess.run(cmd_no_cudnn, capture_output=True, text=True)
-                                if res.returncode == 0:
-                                    sys.stdout.write("[litetorch] native GPU lib built WITHOUT cuDNN (cuDNN flags caused failure)\n")
-                                    sys.stdout.flush()
+                                res = subprocess.run(cmd_fallback, capture_output=True, text=True)
                             build_success = (res.returncode == 0)
                             if build_success:
                                 sys.stdout.write("[litetorch] native GPU lib built: %s\n" % out_so)
