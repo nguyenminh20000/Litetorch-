@@ -46,7 +46,7 @@ static CudnnConvDescs& get_cudnn_conv_descs(const CudnnConvKey& key) {
     g_cudnn.SetTensor4dDescriptor(d.xDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_in, key.H_in, key.W_in);
     g_cudnn.SetFilter4dDescriptor(d.wDesc, LT_CUDNN_DATA_FLOAT, LT_CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
     g_cudnn.SetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, LT_CUDNN_CROSS_CORRELATION, LT_CUDNN_DATA_FLOAT);
-    if (g_cudnn.SetConvolutionMathType) g_cudnn.SetConvolutionMathType(d.convDesc, 1);
+    if (g_cudnn.SetConvolutionMathType) g_cudnn.SetConvolutionMathType(d.convDesc, LT_CUDNN_TENSOR_OP_MATH_ALLOW_CONVERSION);
     g_cudnn.SetTensor4dDescriptor(d.yDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_out, key.H_out, key.W_out);
     g_cudnn.SetTensor4dDescriptor(d.bDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, 1, key.C_out, 1, 1);
     auto inserted = cudnn_conv_cache.emplace(key, d);
