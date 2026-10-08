@@ -13,6 +13,10 @@ namespace litetorch {
 extern const std::string litetorch_kernels_src;
 
 namespace {
+inline bool cudnn_disabled() {
+    static const bool disabled = std::getenv("LITETORCH_NO_CUDNN") != nullptr;
+    return disabled;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -98,7 +102,7 @@ public:
                 int, int, int, int, int, int, int, int, int, int, int);
             Conv2dBwdDataCudnnFn cudnn_bwd_data = nullptr;
             Conv2dBwdFilterCudnnFn cudnn_bwd_filter = nullptr;
-            if (native && native->is_available() && !std::getenv("LITETORCH_NO_CUDNN")) {
+            if (native && native->is_available() && !cudnn_disabled()) {
                 cudnn_bwd_data = reinterpret_cast<Conv2dBwdDataCudnnFn>(
                     native->get_kernel("", "", "conv2d_backward_data_cudnn"));
                 cudnn_bwd_filter = reinterpret_cast<Conv2dBwdFilterCudnnFn>(
@@ -638,7 +642,7 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
             const float*, int, const float*, int, const float*, int, int,
             float*, int, int, int, int, int, int, int, int, int, int, int, int);
         Conv2dCudnnFn cudnn_conv2d = nullptr;
-        if (native && native->is_available() && !std::getenv("LITETORCH_NO_CUDNN")) {
+        if (native && native->is_available() && !cudnn_disabled()) {
             cudnn_conv2d = reinterpret_cast<Conv2dCudnnFn>(
                 native->get_kernel("", "", "conv2d_cudnn"));
         }
@@ -652,9 +656,9 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
             done = true;
         }
-        auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
+        auto im2col_k = done ? nullptr : CLBackend::get().get_kernel(KernelID::Im2colFlat);
         void* epilogue_k = nullptr;
-        if (native && native->is_available()) {
+        if (!done && native && native->is_available()) {
             epilogue_k = native->get_kernel("", "", "transpose_conv_out_bias_relu_kernel");
         }
         if (!done && native && native->is_available() && im2col_k && epilogue_k) {
