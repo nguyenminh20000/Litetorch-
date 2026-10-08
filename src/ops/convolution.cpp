@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
+#include <string>
+#include <unordered_map>
 
 namespace litetorch {
 
@@ -24,15 +27,17 @@ inline cl_kernel cached_kernel() {
 }
 template <typename Fn>
 inline Fn cached_native_kernel(const char* name) {
-    static bool checked = false;
-    static void* k = nullptr;
-    if (!checked) {
-        checked = true;
-        auto native = BackendDispatcher::get().get_backend();
-        if (native && native->is_available()) {
-            k = native->get_kernel("", "", name);
-        }
+    static std::unordered_map<std::string, void*> cache;
+    static std::mutex cache_mutex;
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = cache.find(name);
+    if (it != cache.end()) return reinterpret_cast<Fn>(it->second);
+    void* k = nullptr;
+    auto native = BackendDispatcher::get().get_backend();
+    if (native && native->is_available()) {
+        k = native->get_kernel("", "", name);
     }
+    cache[name] = k;
     return reinterpret_cast<Fn>(k);
 }
 struct StorageUseGuard {
