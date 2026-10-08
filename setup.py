@@ -24,9 +24,8 @@ def _cudnn_link_files(shared_libs):
         by_base.setdefault(key, []).append(path)
     chosen = []
     for key in sorted(by_base):
-        paths = by_base[key]
-        plain = [p for p in paths if os.path.basename(p) in (key + ".so", key + ".dylib")]
-        chosen.append(plain[0] if plain else sorted(paths)[-1])
+        libname = key[3:] if key.startswith("lib") else key
+        chosen.append("-l" + libname)
     return chosen
 
 def _cudnn_major(include_dir):
