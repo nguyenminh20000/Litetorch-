@@ -119,6 +119,51 @@ static void* cudnn_workspace(size_t need) {
     return ws.ptr;
 }
 
+struct CudnnBwdAlgos {
+    int data_algo;
+    int filter_algo;
+};
+
+static std::unordered_map<CudnnConvKey, CudnnBwdAlgos, CudnnConvKeyHash> cudnn_bwd_algo_cache;
+static std::mutex cudnn_bwd_algo_cache_mutex;
+
+static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 64ULL * 1024ULL * 1024ULL;
+
+static int cudnn_pick_bwd_algo(LtCudnnBwdAlgoPerf* perfs, int count) {
+    for (int i = 0; i < count; ++i) {
+        if (perfs[i].status == 0 && perfs[i].memory <= CUDNN_BWD_ALGO_WS_LIMIT) return perfs[i].algo;
+    }
+    return 0;
+}
+
+static CudnnBwdAlgos cudnn_bwd_algos(lt_cudnnHandle_t handle, const CudnnConvKey& key, CudnnConvDescs& d) {
+    {
+        std::lock_guard<std::mutex> lock(cudnn_bwd_algo_cache_mutex);
+        auto it = cudnn_bwd_algo_cache.find(key);
+        if (it != cudnn_bwd_algo_cache.end()) return it->second;
+    }
+    CudnnBwdAlgos a{0, 0};
+    if (g_cudnn.GetConvolutionBackwardDataAlgorithm_v7) {
+        LtCudnnBwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionBackwardDataAlgorithm_v7(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            a.data_algo = cudnn_pick_bwd_algo(perfs, returned);
+        }
+    }
+    if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7) {
+        LtCudnnBwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            a.filter_algo = cudnn_pick_bwd_algo(perfs, returned);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(cudnn_bwd_algo_cache_mutex);
+        cudnn_bwd_algo_cache.emplace(key, a);
+    }
+    return a;
+}
+
 extern "C" void gpu_conv2d_backward_data_cudnn(
     const float* gout, int gout_off,
     const float* weight, int w_off,
@@ -131,13 +176,14 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
+    int algo = cudnn_bwd_algos(handle, key, d).data_algo;
     size_t ws_bytes = 0;
     void* ws = nullptr;
     if (g_cudnn.GetConvolutionBackwardDataWorkspaceSize &&
-        g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, 0, &ws_bytes) == 0) {
+        g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
-    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, 0, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off);
+    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off);
 }
 
 extern "C" void gpu_conv2d_backward_filter_cudnn(
@@ -152,13 +198,14 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
+    int algo = cudnn_bwd_algos(handle, key, d).filter_algo;
     size_t ws_bytes = 0;
     void* ws = nullptr;
     if (g_cudnn.GetConvolutionBackwardFilterWorkspaceSize &&
-        g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, 0, &ws_bytes) == 0) {
+        g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
-    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, 0, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off);
+    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off);
 }
 
 extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
