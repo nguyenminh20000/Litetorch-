@@ -1,4 +1,9 @@
 #include "gpu_common.h"
+#include <mutex>
+#include <unordered_map>
+
+extern "C" void* gpu_allocate(size_t size);
+extern "C" bool gpu_is_tf32_enabled();
 
 extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
 #ifndef __HIP_PLATFORM_AMD__
@@ -185,5 +190,184 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
     if (status != rocblas_status_success) {
         gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
     }
+#endif
+}
+
+#ifndef __HIP_PLATFORM_AMD__
+
+struct LtMatmulKey {
+    int64_t M, N, K, lda, ldb;
+    bool trans_a, trans_b, tf32;
+    bool operator==(const LtMatmulKey& o) const {
+        return M == o.M && N == o.N && K == o.K && lda == o.lda && ldb == o.ldb &&
+               trans_a == o.trans_a && trans_b == o.trans_b && tf32 == o.tf32;
+    }
+};
+
+struct LtMatmulKeyHash {
+    size_t operator()(const LtMatmulKey& k) const {
+        size_t h = 1469598103934665603ULL;
+        auto mix = [&](int64_t v) { h ^= (size_t)v; h *= 1099511628211ULL; };
+        mix(k.M); mix(k.N); mix(k.K); mix(k.lda); mix(k.ldb);
+        mix(k.trans_a ? 1 : 0); mix(k.trans_b ? 1 : 0); mix(k.tf32 ? 1 : 0);
+        return h;
+    }
+};
+
+static std::unordered_map<LtMatmulKey, cublasLtMatmulAlgo_t, LtMatmulKeyHash> lt_algo_cache;
+static std::mutex lt_algo_cache_mutex;
+
+static const size_t LT_WS_BYTES = 32ULL * 1024ULL * 1024ULL;
+
+static void* lt_workspace() {
+    thread_local void* ws = nullptr;
+    if (!ws) ws = gpu_allocate(LT_WS_BYTES);
+    return ws;
+}
+
+static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
+                                cublasLtMatmulDesc_t desc,
+                                cublasLtMatrixLayout_t Adesc,
+                                cublasLtMatrixLayout_t Bdesc,
+                                cublasLtMatrixLayout_t Cdesc,
+                                const float* a_ptr, const float* b_ptr, float* c_ptr,
+                                const LtMatmulKey& key,
+                                cublasLtMatmulAlgo_t* out_algo) {
+    {
+        std::lock_guard<std::mutex> lock(lt_algo_cache_mutex);
+        auto it = lt_algo_cache.find(key);
+        if (it != lt_algo_cache.end()) {
+            *out_algo = it->second;
+            return true;
+        }
+    }
+    void* ws = lt_workspace();
+    if (!ws) return false;
+    cublasLtMatmulPreference_t pref = nullptr;
+    if (cublasLtMatmulPreferenceCreate(&pref) != CUBLAS_STATUS_SUCCESS) return false;
+    size_t ws_cap = LT_WS_BYTES;
+    bool pref_ok = cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws_cap, sizeof(ws_cap)) == CUBLAS_STATUS_SUCCESS;
+    cublasLtMatmulHeuristicResult_t heuristics[8];
+    int retCount = 0;
+    bool heur_ok = false;
+    if (pref_ok) {
+        heur_ok = cublasLtMatmulAlgoGetHeuristic(lt_handle, desc, Adesc, Bdesc, Cdesc, Cdesc, pref, 8, heuristics, &retCount) == CUBLAS_STATUS_SUCCESS && retCount > 0;
+    }
+    cublasLtMatmulPreferenceDestroy(pref);
+    if (!heur_ok) return false;
+    float alpha = 1.0f, beta = 0.0f;
+    cudaStreamCaptureStatus capStatus = cudaStreamCaptureStatusNone;
+    cudaStreamIsCapturing(g_compute_stream, &capStatus);
+    cudaEvent_t start = nullptr, stop = nullptr;
+    bool timed = capStatus == cudaStreamCaptureStatusNone &&
+                 cudaEventCreate(&start) == cudaSuccess &&
+                 cudaEventCreate(&stop) == cudaSuccess;
+    int best = -1;
+    float best_ms = 0.0f;
+    for (int i = 0; i < retCount; ++i) {
+        if (heuristics[i].state != CUBLAS_STATUS_SUCCESS) continue;
+        if (heuristics[i].workspaceSize > LT_WS_BYTES) continue;
+        if (!timed) {
+            if (best < 0) best = i;
+            continue;
+        }
+        if (cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
+                           c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
+                           ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
+            continue;
+        }
+        float total = 0.0f;
+        bool ok = true;
+        for (int r = 0; r < 5; ++r) {
+            cudaEventRecord(start, g_compute_stream);
+            if (cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
+                               c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
+                               ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
+                ok = false;
+                break;
+            }
+            cudaEventRecord(stop, g_compute_stream);
+            if (cudaEventSynchronize(stop) != cudaSuccess) {
+                ok = false;
+                break;
+            }
+            float e = 0.0f;
+            cudaEventElapsedTime(&e, start, stop);
+            total += e;
+        }
+        if (!ok) continue;
+        if (best < 0 || total < best_ms) {
+            best = i;
+            best_ms = total;
+        }
+    }
+    if (start) cudaEventDestroy(start);
+    if (stop) cudaEventDestroy(stop);
+    if (best < 0) return false;
+    {
+        std::lock_guard<std::mutex> lock(lt_algo_cache_mutex);
+        lt_algo_cache.emplace(key, heuristics[best].algo);
+    }
+    *out_algo = heuristics[best].algo;
+    return true;
+}
+
+#endif
+
+extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                                 void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                                 void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+#ifndef __HIP_PLATFORM_AMD__
+    if (M <= 0 || N <= 0 || K <= 0) {
+        gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+        return;
+    }
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    float* c_ptr = (float*)C + c_off;
+    bool tf32 = gpu_is_tf32_enabled();
+    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32};
+    cublasLtHandle_t lt_handle = get_cublaslt_handle();
+    cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+    cublasLtMatmulDesc_t desc = nullptr;
+    cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
+    bool built = false;
+    if (cublasLtMatmulDescCreate(&desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+        cublasOperation_t transA = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+        cublasOperation_t transB = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+        uint64_t a_rows = (uint64_t)(trans_b ? K : N);
+        uint64_t a_cols = (uint64_t)(trans_b ? N : K);
+        uint64_t b_rows = (uint64_t)(trans_a ? M : K);
+        uint64_t b_cols = (uint64_t)(trans_a ? K : M);
+        if (cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_32F, (uint64_t)N, (uint64_t)M, (int64_t)N) == CUBLAS_STATUS_SUCCESS) {
+            built = true;
+        }
+    }
+    cublasLtMatmulAlgo_t algo{};
+    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, a_ptr, b_ptr, c_ptr, key, &algo);
+    if (have_algo) {
+        void* ws = lt_workspace();
+        float alpha = 1.0f, beta = 0.0f;
+        if (ws && cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
+                                c_ptr, Cdesc, c_ptr, Cdesc, &algo,
+                                ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
+            cublasLtMatrixLayoutDestroy(Cdesc);
+            cublasLtMatrixLayoutDestroy(Bdesc);
+            cublasLtMatrixLayoutDestroy(Adesc);
+            cublasLtMatmulDescDestroy(desc);
+            return;
+        }
+    }
+    if (Cdesc) cublasLtMatrixLayoutDestroy(Cdesc);
+    if (Bdesc) cublasLtMatrixLayoutDestroy(Bdesc);
+    if (Adesc) cublasLtMatrixLayoutDestroy(Adesc);
+    if (desc) cublasLtMatmulDescDestroy(desc);
+    gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+#else
+    gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
 #endif
 }

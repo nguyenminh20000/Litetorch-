@@ -384,6 +384,7 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (sname == "conv2d_backward_data_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_backward_data_cudnn : nullptr;
     if (sname == "conv2d_backward_filter_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_backward_filter_cudnn : nullptr;
     if (sname == "softmax_cudnn") return g_cudnn_available ? (void*)&gpu_softmax_cudnn : nullptr;
+    if (sname == "matmul_ex_cublaslt") return (void*)&gpu_matmul_ex_lt;
 #endif
 #ifdef USE_MIOPEN
     if (sname == "conv2d_miopen") return (void*)&gpu_conv2d_miopen;

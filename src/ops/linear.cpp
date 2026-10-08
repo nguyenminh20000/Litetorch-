@@ -5,6 +5,7 @@
 #include "litetorch/backend.h"
 #include "litetorch/amp.h"
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace litetorch {
@@ -12,6 +13,10 @@ namespace litetorch {
 extern const std::string litetorch_kernels_src;
 
 namespace {
+inline bool cublaslt_disabled() {
+    static const bool disabled = std::getenv("LITETORCH_NO_CUBLASLT") != nullptr;
+    return disabled;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -207,7 +212,16 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                     native->matmul_half(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, M, N, K);
                 }
             } else {
-                native->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                typedef void (*MatmulExLtFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
+                MatmulExLtFn matmul_lt = nullptr;
+                if (!cublaslt_disabled()) {
+                    matmul_lt = reinterpret_cast<MatmulExLtFn>(native->get_kernel("", "", "matmul_ex_cublaslt"));
+                }
+                if (matmul_lt) {
+                    matmul_lt(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                } else {
+                    native->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                }
             }
         } else {
             void* kernel = nullptr;
