@@ -11,8 +11,6 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
     if (device.type == DeviceType::META) {
         return;
     }
-    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
-    std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     if (device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
@@ -20,9 +18,13 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
             if (native && native->is_available()) {
                 native->set_device(device.index);
             }
-            MemoryManager::get().register_gpu_impl(this);
+            {
+                std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
+                MemoryManager::get().register_gpu_impl(this);
+            }
             gpu_data = CLBackend::get().allocate(size * element_size());
             if (!gpu_data) {
+                std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
                 MemoryManager::get().unregister_gpu_impl(this);
                 throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes");
             }
@@ -52,9 +54,10 @@ StorageImpl::~StorageImpl() {
     if (device.type == DeviceType::META) {
         return;
     }
-    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
-    std::lock_guard<std::mutex> storage_lock(storage_mutex_);
-    MemoryManager::get().unregister_gpu_impl(this);
+    {
+        std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
+        MemoryManager::get().unregister_gpu_impl(this);
+    }
     if (gpu_data) {
         if (device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();

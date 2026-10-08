@@ -1,6 +1,7 @@
 #include "common/gpu_common.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <unistd.h>
@@ -227,6 +228,7 @@ struct GpuMemPool {
     std::mutex mutex_;
     std::map<size_t, std::vector<void*>> free_;
     std::unordered_map<void*, size_t> live_;
+    size_t cached_bytes_ = 0;
 };
 
 static GpuMemPool& gpu_mem_pool() {
@@ -234,9 +236,22 @@ static GpuMemPool& gpu_mem_pool() {
     return pool;
 }
 
+static size_t gpu_cache_cap_bytes() {
+    static const size_t cap = []() {
+        const char* e = std::getenv("LITETORCH_GPU_CACHE_MB");
+        long mb = e ? std::atol(e) : 1024;
+        if (mb < 0) mb = 0;
+        return (size_t)mb * 1024ULL * 1024ULL;
+    }();
+    return cap;
+}
+
 static inline size_t gpu_pool_bucket(size_t size) {
     size_t b = 512;
-    while (b < size) b <<= 1;
+    while (b < size) {
+        size_t nb = b + (b >> 1);
+        b = nb > b ? nb : b << 1;
+    }
     return b;
 }
 
@@ -251,6 +266,7 @@ extern "C" void* gpu_allocate(size_t size) {
             void* ptr = it->second.back();
             it->second.pop_back();
             pool.live_[ptr] = bucket;
+            pool.cached_bytes_ -= bucket;
             return ptr;
         }
     }
@@ -262,6 +278,7 @@ extern "C" void* gpu_allocate(size_t size) {
             for (void* p : kv.second) GPU_API(Free)(p);
             kv.second.clear();
         }
+        pool.cached_bytes_ = 0;
         ptr = nullptr;
         GPU_API(Malloc)(&ptr, bucket);
         if (!ptr) return nullptr;
@@ -280,6 +297,7 @@ extern "C" void gpu_empty_cache() {
         for (void* p : kv.second) GPU_API(Free)(p);
         kv.second.clear();
     }
+    pool.cached_bytes_ = 0;
 }
 
 extern "C" void gpu_free(void* ptr) {
@@ -291,8 +309,14 @@ extern "C" void gpu_free(void* ptr) {
         GPU_API(Free)(ptr);
         return;
     }
-    pool.free_[it->second].push_back(ptr);
+    size_t bucket = it->second;
     pool.live_.erase(it);
+    if (pool.cached_bytes_ + bucket > gpu_cache_cap_bytes()) {
+        GPU_API(Free)(ptr);
+        return;
+    }
+    pool.free_[bucket].push_back(ptr);
+    pool.cached_bytes_ += bucket;
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
@@ -339,123 +363,156 @@ extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_
 #endif
 }
 
-extern "C" void* gpu_get_kernel(const char* name) {
-    std::string sname(name);
-    if (sname == "Add" || sname == "elementwise_add") return (void*)&elementwise_add;
-    if (sname == "elementwise_add_inplace") return (void*)&elementwise_add_inplace;
-    if (sname == "elementwise_sub") return (void*)&elementwise_sub;
-    if (sname == "elementwise_mul") return (void*)&elementwise_mul;
-    if (sname == "elementwise_div") return (void*)&elementwise_div;
-    if (sname == "relu_forward") return (void*)&relu_forward;
-    if (sname == "relu_backward_kernel") return (void*)&relu_backward_kernel;
-    if (sname == "sigmoid_forward") return (void*)&sigmoid_forward;
-    if (sname == "sigmoid_backward_kernel") return (void*)&sigmoid_backward_kernel;
-    if (sname == "tanh_forward") return (void*)&tanh_forward;
-    if (sname == "tanh_backward_kernel") return (void*)&tanh_backward_kernel;
-    if (sname == "pow_forward") return (void*)&pow_forward;
-    if (sname == "sqrt_forward") return (void*)&sqrt_forward;
-    if (sname == "exp_forward") return (void*)&exp_forward;
-    if (sname == "log_forward") return (void*)&log_forward;
-    if (sname == "abs_forward") return (void*)&abs_forward;
-    if (sname == "neg_forward") return (void*)&neg_forward;
-    if (sname == "leaky_relu_forward") return (void*)&leaky_relu_forward;
-    if (sname == "leaky_relu_backward_kernel") return (void*)&leaky_relu_backward_kernel;
-    if (sname == "make_contiguous_kernel") return (void*)&make_contiguous_kernel;
-    if (sname == "copy_to_strided_kernel") return (void*)&copy_to_strided_kernel;
-    if (sname == "conv2d_kernel") return (void*)&conv2d_kernel;
-    if (sname == "conv2d_backward_gb") return (void*)&conv2d_backward_gb;
-    if (sname == "conv2d_backward_gw") return (void*)&conv2d_backward_gw;
-    if (sname == "conv2d_backward_gdx") return (void*)&conv2d_backward_gdx;
-    if (sname == "im2col_kernel") return (void*)&im2col_kernel;
-    if (sname == "im2col_batched_kernel") return (void*)&im2col_batched_kernel;
-    if (sname == "im2col_flat_kernel") return (void*)&im2col_flat_kernel;
-    if (sname == "transpose_conv_out_kernel") return (void*)&transpose_conv_out_kernel;
-    if (sname == "transpose_conv_out_inv_kernel") return (void*)&transpose_conv_out_inv_kernel;
-    if (sname == "transpose_conv_out_bias_relu_kernel") return (void*)&transpose_conv_out_bias_relu_kernel;
-    if (sname == "col2im_kernel") return (void*)&col2im_kernel;
-    if (sname == "broadcast_batch_kernel") return (void*)&broadcast_batch_kernel;
-    if (sname == "add_bias_2d") return (void*)&add_bias_2d;
-    if (sname == "conv3d_kernel") return (void*)&conv3d_kernel;
-    if (sname == "conv3d_backward_gb") return (void*)&conv3d_backward_gb;
-    if (sname == "conv3d_backward_gw") return (void*)&conv3d_backward_gw;
-    if (sname == "conv3d_backward_gdx") return (void*)&conv3d_backward_gdx;
+struct KernelNameHash {
+    size_t operator()(const char* s) const {
+        size_t h = 1469598103934665603ull;
+        for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+            h ^= *p;
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+};
+
+struct KernelNameEq {
+    bool operator()(const char* a, const char* b) const {
+        return std::strcmp(a, b) == 0;
+    }
+};
+
+using KernelMap = std::unordered_map<const char*, void*, KernelNameHash, KernelNameEq>;
+
+static const KernelMap& gpu_kernel_map() {
+    static const KernelMap m = [] {
+        KernelMap m;
+        m.reserve(128);
+        m["Add"] = (void*)&elementwise_add;
+        m["elementwise_add"] = (void*)&elementwise_add;
+        m["elementwise_add_inplace"] = (void*)&elementwise_add_inplace;
+        m["elementwise_sub"] = (void*)&elementwise_sub;
+        m["elementwise_mul"] = (void*)&elementwise_mul;
+        m["elementwise_div"] = (void*)&elementwise_div;
+        m["relu_forward"] = (void*)&relu_forward;
+        m["relu_backward_kernel"] = (void*)&relu_backward_kernel;
+        m["sigmoid_forward"] = (void*)&sigmoid_forward;
+        m["sigmoid_backward_kernel"] = (void*)&sigmoid_backward_kernel;
+        m["tanh_forward"] = (void*)&tanh_forward;
+        m["tanh_backward_kernel"] = (void*)&tanh_backward_kernel;
+        m["pow_forward"] = (void*)&pow_forward;
+        m["sqrt_forward"] = (void*)&sqrt_forward;
+        m["exp_forward"] = (void*)&exp_forward;
+        m["log_forward"] = (void*)&log_forward;
+        m["abs_forward"] = (void*)&abs_forward;
+        m["neg_forward"] = (void*)&neg_forward;
+        m["leaky_relu_forward"] = (void*)&leaky_relu_forward;
+        m["leaky_relu_backward_kernel"] = (void*)&leaky_relu_backward_kernel;
+        m["make_contiguous_kernel"] = (void*)&make_contiguous_kernel;
+        m["copy_to_strided_kernel"] = (void*)&copy_to_strided_kernel;
+        m["conv2d_kernel"] = (void*)&conv2d_kernel;
+        m["conv2d_backward_gb"] = (void*)&conv2d_backward_gb;
+        m["conv2d_backward_gw"] = (void*)&conv2d_backward_gw;
+        m["conv2d_backward_gdx"] = (void*)&conv2d_backward_gdx;
+        m["im2col_kernel"] = (void*)&im2col_kernel;
+        m["im2col_batched_kernel"] = (void*)&im2col_batched_kernel;
+        m["im2col_flat_kernel"] = (void*)&im2col_flat_kernel;
+        m["transpose_conv_out_kernel"] = (void*)&transpose_conv_out_kernel;
+        m["transpose_conv_out_inv_kernel"] = (void*)&transpose_conv_out_inv_kernel;
+        m["transpose_conv_out_bias_relu_kernel"] = (void*)&transpose_conv_out_bias_relu_kernel;
+        m["col2im_kernel"] = (void*)&col2im_kernel;
+        m["broadcast_batch_kernel"] = (void*)&broadcast_batch_kernel;
+        m["add_bias_2d"] = (void*)&add_bias_2d;
+        m["conv3d_kernel"] = (void*)&conv3d_kernel;
+        m["conv3d_backward_gb"] = (void*)&conv3d_backward_gb;
+        m["conv3d_backward_gw"] = (void*)&conv3d_backward_gw;
+        m["conv3d_backward_gdx"] = (void*)&conv3d_backward_gdx;
 #ifndef __HIP_PLATFORM_AMD__
-    if (sname == "conv2d_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_cudnn : nullptr;
-    if (sname == "conv2d_backward_data_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_backward_data_cudnn : nullptr;
-    if (sname == "conv2d_backward_filter_cudnn") return g_cudnn_available ? (void*)&gpu_conv2d_backward_filter_cudnn : nullptr;
-    if (sname == "softmax_cudnn") return g_cudnn_available ? (void*)&gpu_softmax_cudnn : nullptr;
-    if (sname == "matmul_ex_cublaslt") return (void*)&gpu_matmul_ex_lt;
+        m["matmul_ex_cublaslt"] = (void*)&gpu_matmul_ex_lt;
+#endif
+        m["maxpool2d_kernel"] = (void*)&maxpool2d_kernel;
+        m["maxpool2d_backward_kernel"] = (void*)&maxpool2d_backward_kernel;
+        m["adaptive_avg_pool2d_forward_kernel"] = (void*)&adaptive_avg_pool2d_forward_kernel;
+        m["adaptive_avg_pool2d_backward_kernel"] = (void*)&adaptive_avg_pool2d_backward_kernel;
+        m["maxpool3d_kernel"] = (void*)&maxpool3d_kernel;
+        m["maxpool3d_backward_kernel"] = (void*)&maxpool3d_backward_kernel;
+        m["softmax_forward_kernel"] = (void*)&softmax_forward_kernel;
+        m["softmax_backward_kernel"] = (void*)&softmax_backward_kernel;
+        m["softmax_fast_kernel"] = (void*)&softmax_fast_kernel;
+        m["layer_norm_forward_kernel"] = (void*)&layer_norm_forward_kernel;
+        m["layer_norm_fast_kernel"] = (void*)&layer_norm_fast_kernel;
+        m["fused_add_layer_norm_forward_kernel"] = (void*)&fused_add_layer_norm_forward_kernel;
+        m["layer_norm_backward_dx_kernel"] = (void*)&layer_norm_backward_dx_kernel;
+        m["layer_norm_backward_dw_kernel"] = (void*)&layer_norm_backward_dw_kernel;
+        m["layer_norm_backward_db_kernel"] = (void*)&layer_norm_backward_db_kernel;
+        m["batch_norm2d_forward_stats_kernel"] = (void*)&batch_norm2d_forward_stats_kernel;
+        m["batch_norm2d_forward_norm_kernel"] = (void*)&batch_norm2d_forward_norm_kernel;
+        m["batch_norm2d_backward_stats_kernel"] = (void*)&batch_norm2d_backward_stats_kernel;
+        m["batch_norm2d_backward_dx_kernel"] = (void*)&batch_norm2d_backward_dx_kernel;
+        m["mse_loss_forward"] = (void*)&mse_loss_forward;
+        m["mse_loss_backward"] = (void*)&mse_loss_backward;
+        m["l1_loss_forward"] = (void*)&l1_loss_forward;
+        m["l1_loss_backward"] = (void*)&l1_loss_backward;
+        m["bce_loss_forward"] = (void*)&bce_loss_forward;
+        m["bce_loss_backward"] = (void*)&bce_loss_backward;
+        m["cross_entropy_loss_forward"] = (void*)&cross_entropy_loss_forward;
+        m["cross_entropy_loss_backward"] = (void*)&cross_entropy_loss_backward;
+        m["fill_zero"] = (void*)&fill_zero;
+        m["sum_backward"] = (void*)&sum_backward;
+        m["fake_quantize_forward"] = (void*)&fake_quantize_forward;
+        m["cast_fp32_to_fp16"] = (void*)&cast_fp32_to_fp16;
+        m["cast_fp16_to_fp32"] = (void*)&cast_fp16_to_fp32;
+        m["cast_fp32_to_bf16"] = (void*)&cast_fp32_to_bf16;
+        m["cast_bf16_to_fp32"] = (void*)&cast_bf16_to_fp32;
+        m["cast_fp32_to_nf4"] = (void*)&cast_fp32_to_nf4;
+        m["cast_nf4_to_fp32"] = (void*)&cast_nf4_to_fp32;
+        m["cast_fp32_to_int8"] = (void*)&cast_fp32_to_int8;
+        m["cast_int8_to_fp32"] = (void*)&cast_int8_to_fp32;
+        m["cast_fp32_to_int4"] = (void*)&cast_fp32_to_int4;
+        m["cast_int4_to_fp32"] = (void*)&cast_int4_to_fp32;
+        m["cast_fp32_to_fp8_e4m3"] = (void*)&cast_fp32_to_fp8_e4m3;
+        m["cast_fp8_e4m3_to_fp32"] = (void*)&cast_fp8_e4m3_to_fp32;
+        m["cast_fp32_to_fp8_e5m2"] = (void*)&cast_fp32_to_fp8_e5m2;
+        m["cast_fp8_e5m2_to_fp32"] = (void*)&cast_fp8_e5m2_to_fp32;
+        m["embedding_forward"] = (void*)&embedding_forward;
+        m["embedding_backward"] = (void*)&embedding_backward;
+        m["generate_dropout_mask"] = (void*)&generate_dropout_mask;
+        m["sgd_step_kernel"] = (void*)&sgd_step_kernel;
+        m["rmsprop_step_kernel"] = (void*)&rmsprop_step_kernel;
+        m["adam_step_kernel"] = (void*)&adam_step_kernel;
+        m["adamw_step_kernel"] = (void*)&adamw_step_kernel;
+        m["gelu_forward_kernel"] = (void*)&gelu_forward_kernel;
+        m["gelu_backward_kernel"] = (void*)&gelu_backward_kernel;
+        m["reduce_broadcast_prepended"] = (void*)&reduce_broadcast_prepended;
+        m["reduce_broadcast_dim"] = (void*)&reduce_broadcast_dim;
+        m["elementwise_broadcast_add"] = (void*)&elementwise_broadcast_add;
+        m["elementwise_broadcast_sub"] = (void*)&elementwise_broadcast_sub;
+        m["elementwise_broadcast_mul"] = (void*)&elementwise_broadcast_mul;
+        m["elementwise_broadcast_div"] = (void*)&elementwise_broadcast_div;
+        m["rope_forward"] = (void*)&rope_forward;
+        m["rope_backward"] = (void*)&rope_backward;
+        m["paged_attention_forward"] = (void*)&paged_attention_forward;
+        m["w8a8_matmul_kernel"] = (void*)&w8a8_matmul_kernel;
+        m["gpu_set_tf32_enabled"] = (void*)&gpu_set_tf32_enabled;
+        m["gpu_is_tf32_enabled"] = (void*)&gpu_is_tf32_enabled;
+        return m;
+    }();
+    return m;
+}
+
+extern "C" void* gpu_get_kernel(const char* name) {
+    if (!name) return nullptr;
+#ifndef __HIP_PLATFORM_AMD__
+    if (std::strcmp(name, "conv2d_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_cudnn : nullptr;
+    if (std::strcmp(name, "conv2d_backward_data_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_data_cudnn : nullptr;
+    if (std::strcmp(name, "conv2d_backward_filter_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_filter_cudnn : nullptr;
+    if (std::strcmp(name, "softmax_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_softmax_cudnn : nullptr;
 #endif
 #ifdef USE_MIOPEN
-    if (sname == "conv2d_miopen") return (void*)&gpu_conv2d_miopen;
-    if (sname == "softmax_miopen") return (void*)&gpu_softmax_miopen;
+    if (std::strcmp(name, "conv2d_miopen") == 0) return (void*)&gpu_conv2d_miopen;
+    if (std::strcmp(name, "softmax_miopen") == 0) return (void*)&gpu_softmax_miopen;
 #endif
-    if (sname == "maxpool2d_kernel") return (void*)&maxpool2d_kernel;
-    if (sname == "maxpool2d_backward_kernel") return (void*)&maxpool2d_backward_kernel;
-    if (sname == "adaptive_avg_pool2d_forward_kernel") return (void*)&adaptive_avg_pool2d_forward_kernel;
-    if (sname == "adaptive_avg_pool2d_backward_kernel") return (void*)&adaptive_avg_pool2d_backward_kernel;
-    if (sname == "maxpool3d_kernel") return (void*)&maxpool3d_kernel;
-    if (sname == "maxpool3d_backward_kernel") return (void*)&maxpool3d_backward_kernel;
-    if (sname == "softmax_forward_kernel") return (void*)&softmax_forward_kernel;
-    if (sname == "softmax_backward_kernel") return (void*)&softmax_backward_kernel;
-    if (sname == "softmax_fast_kernel") return (void*)&softmax_fast_kernel;
-    if (sname == "layer_norm_forward_kernel") return (void*)&layer_norm_forward_kernel;
-    if (sname == "layer_norm_fast_kernel") return (void*)&layer_norm_fast_kernel;
-    if (sname == "fused_add_layer_norm_forward_kernel") return (void*)&fused_add_layer_norm_forward_kernel;
-    if (sname == "layer_norm_backward_dx_kernel") return (void*)&layer_norm_backward_dx_kernel;
-    if (sname == "layer_norm_backward_dw_kernel") return (void*)&layer_norm_backward_dw_kernel;
-    if (sname == "layer_norm_backward_db_kernel") return (void*)&layer_norm_backward_db_kernel;
-    if (sname == "batch_norm2d_forward_stats_kernel") return (void*)&batch_norm2d_forward_stats_kernel;
-    if (sname == "batch_norm2d_forward_norm_kernel") return (void*)&batch_norm2d_forward_norm_kernel;
-    if (sname == "batch_norm2d_backward_stats_kernel") return (void*)&batch_norm2d_backward_stats_kernel;
-    if (sname == "batch_norm2d_backward_dx_kernel") return (void*)&batch_norm2d_backward_dx_kernel;
-    if (sname == "mse_loss_forward") return (void*)&mse_loss_forward;
-    if (sname == "mse_loss_backward") return (void*)&mse_loss_backward;
-    if (sname == "l1_loss_forward") return (void*)&l1_loss_forward;
-    if (sname == "l1_loss_backward") return (void*)&l1_loss_backward;
-    if (sname == "bce_loss_forward") return (void*)&bce_loss_forward;
-    if (sname == "bce_loss_backward") return (void*)&bce_loss_backward;
-    if (sname == "cross_entropy_loss_forward") return (void*)&cross_entropy_loss_forward;
-    if (sname == "cross_entropy_loss_backward") return (void*)&cross_entropy_loss_backward;
-    if (sname == "fill_zero") return (void*)&fill_zero;
-    if (sname == "sum_backward") return (void*)&sum_backward;
-    if (sname == "fake_quantize_forward") return (void*)&fake_quantize_forward;
-    if (sname == "cast_fp32_to_fp16") return (void*)&cast_fp32_to_fp16;
-    if (sname == "cast_fp16_to_fp32") return (void*)&cast_fp16_to_fp32;
-    if (sname == "cast_fp32_to_bf16") return (void*)&cast_fp32_to_bf16;
-    if (sname == "cast_bf16_to_fp32") return (void*)&cast_bf16_to_fp32;
-    if (sname == "cast_fp32_to_nf4") return (void*)&cast_fp32_to_nf4;
-    if (sname == "cast_nf4_to_fp32") return (void*)&cast_nf4_to_fp32;
-    if (sname == "cast_fp32_to_int8") return (void*)&cast_fp32_to_int8;
-    if (sname == "cast_int8_to_fp32") return (void*)&cast_int8_to_fp32;
-    if (sname == "cast_fp32_to_int4") return (void*)&cast_fp32_to_int4;
-    if (sname == "cast_int4_to_fp32") return (void*)&cast_int4_to_fp32;
-    if (sname == "cast_fp32_to_fp8_e4m3") return (void*)&cast_fp32_to_fp8_e4m3;
-    if (sname == "cast_fp8_e4m3_to_fp32") return (void*)&cast_fp8_e4m3_to_fp32;
-    if (sname == "cast_fp32_to_fp8_e5m2") return (void*)&cast_fp32_to_fp8_e5m2;
-    if (sname == "cast_fp8_e5m2_to_fp32") return (void*)&cast_fp8_e5m2_to_fp32;
-    if (sname == "embedding_forward") return (void*)&embedding_forward;
-    if (sname == "embedding_backward") return (void*)&embedding_backward;
-    if (sname == "generate_dropout_mask") return (void*)&generate_dropout_mask;
-    if (sname == "sgd_step_kernel") return (void*)&sgd_step_kernel;
-    if (sname == "rmsprop_step_kernel") return (void*)&rmsprop_step_kernel;
-    if (sname == "adam_step_kernel") return (void*)&adam_step_kernel;
-    if (sname == "adamw_step_kernel") return (void*)&adamw_step_kernel;
-    if (sname == "gelu_forward_kernel") return (void*)&gelu_forward_kernel;
-    if (sname == "gelu_backward_kernel") return (void*)&gelu_backward_kernel;
-    if (sname == "reduce_broadcast_prepended") return (void*)&reduce_broadcast_prepended;
-    if (sname == "reduce_broadcast_dim") return (void*)&reduce_broadcast_dim;
-    if (sname == "elementwise_broadcast_add") return (void*)&elementwise_broadcast_add;
-    if (sname == "elementwise_broadcast_sub") return (void*)&elementwise_broadcast_sub;
-    if (sname == "elementwise_broadcast_mul") return (void*)&elementwise_broadcast_mul;
-    if (sname == "elementwise_broadcast_div") return (void*)&elementwise_broadcast_div;
-    if (sname == "rope_forward") return (void*)&rope_forward;
-    if (sname == "rope_backward") return (void*)&rope_backward;
-    if (sname == "paged_attention_forward") return (void*)&paged_attention_forward;
-    if (sname == "w8a8_matmul_kernel") return (void*)&w8a8_matmul_kernel;
-    if (sname == "gpu_set_tf32_enabled") return (void*)&gpu_set_tf32_enabled;
-    if (sname == "gpu_is_tf32_enabled") return (void*)&gpu_is_tf32_enabled;
-    return nullptr;
+    const KernelMap& m = gpu_kernel_map();
+    auto it = m.find(name);
+    return it != m.end() ? it->second : nullptr;
 }
 
 extern "C" void* gpu_compile_kernel(const char* source, const char* name) {
