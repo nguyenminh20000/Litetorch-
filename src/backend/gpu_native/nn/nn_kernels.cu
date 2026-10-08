@@ -73,6 +73,36 @@ extern "C" void gpu_conv2d_cudnn(
     }
 }
 
+extern "C" void gpu_conv2d_backward_data_cudnn(
+    const float* gout, int gout_off,
+    const float* weight, int w_off,
+    float* gdx, int gdx_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding) {
+    lt_cudnnHandle_t handle = get_cudnn_handle();
+    if (!handle) return;
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs(key);
+    float alpha = 1.0f, beta = 0.0f;
+    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, 0, nullptr, 0, &beta, d.xDesc, gdx + gdx_off);
+}
+
+extern "C" void gpu_conv2d_backward_filter_cudnn(
+    const float* gout, int gout_off,
+    const float* input, int in_off,
+    float* gw, int gw_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding) {
+    lt_cudnnHandle_t handle = get_cudnn_handle();
+    if (!handle) return;
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs(key);
+    float alpha = 1.0f, beta = 0.0f;
+    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, 0, nullptr, 0, &beta, d.wDesc, gw + gw_off);
+}
+
 extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
     lt_cudnnHandle_t handle = get_cudnn_handle();
     if (!handle) return;

@@ -90,6 +90,45 @@ public:
 
         if (input_c->device.type == DeviceType::GPU) {
             auto native = BackendDispatcher::get().get_backend();
+            typedef void (*Conv2dBwdDataCudnnFn)(
+                const float*, int, const float*, int, float*, int,
+                int, int, int, int, int, int, int, int, int, int, int);
+            typedef void (*Conv2dBwdFilterCudnnFn)(
+                const float*, int, const float*, int, float*, int,
+                int, int, int, int, int, int, int, int, int, int, int);
+            Conv2dBwdDataCudnnFn cudnn_bwd_data = nullptr;
+            Conv2dBwdFilterCudnnFn cudnn_bwd_filter = nullptr;
+            if (native && native->is_available() && !std::getenv("LITETORCH_NO_CUDNN")) {
+                cudnn_bwd_data = reinterpret_cast<Conv2dBwdDataCudnnFn>(
+                    native->get_kernel("", "", "conv2d_backward_data_cudnn"));
+                cudnn_bwd_filter = reinterpret_cast<Conv2dBwdFilterCudnnFn>(
+                    native->get_kernel("", "", "conv2d_backward_filter_cudnn"));
+            }
+            if (cudnn_bwd_data && cudnn_bwd_filter) {
+                cudnn_bwd_filter(
+                    static_cast<const float*>(gout_c->gpu_data()), gout_c->offset,
+                    static_cast<const float*>(input_c->gpu_data()), input_c->offset,
+                    static_cast<float*>(grad_weight->gpu_data()), grad_weight->offset,
+                    N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+                cudnn_bwd_data(
+                    static_cast<const float*>(gout_c->gpu_data()), gout_c->offset,
+                    static_cast<const float*>(weight_c->gpu_data()), weight_c->offset,
+                    static_cast<float*>(grad_input->gpu_data()), grad_input->offset,
+                    N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+                if (bias) {
+                    auto gb_k = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                    if (gb_k) {
+                        cl_mem gout_mem = gout_c->gpu_data();
+                        int gout_off = gout_c->offset;
+                        cl_mem gb_mem = grad_bias->gpu_data();
+                        int gb_off = grad_bias->offset;
+                        int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
+                        CLBackend::get().launch(gb_k, {(size_t)C_out}, {},
+                            {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_v, &co_v, &ho_v, &wo_v},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                    }
+                }
+            } else {
             bool native_gemm = native && native->is_available();
             auto matmul_k = CLBackend::get().get_kernel(KernelID::MatMul);
             auto transpose_k = CLBackend::get().get_kernel(KernelID::Transpose);
@@ -271,6 +310,7 @@ public:
                         {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
+            }
             }
         } else {
             float* in_ptr = input_c->data_ptr();
