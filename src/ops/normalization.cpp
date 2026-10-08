@@ -12,6 +12,11 @@ namespace litetorch {
 extern const std::string litetorch_kernels_src;
 
 namespace {
+template <KernelID ID>
+inline cl_kernel cached_kernel() {
+    static cl_kernel k = CLBackend::get().get_kernel(ID);
+    return k;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -66,7 +71,7 @@ public:
                               
         if (input_c->device.type == DeviceType::GPU) {
             {
-                auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormBackwardDx);
+                auto kernel = cached_kernel<KernelID::LayerNormBackwardDx>();
                 cl_mem in_mem = input_c->gpu_data();
                 int in_off = input_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
@@ -88,7 +93,7 @@ public:
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
             if (grad_weight) {
-                auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormBackwardDw);
+                auto kernel = cached_kernel<KernelID::LayerNormBackwardDw>();
                 cl_mem in_mem = input_c->gpu_data();
                 int in_off = input_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
@@ -107,7 +112,7 @@ public:
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
             if (grad_bias) {
-                auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormBackwardDb);
+                auto kernel = cached_kernel<KernelID::LayerNormBackwardDb>();
                 cl_mem gout_mem = gout_c->gpu_data();
                 int gout_off = gout_c->offset;
                 cl_mem gb_mem = grad_bias->gpu_data();
@@ -244,7 +249,7 @@ public:
                                
         if (input_c->device.type == DeviceType::GPU) {
             {
-                auto kernel = CLBackend::get().get_kernel(KernelID::BatchNorm2dBackwardStats);
+                auto kernel = cached_kernel<KernelID::BatchNorm2dBackwardStats>();
                 cl_mem in_mem = input_c->gpu_data();
                 int in_off = input_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
@@ -268,7 +273,7 @@ public:
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
             {
-                auto kernel = CLBackend::get().get_kernel(KernelID::BatchNorm2dBackwardDx);
+                auto kernel = cached_kernel<KernelID::BatchNorm2dBackwardDx>();
                 cl_mem in_mem = input_c->gpu_data();
                 int in_off = input_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
@@ -369,10 +374,10 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
     auto save_var = Tensor::create({N}, input_c->device, false, DataType::FP32);
     
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::LayerNormFastForward);
+        auto kernel = cached_kernel<KernelID::LayerNormFastForward>();
         size_t launch_n = static_cast<size_t>(N) * 256;
         if (!kernel) {
-            kernel = CLBackend::get().get_kernel(KernelID::LayerNormForward);
+            kernel = cached_kernel<KernelID::LayerNormForward>();
             launch_n = static_cast<size_t>(N);
         }
         cl_mem in_mem = input_c->gpu_data();
@@ -477,7 +482,7 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
     auto save_var = Tensor::create({N}, input_c->device, false, DataType::FP32);
     
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::FusedAddLayerNormForward);
+        auto kernel = cached_kernel<KernelID::FusedAddLayerNormForward>();
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem res_mem = residual_c->gpu_data();
@@ -590,7 +595,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
 
     if (input_c->device.type == DeviceType::GPU) {
         {
-            auto kernel = CLBackend::get().get_kernel(KernelID::BatchNorm2dForwardStats);
+            auto kernel = cached_kernel<KernelID::BatchNorm2dForwardStats>();
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem rm_mem = running_mean_c->gpu_data();
@@ -614,7 +619,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(float)});
         }
         {
-            auto kernel = CLBackend::get().get_kernel(KernelID::BatchNorm2dForwardNorm);
+            auto kernel = cached_kernel<KernelID::BatchNorm2dForwardNorm>();
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem sm_mem = save_mean->gpu_data();

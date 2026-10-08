@@ -11,6 +11,11 @@ namespace litetorch {
 extern const std::string litetorch_kernels_src;
 
 namespace {
+template <KernelID ID>
+inline cl_kernel cached_kernel() {
+    static cl_kernel k = CLBackend::get().get_kernel(ID);
+    return k;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -54,13 +59,13 @@ public:
         StorageUseGuard guard({input_c->storage, ind_c->storage, gout_c->storage, grad_input->storage});
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
+            auto zero_kernel = cached_kernel<KernelID::FillZero>();
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
             CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
-            auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool2dBackward);
+            auto kernel = cached_kernel<KernelID::MaxPool2dBackward>();
             cl_mem ind_mem = ind_c->gpu_data();
             cl_mem gout_mem = gout_c->gpu_data();
             int ind_off = ind_c->offset;
@@ -126,13 +131,13 @@ public:
         StorageUseGuard guard({input_c->storage, ind_c->storage, gout_c->storage, grad_input->storage});
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
+            auto zero_kernel = cached_kernel<KernelID::FillZero>();
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
             CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
-            auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool3dBackward);
+            auto kernel = cached_kernel<KernelID::MaxPool3dBackward>();
             cl_mem ind_mem = ind_c->gpu_data();
             cl_mem gout_mem = gout_c->gpu_data();
             int ind_off = ind_c->offset;
@@ -187,13 +192,13 @@ public:
         int OW = gout_c->shape[3];
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto zero_kernel = CLBackend::get().get_kernel(KernelID::FillZero);
+            auto zero_kernel = cached_kernel<KernelID::FillZero>();
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
             CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
-            auto kernel = CLBackend::get().get_kernel(KernelID::AdaptiveAvgPool2dBackward);
+            auto kernel = cached_kernel<KernelID::AdaptiveAvgPool2dBackward>();
             cl_mem gout_mem = gout_c->gpu_data();
             int gout_off = gout_c->offset;
 
@@ -264,7 +269,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
     StorageUseGuard guard({input_c->storage, out->storage, save_indices->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool2dForward);
+        auto kernel = cached_kernel<KernelID::MaxPool2dForward>();
         cl_mem in_mem = input_c->gpu_data();
         cl_mem out_mem = out->gpu_data();
         cl_mem ind_mem = save_indices->gpu_data();
@@ -350,7 +355,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
     StorageUseGuard guard({input_c->storage, out->storage, save_indices->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::MaxPool3dForward);
+        auto kernel = cached_kernel<KernelID::MaxPool3dForward>();
         cl_mem in_mem = input_c->gpu_data();
         cl_mem out_mem = out->gpu_data();
         cl_mem ind_mem = save_indices->gpu_data();
@@ -435,7 +440,7 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
     StorageUseGuard guard({input_c->storage, out->storage});
     
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::AdaptiveAvgPool2dForward);
+        auto kernel = cached_kernel<KernelID::AdaptiveAvgPool2dForward>();
         cl_mem in_mem = input_c->gpu_data();
         cl_mem out_mem = out->gpu_data();
         int in_off = input_c->offset;

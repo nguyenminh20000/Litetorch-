@@ -17,6 +17,24 @@ inline bool cudnn_disabled() {
     static const bool disabled = std::getenv("LITETORCH_NO_CUDNN") != nullptr;
     return disabled;
 }
+template <KernelID ID>
+inline cl_kernel cached_kernel() {
+    static cl_kernel k = CLBackend::get().get_kernel(ID);
+    return k;
+}
+template <typename Fn>
+inline Fn cached_native_kernel(const char* name) {
+    static bool checked = false;
+    static void* k = nullptr;
+    if (!checked) {
+        checked = true;
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            k = native->get_kernel("", "", name);
+        }
+    }
+    return reinterpret_cast<Fn>(k);
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -102,11 +120,9 @@ public:
                 int, int, int, int, int, int, int, int, int, int, int);
             Conv2dBwdDataCudnnFn cudnn_bwd_data = nullptr;
             Conv2dBwdFilterCudnnFn cudnn_bwd_filter = nullptr;
-            if (native && native->is_available() && !cudnn_disabled()) {
-                cudnn_bwd_data = reinterpret_cast<Conv2dBwdDataCudnnFn>(
-                    native->get_kernel("", "", "conv2d_backward_data_cudnn"));
-                cudnn_bwd_filter = reinterpret_cast<Conv2dBwdFilterCudnnFn>(
-                    native->get_kernel("", "", "conv2d_backward_filter_cudnn"));
+            if (!cudnn_disabled()) {
+                cudnn_bwd_data = cached_native_kernel<Conv2dBwdDataCudnnFn>("conv2d_backward_data_cudnn");
+                cudnn_bwd_filter = cached_native_kernel<Conv2dBwdFilterCudnnFn>("conv2d_backward_filter_cudnn");
             }
             if (cudnn_bwd_data && cudnn_bwd_filter) {
                 cudnn_bwd_filter(
@@ -120,7 +136,7 @@ public:
                     static_cast<float*>(grad_input->gpu_data()), grad_input->offset,
                     N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
                 if (bias) {
-                    auto gb_k = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                    auto gb_k = cached_kernel<KernelID::Conv2dBackwardBias>();
                     if (gb_k) {
                         cl_mem gout_mem = gout_c->gpu_data();
                         int gout_off = gout_c->offset;
@@ -134,12 +150,12 @@ public:
                 }
             } else {
             bool native_gemm = native && native->is_available();
-            auto matmul_k = CLBackend::get().get_kernel(KernelID::MatMul);
-            auto transpose_k = CLBackend::get().get_kernel(KernelID::Transpose);
+            auto matmul_k = cached_kernel<KernelID::MatMul>();
+            auto transpose_k = cached_kernel<KernelID::Transpose>();
             bool use_gemm = native_gemm || (matmul_k && transpose_k);
-            auto im2col_k = CLBackend::get().get_kernel(KernelID::Im2colFlat);
-            auto transp_inv_k = CLBackend::get().get_kernel(KernelID::TransposeConvOutInv);
-            auto col2im_k = CLBackend::get().get_kernel(KernelID::Col2Im);
+            auto im2col_k = cached_kernel<KernelID::Im2colFlat>();
+            auto transp_inv_k = cached_kernel<KernelID::TransposeConvOutInv>();
+            auto col2im_k = cached_kernel<KernelID::Col2Im>();
             if (use_gemm && im2col_k && transp_inv_k && col2im_k) {
                 int64_t K = (int64_t)C_in * KH * KW;
                 int64_t HW_out = (int64_t)H_out * W_out;
@@ -263,7 +279,7 @@ public:
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
                 if (bias) {
-                    auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                    auto kernel_gb = cached_kernel<KernelID::Conv2dBackwardBias>();
                     if (kernel_gb) {
                         cl_mem gb_mem = grad_bias->gpu_data();
                         int gb_off = grad_bias->offset;
@@ -284,7 +300,7 @@ public:
                 cl_mem gw_mem = grad_weight->gpu_data();
                 int gw_off = grad_weight->offset;
                 if (bias) {
-                    auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv2dBackwardBias);
+                    auto kernel_gb = cached_kernel<KernelID::Conv2dBackwardBias>();
                     if (!kernel_gb) {
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardBias kernel not available");
                     }
@@ -295,7 +311,7 @@ public:
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
                 {
-                    auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv2dBackwardWeight);
+                    auto kernel_gw = cached_kernel<KernelID::Conv2dBackwardWeight>();
                     if (!kernel_gw) {
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
                     }
@@ -305,7 +321,7 @@ public:
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
                 {
-                    auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv2dBackwardInput);
+                    auto kernel_gdx = cached_kernel<KernelID::Conv2dBackwardInput>();
                     if (!kernel_gdx) {
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
                     }
@@ -458,7 +474,7 @@ public:
             int gw_off = grad_weight->offset;
 
             if (bias) {
-                auto kernel_gb = CLBackend::get().get_kernel(KernelID::Conv3dBackwardBias);
+                auto kernel_gb = cached_kernel<KernelID::Conv3dBackwardBias>();
                 if (!kernel_gb) {
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardBias kernel not available");
                 }
@@ -470,7 +486,7 @@ public:
             }
 
             {
-                auto kernel_gw = CLBackend::get().get_kernel(KernelID::Conv3dBackwardWeight);
+                auto kernel_gw = cached_kernel<KernelID::Conv3dBackwardWeight>();
                 if (!kernel_gw) {
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardWeight kernel not available");
                 }
@@ -481,7 +497,7 @@ public:
             }
 
             {
-                auto kernel_gdx = CLBackend::get().get_kernel(KernelID::Conv3dBackwardInput);
+                auto kernel_gdx = cached_kernel<KernelID::Conv3dBackwardInput>();
                 if (!kernel_gdx) {
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardInput kernel not available");
                 }
@@ -640,11 +656,10 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         auto native = BackendDispatcher::get().get_backend();
         typedef void (*Conv2dCudnnFn)(
             const float*, int, const float*, int, const float*, int, int,
-            float*, int, int, int, int, int, int, int, int, int, int, int, int);
+            float*, int, int, int, int, int, int, int, int, int, int, int, int, int);
         Conv2dCudnnFn cudnn_conv2d = nullptr;
-        if (native && native->is_available() && !cudnn_disabled()) {
-            cudnn_conv2d = reinterpret_cast<Conv2dCudnnFn>(
-                native->get_kernel("", "", "conv2d_cudnn"));
+        if (!cudnn_disabled()) {
+            cudnn_conv2d = cached_native_kernel<Conv2dCudnnFn>("conv2d_cudnn");
         }
         if (cudnn_conv2d) {
             cudnn_conv2d(
@@ -653,13 +668,13 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 bias_c ? static_cast<const float*>(bias_c->gpu_data()) : nullptr,
                 bias_c ? bias_c->offset : 0, bias_c ? 1 : 0,
                 static_cast<float*>(out->gpu_data()), out->offset,
-                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding, 0);
             done = true;
         }
-        auto im2col_k = done ? nullptr : CLBackend::get().get_kernel(KernelID::Im2colFlat);
+        auto im2col_k = done ? nullptr : cached_kernel<KernelID::Im2colFlat>();
         void* epilogue_k = nullptr;
-        if (!done && native && native->is_available()) {
-            epilogue_k = native->get_kernel("", "", "transpose_conv_out_bias_relu_kernel");
+        if (!done) {
+            epilogue_k = cached_native_kernel<void*>("transpose_conv_out_bias_relu_kernel");
         }
         if (!done && native && native->is_available() && im2col_k && epilogue_k) {
             int64_t K = (int64_t)C_in * KH * KW;
@@ -704,7 +719,7 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
             done = true;
         }
         if (!done) {
-            auto kernel_conv = CLBackend::get().get_kernel(KernelID::Conv2dForward);
+            auto kernel_conv = cached_kernel<KernelID::Conv2dForward>();
             if (!kernel_conv) {
                 throw std::runtime_error("[litetorch Error] Conv2dForward kernel not available");
             }
@@ -812,7 +827,7 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
         auto bias_c = (bias && bias->is_contiguous()) ? bias : (bias ? bias->contiguous() : nullptr);
-        auto kernel = CLBackend::get().get_kernel(KernelID::Conv3dForward);
+        auto kernel = cached_kernel<KernelID::Conv3dForward>();
         if (!kernel) {
             throw std::runtime_error("[litetorch Error] Conv3dForward kernel not available");
         }

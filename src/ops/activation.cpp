@@ -13,6 +13,11 @@ namespace litetorch {
 extern const std::string litetorch_kernels_src;
 
 namespace {
+template <KernelID ID>
+inline cl_kernel cached_kernel() {
+    static cl_kernel k = CLBackend::get().get_kernel(ID);
+    return k;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -40,7 +45,7 @@ public:
         int size = input_c->numel();
         bool run_gpu = false;
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::ReluBackward);
+            auto kernel = cached_kernel<KernelID::ReluBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = input_c->gpu_data();
@@ -82,7 +87,7 @@ public:
         int size = out_c->numel();
         bool run_gpu = false;
         if (out_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SigmoidBackward);
+            auto kernel = cached_kernel<KernelID::SigmoidBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
@@ -124,7 +129,7 @@ public:
         int size = out_c->numel();
         bool run_gpu = false;
         if (out_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::TanhBackward);
+            auto kernel = cached_kernel<KernelID::TanhBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
@@ -166,7 +171,7 @@ public:
         int size = input_c->numel();
         bool run_gpu = false;
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::LeakyReluBackward);
+            auto kernel = cached_kernel<KernelID::LeakyReluBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = input_c->gpu_data();
@@ -218,7 +223,7 @@ public:
         
         bool run_gpu = false;
         if (out_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SoftmaxBackward);
+            auto kernel = cached_kernel<KernelID::SoftmaxBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
@@ -281,7 +286,7 @@ public:
         
         bool run_gpu = false;
         if (a_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::GeluBackward);
+            auto kernel = cached_kernel<KernelID::GeluBackward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a_c->gpu_data();
@@ -331,7 +336,7 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
 
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::ReLU);
+        auto kernel = cached_kernel<KernelID::ReLU>();
         if (kernel) {
             run_gpu = true;
             int size = out->numel();
@@ -376,7 +381,7 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
 
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::Sigmoid);
+        auto kernel = cached_kernel<KernelID::Sigmoid>();
         if (kernel) {
             run_gpu = true;
             int size = out->numel();
@@ -421,7 +426,7 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
 
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::Tanh);
+        auto kernel = cached_kernel<KernelID::Tanh>();
         if (kernel) {
             run_gpu = true;
             int size = out->numel();
@@ -466,7 +471,7 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
 
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::LeakyReluForward);
+        auto kernel = cached_kernel<KernelID::LeakyReluForward>();
         if (kernel) {
             run_gpu = true;
             int size = out->numel();
@@ -519,7 +524,7 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
         if (inner_size == 1) {
-            auto fast = CLBackend::get().get_kernel(KernelID::SoftmaxFastForward);
+            auto fast = cached_kernel<KernelID::SoftmaxFastForward>();
             if (fast) {
                 run_gpu = true;
                 cl_mem a_mem = a_c->gpu_data();
@@ -534,7 +539,7 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
             }
         }
         if (!run_gpu) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SoftmaxForward);
+            auto kernel = cached_kernel<KernelID::SoftmaxForward>();
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a_c->gpu_data();
@@ -603,7 +608,7 @@ std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
     
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::GELU);
+        auto kernel = cached_kernel<KernelID::GELU>();
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
