@@ -157,7 +157,7 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
                 if (next_node) {
                     auto nit = grads.find(next_node);
                     if (nit == grads.end()) {
-                        grads.emplace(next_node, grad);
+                        grads.emplace(next_node, grad->clone());
                     } else if (create_graph) {
                         nit->second = Ops::add(nit->second, grad);
                     } else {
