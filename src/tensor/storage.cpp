@@ -4,10 +4,6 @@
 #include "litetorch/allocator.h"
 #include "litetorch/backend.h"
 #include <cstring>
-#include <cstdio>
-#include <cstdlib>
-#include <execinfo.h>
-#include <unistd.h>
 
 namespace litetorch {
 
@@ -88,12 +84,6 @@ float* StorageImpl::get_cpu_ptr() {
     if (device.type == DeviceType::GPU && gpu_data) {
         if (!cpu_data) {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
-            if (std::getenv("LITETORCH_TRACE_D2H")) {
-                fprintf(stderr, "[D2H] %zu bytes (%.2f MB)\n", size * element_size(), size * element_size() / 1048576.0);
-                void* bt[32];
-                int n = backtrace(bt, 32);
-                backtrace_symbols_fd(bt, n, STDERR_FILENO);
-            }
             CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
         }
     } else if (device.type == DeviceType::TPU && gpu_data) {
@@ -232,9 +222,6 @@ void StorageImpl::evict_impl() {
 
     if (!cpu_data) {
         cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
-    }
-    if (std::getenv("LITETORCH_TRACE_D2H")) {
-        fprintf(stderr, "[EVICT] %zu bytes (%.2f MB)\n", size * element_size(), size * element_size() / 1048576.0);
     }
     CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
     CLBackend::get().free(gpu_data);
