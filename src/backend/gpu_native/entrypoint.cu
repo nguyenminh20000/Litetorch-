@@ -275,16 +275,29 @@ extern "C" void* gpu_allocate(size_t size) {
         }
     }
     void* ptr = nullptr;
+#ifndef __HIP_PLATFORM_AMD__
+    cudaMallocAsync(&ptr, bucket, g_compute_stream);
+#else
     GPU_API(Malloc)(&ptr, bucket);
+#endif
     if (!ptr) {
         std::lock_guard<std::mutex> lock(pool.mutex_);
         for (auto& kv : pool.free_) {
-            for (void* p : kv.second) GPU_API(Free)(p);
+            for (void* p : kv.second)
+#ifndef __HIP_PLATFORM_AMD__
+                cudaFreeAsync(p, g_compute_stream);
+#else
+                GPU_API(Free)(p);
+#endif
             kv.second.clear();
         }
         pool.cached_bytes_ = 0;
         ptr = nullptr;
+#ifndef __HIP_PLATFORM_AMD__
+        cudaMallocAsync(&ptr, bucket, g_compute_stream);
+#else
         GPU_API(Malloc)(&ptr, bucket);
+#endif
         if (!ptr) return nullptr;
     }
     {
@@ -298,7 +311,12 @@ extern "C" void gpu_empty_cache() {
     auto& pool = gpu_mem_pool();
     std::lock_guard<std::mutex> lock(pool.mutex_);
     for (auto& kv : pool.free_) {
-        for (void* p : kv.second) GPU_API(Free)(p);
+        for (void* p : kv.second)
+#ifndef __HIP_PLATFORM_AMD__
+            cudaFreeAsync(p, g_compute_stream);
+#else
+            GPU_API(Free)(p);
+#endif
         kv.second.clear();
     }
     pool.cached_bytes_ = 0;
@@ -310,13 +328,21 @@ extern "C" void gpu_free(void* ptr) {
     std::lock_guard<std::mutex> lock(pool.mutex_);
     auto it = pool.live_.find(ptr);
     if (it == pool.live_.end()) {
+#ifndef __HIP_PLATFORM_AMD__
+        cudaFreeAsync(ptr, g_compute_stream);
+#else
         GPU_API(Free)(ptr);
+#endif
         return;
     }
     size_t bucket = it->second;
     pool.live_.erase(it);
     if (pool.cached_bytes_ + bucket > gpu_cache_cap_bytes()) {
+#ifndef __HIP_PLATFORM_AMD__
+        cudaFreeAsync(ptr, g_compute_stream);
+#else
         GPU_API(Free)(ptr);
+#endif
         return;
     }
     pool.free_[bucket].push_back(ptr);
