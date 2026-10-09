@@ -426,6 +426,48 @@ __kernel void layer_norm_backward_db_kernel(__global const float* grad_output, i
     }
     grad_bias[gb_off + c] = sum_db;
 }
+inline void atomic_add_f(volatile __global float* addr, float val) {
+    volatile __global int* iaddr = (volatile __global int*)addr;
+    int old = *iaddr;
+    int expected;
+    do {
+        expected = old;
+        old = atom_cmpxchg(iaddr, expected, as_int(val + as_float(expected)));
+    } while (old != expected);
+}
+__kernel void layer_norm_backward_fused_kernel(__global const float* input, int in_off,
+                                            __global const float* grad_output, int gout_off,
+                                            __global const float* weight, int w_off, int has_weight,
+                                            __global float* grad_input, int gin_off,
+                                            __global float* grad_weight, int gw_off, int has_dw,
+                                            __global float* grad_bias, int gb_off, int has_db,
+                                            __global const float* save_mean, int sm_off,
+                                            __global const float* save_var, int sv_off,
+                                            int N, int M) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float mean = save_mean[sm_off + r];
+    float inv_std = save_var[sv_off + r];
+    float sum_dy = 0.0f;
+    float sum_dy_xhat = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        int idx = r * M + c;
+        float dy = grad_output[gout_off + idx];
+        float x_hat = (input[in_off + idx] - mean) * inv_std;
+        float w = has_weight ? weight[w_off + c] : 1.0f;
+        sum_dy += dy * w;
+        sum_dy_xhat += dy * w * x_hat;
+    }
+    for (int c = 0; c < M; ++c) {
+        int idx = r * M + c;
+        float dy = grad_output[gout_off + idx];
+        float x_hat = (input[in_off + idx] - mean) * inv_std;
+        float w = has_weight ? weight[w_off + c] : 1.0f;
+        grad_input[gin_off + idx] = inv_std * (dy * w - (sum_dy + x_hat * sum_dy_xhat) / M);
+        if (has_dw) atomic_add_f(&grad_weight[gw_off + c], dy * x_hat);
+        if (has_db) atomic_add_f(&grad_bias[gb_off + c], dy);
+    }
+}
 __kernel void batch_norm2d_forward_stats_kernel(__global const float* input, int in_off,
                                                 __global float* running_mean, int rm_off,
                                                 __global float* running_var, int rv_off,

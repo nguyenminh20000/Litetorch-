@@ -93,6 +93,7 @@ enum class KernelID {
     LayerNormBackwardDx,
     LayerNormBackwardDw,
     LayerNormBackwardDb,
+    LayerNormBackwardFused,
     BatchNorm2dForwardStats,
     BatchNorm2dForwardNorm,
     BatchNorm2dBackwardStats,

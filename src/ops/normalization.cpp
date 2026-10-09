@@ -70,6 +70,57 @@ public:
                               save_mean_c->storage, save_var_c->storage});
                               
         if (input_c->device.type == DeviceType::GPU) {
+            auto fused_kernel = cached_kernel<KernelID::LayerNormBackwardFused>();
+            auto zero_kernel = cached_kernel<KernelID::FillZero>();
+            bool use_fused = fused_kernel && (zero_kernel || (!grad_weight && !grad_bias));
+            if (use_fused) {
+                if (grad_weight) {
+                    cl_mem gw_mem = grad_weight->gpu_data();
+                    int gw_off = grad_weight->offset;
+                    int gw_size = static_cast<int>(grad_weight->numel());
+                    CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gw_size)}, {},
+                        {&gw_mem, &gw_off, &gw_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+                }
+                if (grad_bias) {
+                    cl_mem gb_mem = grad_bias->gpu_data();
+                    int gb_off = grad_bias->offset;
+                    int gb_size = static_cast<int>(grad_bias->numel());
+                    CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gb_size)}, {},
+                        {&gb_mem, &gb_off, &gb_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+                }
+                cl_mem in_mem = input_c->gpu_data();
+                int in_off = input_c->offset;
+                cl_mem gout_mem = gout_c->gpu_data();
+                int gout_off = gout_c->offset;
+                cl_mem w_mem = weight_c ? weight_c->gpu_data() : cl_mem();
+                int w_off = weight_c ? weight_c->offset : 0;
+                int has_weight = weight_c ? 1 : 0;
+                cl_mem gin_mem = grad_input->gpu_data();
+                int gin_off = grad_input->offset;
+                cl_mem gw_mem = grad_weight ? grad_weight->gpu_data() : cl_mem();
+                int gw_off = grad_weight ? grad_weight->offset : 0;
+                int has_dw = grad_weight ? 1 : 0;
+                cl_mem gb_mem = grad_bias ? grad_bias->gpu_data() : cl_mem();
+                int gb_off = grad_bias ? grad_bias->offset : 0;
+                int has_db = grad_bias ? 1 : 0;
+                cl_mem sm_mem = save_mean_c->gpu_data();
+                int sm_off = save_mean_c->offset;
+                cl_mem sv_mem = save_var_c->gpu_data();
+                int sv_off = save_var_c->offset;
+                int n_val = static_cast<int>(N);
+                int m_val = static_cast<int>(M);
+                CLBackend::get().launch(fused_kernel, {static_cast<size_t>(N)}, {},
+                    {&in_mem, &in_off, &gout_mem, &gout_off, &w_mem, &w_off, &has_weight,
+                     &gin_mem, &gin_off, &gw_mem, &gw_off, &has_dw, &gb_mem, &gb_off, &has_db,
+                     &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                     sizeof(cl_mem), sizeof(int), sizeof(int),
+                     sizeof(cl_mem), sizeof(int),
+                     sizeof(cl_mem), sizeof(int), sizeof(int),
+                     sizeof(cl_mem), sizeof(int), sizeof(int),
+                     sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                     sizeof(int), sizeof(int)});
+            } else {
             {
                 auto kernel = cached_kernel<KernelID::LayerNormBackwardDx>();
                 cl_mem in_mem = input_c->gpu_data();
@@ -122,6 +173,7 @@ public:
                 CLBackend::get().launch(kernel, {static_cast<size_t>(M)}, {},
                     {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_val, &m_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+            }
             }
         } else {
             float* in_ptr = input_c->data_ptr();

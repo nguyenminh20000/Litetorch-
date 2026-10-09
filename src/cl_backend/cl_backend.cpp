@@ -69,6 +69,7 @@ static const char* g_precompiled_kernel_names[] = {
     "layer_norm_backward_dx_kernel",
     "layer_norm_backward_dw_kernel",
     "layer_norm_backward_db_kernel",
+    "layer_norm_backward_fused_kernel",
     "batch_norm2d_forward_stats_kernel",
     "batch_norm2d_forward_norm_kernel",
     "batch_norm2d_backward_stats_kernel",
