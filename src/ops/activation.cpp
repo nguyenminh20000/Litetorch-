@@ -216,6 +216,9 @@ public:
         
         int64_t d_dim = dim;
         if (d_dim < 0) d_dim += out_c->shape.size();
+        if (d_dim < 0 || d_dim >= static_cast<int64_t>(out_c->shape.size())) {
+            throw std::runtime_error("[litetorch Error] Dimension out of range in softmax backward");
+        }
         int64_t dim_size = out_c->shape[d_dim];
         int64_t inner_size = 1;
         for (size_t i = d_dim + 1; i < out_c->shape.size(); ++i) inner_size *= out_c->shape[i];
@@ -515,7 +518,10 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
     StorageUseGuard guard({a_c->storage, out->storage});
     
     int64_t d_dim = dim;
-    if (d_dim < 0) d_dim += a_c->shape.size();
+    if (d_dim < 0) d_dim += static_cast<int64_t>(a_c->shape.size());
+    if (d_dim < 0 || d_dim >= static_cast<int64_t>(a_c->shape.size())) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range in softmax");
+    }
     int64_t dim_size = a_c->shape[d_dim];
     int64_t inner_size = 1;
     for (size_t i = d_dim + 1; i < a_c->shape.size(); ++i) inner_size *= a_c->shape[i];
