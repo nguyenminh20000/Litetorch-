@@ -28,12 +28,10 @@ std::shared_ptr<Tensor> Linear::forward(std::shared_ptr<Tensor> input) {
         w = Ops::mul(w_fp32, scales->view({weight->shape[0], 1}));
     }
     auto w_t = w->transpose(0, 1);
-    auto out = Ops::matmul(input, w_t);
     if (bias) {
-        auto b_view = bias->view({1, bias->shape[0]});
-        out = Ops::add(out, b_view);
+        return Ops::matmul_bias(input, w_t, bias);
     }
-    return out;
+    return Ops::matmul(input, w_t);
 }
 
 std::vector<std::shared_ptr<Tensor>> Linear::parameters() {

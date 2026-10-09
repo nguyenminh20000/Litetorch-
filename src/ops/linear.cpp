@@ -305,6 +305,101 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
     return out;
 }
 
+class MatMulBiasNode : public Node {
+public:
+    MatMulBiasNode() : Node("MatMulBias") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        auto a = saved_tensors[0];
+        auto b = saved_tensors[1];
+        auto bias = saved_tensors[2];
+        std::shared_ptr<Tensor> grad_a = nullptr;
+        std::shared_ptr<Tensor> grad_b = nullptr;
+        std::shared_ptr<Tensor> grad_bias = nullptr;
+        if (inputs.size() > 0 && inputs[0].requires_grad) {
+            int64_t ndim_b = static_cast<int64_t>(b->shape.size());
+            auto b_t = b->transpose(ndim_b - 2, ndim_b - 1);
+            grad_a = Ops::matmul(grad_output, b_t);
+        }
+        if (inputs.size() > 1 && inputs[1].requires_grad) {
+            int64_t ndim_a = static_cast<int64_t>(a->shape.size());
+            auto a_t = a->transpose(ndim_a - 2, ndim_a - 1);
+            grad_b = Ops::matmul(a_t, grad_output);
+            if (grad_b && grad_b->shape != b->shape) {
+                grad_b = Ops::reduce_broadcast(grad_b, b->shape);
+            }
+        }
+        if (inputs.size() > 2 && inputs[2].requires_grad) {
+            grad_bias = Ops::reduce_broadcast(grad_output, bias->shape);
+        }
+        return { grad_a, grad_b, grad_bias };
+    }
+};
+
+std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, std::shared_ptr<Tensor> bias) {
+    if (!bias || a->device.type != DeviceType::GPU || b->device.type != DeviceType::GPU) {
+        auto out = matmul(a, b);
+        if (bias) {
+            auto b_view = bias->view({1, bias->shape[0]});
+            out = Ops::add(out, b_view);
+        }
+        return out;
+    }
+    if (a->device != b->device) {
+        if (a->device.type == DeviceType::GPU) b = b->to(a->device);
+        else a = a->to(b->device);
+    }
+    if (bias->device != a->device) bias = bias->to(a->device);
+    if (a->shape.size() != 2 || b->shape.size() != 2) {
+        auto out = matmul(a, b);
+        auto b_view = bias->view({1, bias->shape[0]});
+        return Ops::add(out, b_view);
+    }
+    if (a->shape[1] != b->shape[0] || bias->shape[0] != b->shape[1]) {
+        throw std::runtime_error("[litetorch Error] Dimension mismatch in matmul_bias");
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto b_c = b->is_contiguous() ? b : b->contiguous();
+    auto bias_c = bias->is_contiguous() ? bias : bias->contiguous();
+    int64_t M = a->shape[0];
+    int64_t K = a->shape[1];
+    int64_t N = b->shape[1];
+    bool b_trans = (b->shape.size() == 2 && b->strides[0] == 1 && b->strides[1] == b->shape[0]);
+    auto b_use = b_trans ? b : b_c;
+    int64_t ldb = b_trans ? b->shape[0] : N;
+    auto out = Tensor::create({M, N}, a->device, false, a->dtype);
+    StorageUseGuard guard({a_c->storage, b_use->storage, bias_c->storage, out->storage});
+    bool run_fused = false;
+    auto native = BackendDispatcher::get().get_backend();
+    if (native && native->is_available() && a->dtype == DataType::FP32 && !cublaslt_disabled()) {
+        typedef void (*MatmulExLtBiasFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
+        MatmulExLtBiasFn matmul_lt_bias = reinterpret_cast<MatmulExLtBiasFn>(native->get_kernel("", "", "matmul_ex_cublaslt_bias"));
+        if (matmul_lt_bias) {
+            matmul_lt_bias(a_c->gpu_data(), a_c->offset, false, K,
+                           b_use->gpu_data(), b_use->offset, b_trans, ldb,
+                           bias_c->gpu_data(), bias_c->offset,
+                           out->gpu_data(), out->offset, M, N, K);
+            run_fused = true;
+        }
+    }
+    if (!run_fused) {
+        NoGradGuard ng;
+        auto mm = matmul(a_c, b_c);
+        auto b_view = bias_c->view({1, N});
+        auto result = Ops::add(mm, b_view);
+        out->copy_(result);
+    }
+    if (a->requires_grad || b->requires_grad || bias->requires_grad) {
+        auto node = std::make_shared<MatMulBiasNode>();
+        node->inputs = { {a, a->requires_grad}, {b, b->requires_grad}, {bias, bias->requires_grad} };
+        node->next_nodes = { a->creator, b->creator, bias->creator };
+        node->saved_tensors = { a, b, bias };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
 std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     if (a->device.type == DeviceType::CPU) {
         if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {

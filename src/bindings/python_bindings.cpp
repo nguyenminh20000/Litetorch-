@@ -269,6 +269,7 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("mul", &Ops::mul);
     ops.def("div", &Ops::div);
     ops.def("matmul", &Ops::matmul);
+    ops.def("matmul_bias", &Ops::matmul_bias, py::arg("a"), py::arg("b"), py::arg("bias"));
     ops.def("bmm", &Ops::bmm);
     ops.def("sum", &Ops::sum);
     ops.def("mean", &Ops::mean);

@@ -427,6 +427,7 @@ static const KernelMap& gpu_kernel_map() {
         m["conv3d_backward_gdx"] = (void*)&conv3d_backward_gdx;
 #ifndef __HIP_PLATFORM_AMD__
         m["matmul_ex_cublaslt"] = (void*)&gpu_matmul_ex_lt;
+        m["matmul_ex_cublaslt_bias"] = (void*)&gpu_matmul_ex_lt_bias;
 #endif
         m["maxpool2d_kernel"] = (void*)&maxpool2d_kernel;
         m["maxpool2d_backward_kernel"] = (void*)&maxpool2d_backward_kernel;
