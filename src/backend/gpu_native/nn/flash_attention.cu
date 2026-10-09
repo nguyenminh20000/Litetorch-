@@ -185,6 +185,102 @@ __global__ void fused_softmax_bwd_half_kernel(const __half* dP, const __half* P,
     }
 }
 
+__global__ void softmax_fwd_warp_kernel(const float* S, float* P, int M, int Tk) {
+    int row = blockIdx.x;
+    if (row >= M) return;
+    const float* s_row = S + row * Tk;
+    float* p_row = P + row * Tk;
+    int lane = threadIdx.x;
+
+    float max_val = -1e37f;
+    for (int i = lane; i < Tk; i += 32) {
+        float val = s_row[i];
+        if (val > max_val) max_val = val;
+    }
+    max_val = warp_reduce_max(max_val);
+
+    float sum_exp = 0.0f;
+    for (int i = lane; i < Tk; i += 32) {
+        float e = expf(s_row[i] - max_val);
+        p_row[i] = e;
+        sum_exp += e;
+    }
+    sum_exp = warp_reduce_sum(sum_exp);
+    float inv_sum = 1.0f / (sum_exp + 1e-6f);
+
+    for (int i = lane; i < Tk; i += 32) {
+        p_row[i] *= inv_sum;
+    }
+}
+
+__global__ void softmax_bwd_warp_kernel(const float* dP, const float* P, float* dS, int M, int Tk, float scale) {
+    int row = blockIdx.x;
+    if (row >= M) return;
+    const float* dp_row = dP + row * Tk;
+    const float* p_row = P + row * Tk;
+    float* ds_row = dS + row * Tk;
+    int lane = threadIdx.x;
+
+    float dot = 0.0f;
+    for (int i = lane; i < Tk; i += 32) {
+        dot += dp_row[i] * p_row[i];
+    }
+    dot = warp_reduce_sum(dot);
+
+    for (int i = lane; i < Tk; i += 32) {
+        ds_row[i] = p_row[i] * (dp_row[i] - dot) * scale;
+    }
+}
+
+__global__ void softmax_fwd_warp_half_kernel(const __half* S, __half* P, int M, int Tk) {
+    int row = blockIdx.x;
+    if (row >= M) return;
+    const __half* s_row = S + row * Tk;
+    __half* p_row = P + row * Tk;
+    int lane = threadIdx.x;
+
+    float max_val = -1e37f;
+    for (int i = lane; i < Tk; i += 32) {
+        float val = __half2float(s_row[i]);
+        if (val > max_val) max_val = val;
+    }
+    max_val = warp_reduce_max(max_val);
+
+    float sum_exp = 0.0f;
+    for (int i = lane; i < Tk; i += 32) {
+        float e = expf(__half2float(s_row[i]) - max_val);
+        p_row[i] = __float2half(e);
+        sum_exp += e;
+    }
+    sum_exp = warp_reduce_sum(sum_exp);
+    float inv_sum = 1.0f / (sum_exp + 1e-6f);
+
+    for (int i = lane; i < Tk; i += 32) {
+        p_row[i] = __float2half(__half2float(p_row[i]) * inv_sum);
+    }
+}
+
+__global__ void softmax_bwd_warp_half_kernel(const __half* dP, const __half* P, __half* dS, int M, int Tk, float scale) {
+    int row = blockIdx.x;
+    if (row >= M) return;
+    const __half* dp_row = dP + row * Tk;
+    const __half* p_row = P + row * Tk;
+    __half* ds_row = dS + row * Tk;
+    int lane = threadIdx.x;
+
+    float dot = 0.0f;
+    for (int i = lane; i < Tk; i += 32) {
+        dot += __half2float(dp_row[i]) * __half2float(p_row[i]);
+    }
+    dot = warp_reduce_sum(dot);
+
+    for (int i = lane; i < Tk; i += 32) {
+        float p_val = __half2float(p_row[i]);
+        float dp_val = __half2float(dp_row[i]);
+        ds_row[i] = __float2half(p_val * (dp_val - dot) * scale);
+    }
+}
+
 static float* g_attn_scratch_s = nullptr;
 static float* g_attn_scratch_p = nullptr;
 static float* g_attn_scratch_dp = nullptr;
@@ -206,6 +302,72 @@ static void ensure_attn_scratch(size_t elements) {
         g_attn_scratch_elements = elements;
     }
 }
+
+static void launch_softmax_fwd(const float* S, float* P, int total_rows, int Tk) {
+    if (Tk <= 32) {
+        softmax_fwd_warp_kernel<<<total_rows, 32, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+    } else {
+        fused_softmax_fwd_kernel<<<total_rows, 256, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+    }
+}
+
+static void launch_softmax_bwd(const float* dP, const float* P, float* dS, int total_rows, int Tk, float scale) {
+    if (Tk <= 32) {
+        softmax_bwd_warp_kernel<<<total_rows, 32, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+    } else {
+        fused_softmax_bwd_kernel<<<total_rows, 256, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+    }
+}
+
+static void launch_softmax_fwd_half(const __half* S, __half* P, int total_rows, int Tk) {
+    if (Tk <= 32) {
+        softmax_fwd_warp_half_kernel<<<total_rows, 32, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+    } else {
+        fused_softmax_fwd_half_kernel<<<total_rows, 256, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+    }
+}
+
+static void launch_softmax_bwd_half(const __half* dP, const __half* P, __half* dS, int total_rows, int Tk, float scale) {
+    if (Tk <= 32) {
+        softmax_bwd_warp_half_kernel<<<total_rows, 32, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+    } else {
+        fused_softmax_bwd_half_kernel<<<total_rows, 256, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+    }
+}
+
+#ifdef __HIP_PLATFORM_AMD__
+static void launch_softmax_fwd_hip(const float* S, float* P, int total_rows, int Tk) {
+    if (Tk <= 32) {
+        hipLaunchKernelGGL(softmax_fwd_warp_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, S, P, total_rows, Tk);
+    } else {
+        hipLaunchKernelGGL(fused_softmax_fwd_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, S, P, total_rows, Tk);
+    }
+}
+
+static void launch_softmax_bwd_hip(const float* dP, const float* P, float* dS, int total_rows, int Tk, float scale) {
+    if (Tk <= 32) {
+        hipLaunchKernelGGL(softmax_bwd_warp_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+    } else {
+        hipLaunchKernelGGL(fused_softmax_bwd_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+    }
+}
+
+static void launch_softmax_fwd_half_hip(const __half* S, __half* P, int total_rows, int Tk) {
+    if (Tk <= 32) {
+        hipLaunchKernelGGL(softmax_fwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, S, P, total_rows, Tk);
+    } else {
+        hipLaunchKernelGGL(fused_softmax_fwd_half_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, S, P, total_rows, Tk);
+    }
+}
+
+static void launch_softmax_bwd_half_hip(const __half* dP, const __half* P, __half* dS, int total_rows, int Tk, float scale) {
+    if (Tk <= 32) {
+        hipLaunchKernelGGL(softmax_bwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+    } else {
+        hipLaunchKernelGGL(fused_softmax_bwd_half_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+    }
+}
+#endif
 
 extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_off,
                                     void *V, int64_t v_off, void *O, int64_t o_off,
@@ -247,9 +409,7 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
                              batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    fused_softmax_fwd_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
+    launch_softmax_fwd(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
 
     float one = 1.0f;
     float zero = 0.0f;
@@ -282,9 +442,7 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
                                   batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    hipLaunchKernelGGL(fused_softmax_fwd_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
+    launch_softmax_fwd_hip(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
 
     float one = 1.0f;
     float zero = 0.0f;
@@ -341,9 +499,7 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
                              batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    fused_softmax_fwd_half_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        s_half, p_half, total_rows, Tk);
+    launch_softmax_fwd_half(s_half, p_half, total_rows, Tk);
 
     const __half one = __float2half(1.0f);
     const __half zero = __float2half(0.0f);
@@ -376,9 +532,7 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
                                   batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    hipLaunchKernelGGL(fused_softmax_fwd_half_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       s_half, p_half, total_rows, Tk);
+    launch_softmax_fwd_half_hip(s_half, p_half, total_rows, Tk);
 
     const __half one = __float2half(1.0f);
     const __half zero = __float2half(0.0f);
@@ -439,9 +593,7 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                              batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    fused_softmax_fwd_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
+    launch_softmax_fwd(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
 
     float one = 1.0f;
     float zero = 0.0f;
@@ -463,8 +615,7 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                              g_attn_scratch_dp, Tk, strideS,
                              batch_count);
 
-    fused_softmax_bwd_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        g_attn_scratch_dp, g_attn_scratch_p, g_attn_scratch_ds, total_rows, Tk, scale);
+    launch_softmax_bwd(g_attn_scratch_dp, g_attn_scratch_p, g_attn_scratch_ds, total_rows, Tk, scale);
 
     cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
                              D, Tq, Tk,
@@ -504,9 +655,7 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                                   batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    hipLaunchKernelGGL(fused_softmax_fwd_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
+    launch_softmax_fwd_hip(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk);
 
     float one = 1.0f;
     float zero = 0.0f;
@@ -528,8 +677,7 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                                   g_attn_scratch_dp, Tk, strideS,
                                   batch_count);
 
-    hipLaunchKernelGGL(fused_softmax_bwd_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       g_attn_scratch_dp, g_attn_scratch_p, g_attn_scratch_ds, total_rows, Tk, scale);
+    launch_softmax_bwd_hip(g_attn_scratch_dp, g_attn_scratch_p, g_attn_scratch_ds, total_rows, Tk, scale);
 
     rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
                                   D, Tq, Tk,
@@ -601,9 +749,7 @@ extern "C" void gpu_flash_attention_backward_half(
                              batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    fused_softmax_fwd_half_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        s_half, p_half, total_rows, Tk);
+    launch_softmax_fwd_half(s_half, p_half, total_rows, Tk);
 
     const __half one = __float2half(1.0f);
     const __half zero = __float2half(0.0f);
@@ -625,8 +771,7 @@ extern "C" void gpu_flash_attention_backward_half(
                              dp_half, Tk, strideS,
                              batch_count);
 
-    fused_softmax_bwd_half_kernel<<<total_rows, block_threads, 0, g_compute_stream>>>(
-        dp_half, p_half, ds_half, total_rows, Tk, scale);
+    launch_softmax_bwd_half(dp_half, p_half, ds_half, total_rows, Tk, scale);
 
     cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
                              D, Tq, Tk,
@@ -666,9 +811,7 @@ extern "C" void gpu_flash_attention_backward_half(
                                   batch_count);
 
     int total_rows = B * H * Tq;
-    int block_threads = 256;
-    hipLaunchKernelGGL(fused_softmax_fwd_half_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       s_half, p_half, total_rows, Tk);
+    launch_softmax_fwd_half_hip(s_half, p_half, total_rows, Tk);
 
     const __half one = __float2half(1.0f);
     const __half zero = __float2half(0.0f);
@@ -690,8 +833,7 @@ extern "C" void gpu_flash_attention_backward_half(
                                   dp_half, Tk, strideS,
                                   batch_count);
 
-    hipLaunchKernelGGL(fused_softmax_bwd_half_kernel, dim3(total_rows), dim3(block_threads), 0, g_compute_stream,
-                       dp_half, p_half, ds_half, total_rows, Tk, scale);
+    launch_softmax_bwd_half_hip(dp_half, p_half, ds_half, total_rows, Tk, scale);
 
     rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
                                   D, Tq, Tk,
