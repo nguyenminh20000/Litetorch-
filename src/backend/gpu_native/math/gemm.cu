@@ -271,7 +271,7 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
             if (best < 0) best = i;
             continue;
         }
-        if (cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
+        if (cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
                            c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
                            ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
             continue;
@@ -280,7 +280,7 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
         bool ok = true;
         for (int r = 0; r < 5; ++r) {
             cudaEventRecord(start, g_compute_stream);
-            if (cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
+            if (cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
                                c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
                                ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
                 ok = false;
@@ -348,7 +348,7 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
         }
     }
     cublasLtMatmulAlgo_t algo{};
-    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, a_ptr, b_ptr, c_ptr, key, &algo);
+    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, b_ptr, a_ptr, c_ptr, key, &algo);
     if (have_algo) {
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
