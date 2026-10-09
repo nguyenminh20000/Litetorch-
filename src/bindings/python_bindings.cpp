@@ -270,7 +270,6 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("div", &Ops::div);
     ops.def("matmul", &Ops::matmul);
     ops.def("matmul_bias", &Ops::matmul_bias, py::arg("a"), py::arg("b"), py::arg("bias"));
-    ops.def("matmul_bias_gelu", &Ops::matmul_bias_gelu, py::arg("a"), py::arg("b"), py::arg("bias"));
     ops.def("bmm", &Ops::bmm);
     ops.def("sum", &Ops::sum);
     ops.def("mean", &Ops::mean);
@@ -290,7 +289,6 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("tanh", &Ops::tanh);
     ops.def("softmax", &Ops::softmax, py::arg("a"), py::arg("dim") = -1);
     ops.def("gelu", &Ops::gelu);
-    ops.def("gelu_exact", &Ops::gelu_exact);
     ops.def("layer_norm", &Ops::layer_norm, py::arg("input"), py::arg("normalized_shape"), py::arg("weight") = nullptr, py::arg("bias") = nullptr, py::arg("eps") = 1e-5f);
     ops.def("fused_add_layernorm", &Ops::fused_add_layernorm, py::arg("input"), py::arg("residual"), py::arg("normalized_shape"), py::arg("weight") = nullptr, py::arg("bias") = nullptr, py::arg("eps") = 1e-5f);
     ops.def("batch_norm2d", &Ops::batch_norm2d, py::arg("input"), py::arg("running_mean"), py::arg("running_var"), py::arg("weight"), py::arg("bias"), py::arg("training"), py::arg("momentum") = 0.1f, py::arg("eps") = 1e-5f);

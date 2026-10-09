@@ -31,8 +31,9 @@ std::shared_ptr<Tensor> TransformerDecoderLayer::forward(std::shared_ptr<Tensor>
         x2 = x1;
     }
 
-    auto ffn1 = linear1->forward_gelu(x2);
-    auto ffn2 = linear2->forward(ffn1);
+    auto ffn1 = linear1->forward(x2);
+    auto act = Ops::gelu(ffn1);
+    auto ffn2 = linear2->forward(act);
     auto out = Ops::fused_add_layernorm(x2, ffn2, norm3->normalized_shape, norm3->weight, norm3->bias, norm3->eps);
 
     return out;

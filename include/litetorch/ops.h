@@ -14,7 +14,6 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
 std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
 std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, std::shared_ptr<Tensor> bias);
-std::shared_ptr<Tensor> matmul_bias_gelu(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, std::shared_ptr<Tensor> bias);
 std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
 std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a);
@@ -50,7 +49,6 @@ std::shared_ptr<Tensor> sin(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim = -1);
 std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a);
-std::shared_ptr<Tensor> gelu_exact(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vector<int64_t>& normalized_shape, std::shared_ptr<Tensor> weight = nullptr, std::shared_ptr<Tensor> bias = nullptr, float eps = 1e-5f);
 std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> residual, const std::vector<int64_t>& normalized_shape, std::shared_ptr<Tensor> weight = nullptr, std::shared_ptr<Tensor> bias = nullptr, float eps = 1e-5f);
 std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int output_height, int output_width);

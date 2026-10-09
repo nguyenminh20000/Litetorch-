@@ -428,9 +428,6 @@ static const KernelMap& gpu_kernel_map() {
 #ifndef __HIP_PLATFORM_AMD__
         m["matmul_ex_cublaslt"] = (void*)&gpu_matmul_ex_lt;
         m["matmul_ex_cublaslt_bias"] = (void*)&gpu_matmul_ex_lt_bias;
-        m["matmul_ex_cublaslt_bias_gelu"] = (void*)&gpu_matmul_ex_lt_bias_gelu;
-        m["gelu_exact_forward"] = (void*)&gpu_gelu_exact_forward;
-        m["gelu_exact_backward"] = (void*)&gpu_gelu_exact_backward;
 #endif
         m["maxpool2d_kernel"] = (void*)&maxpool2d_kernel;
         m["maxpool2d_backward_kernel"] = (void*)&maxpool2d_backward_kernel;
