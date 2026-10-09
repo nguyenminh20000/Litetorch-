@@ -556,6 +556,7 @@ extern "C" void gpu_matmul_ex_lt_bias_gelu(void* A, int64_t a_off, bool trans_a,
         matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(z_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
         gelu_exact_forward_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, z_ptr, (int64_t)0, total);
     } else {
+        gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
         matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
         gelu_exact_forward_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, c_ptr, (int64_t)0, total);
     }
