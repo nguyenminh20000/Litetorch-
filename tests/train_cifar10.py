@@ -13,7 +13,11 @@ import litetorch as lt
 
 DATA_DIR = "/content/data/cifar10"
 WEIGHT_DIR = "/content/weights"
-URL = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
+URLS = [
+    "https://data.brainchip.com/dataset-mirror/cifar10/cifar-10-python.tar.gz",
+    "https://storage.googleapis.com/tensorflow/tf-keras-datasets/cifar-10-batches-py.tar.gz",
+    "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+]
 
 BATCH = 128
 EPOCHS = 2
@@ -26,8 +30,15 @@ def download():
     tgz = os.path.join(DATA_DIR, "cifar-10-python.tar.gz")
     out = os.path.join(DATA_DIR, "cifar-10-batches-py")
     if not os.path.exists(out):
-        print("downloading cifar-10...", flush=True)
-        urllib.request.urlretrieve(URL, tgz)
+        for url in URLS:
+            try:
+                print(f"downloading cifar-10 from {url}...", flush=True)
+                urllib.request.urlretrieve(url, tgz)
+                break
+            except Exception as e:
+                print(f"failed {url}: {e}", flush=True)
+        else:
+            raise RuntimeError("all CIFAR-10 mirrors failed")
         with tarfile.open(tgz) as tf:
             tf.extractall(DATA_DIR)
 
