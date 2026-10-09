@@ -80,14 +80,57 @@ void im2col_cpu(const float* in_data, int C, int H, int W,
 
 class Conv2dNode : public Node {
 public:
-    Conv2dNode(int stride, int padding) : Node("Conv2d"), stride(stride), padding(padding) {}
+    Conv2dNode(int stride, int padding, bool apply_relu = false) : Node("Conv2d"), stride(stride), padding(padding), apply_relu(apply_relu) {}
     int stride;
     int padding;
+    bool apply_relu;
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
-        auto bias = saved_tensors.size() > 2 ? saved_tensors[2] : nullptr;
+        size_t n_saved = saved_tensors.size();
+        size_t n_params = apply_relu ? n_saved - 1 : n_saved;
+        auto bias = n_params > 2 ? saved_tensors[2] : nullptr;
+
+        std::shared_ptr<Tensor> gout = grad_output;
+        std::shared_ptr<Tensor> relu_out_c;
+        std::shared_ptr<Tensor> relu_gout_c;
+        std::shared_ptr<Tensor> relu_masked;
+        if (apply_relu) {
+            auto out = saved_tensors.back();
+            relu_out_c = out->is_contiguous() ? out : out->contiguous();
+            relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
+            relu_masked = Tensor::create(relu_gout_c->shape, relu_gout_c->device);
+            int rsize = relu_out_c->numel();
+            bool run_gpu = false;
+            if (relu_out_c->device.type == DeviceType::GPU) {
+                auto relu_bwd_k = cached_kernel<KernelID::ReluBackward>();
+                if (relu_bwd_k) {
+                    run_gpu = true;
+                    cl_mem in_mem = relu_out_c->gpu_data();
+                    int in_off = relu_out_c->offset;
+                    cl_mem gout_mem = relu_gout_c->gpu_data();
+                    int gout_off = relu_gout_c->offset;
+                    cl_mem gin_mem = relu_masked->gpu_data();
+                    int gin_off = relu_masked->offset;
+                    CLBackend::get().launch(relu_bwd_k, {static_cast<size_t>(rsize)}, {},
+                        {&in_mem, &in_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &rsize},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                }
+            }
+            if (!run_gpu) {
+                const float* o_ptr = relu_out_c->data_ptr();
+                const float* g_ptr = relu_gout_c->data_ptr();
+                float* m_ptr = relu_masked->data_ptr();
+                ThreadPool::get().parallel_for(0, rsize, [&](int64_t i) {
+                    m_ptr[i] = o_ptr[i] > 0.0f ? g_ptr[i] : 0.0f;
+                });
+                if (relu_masked->device.type == DeviceType::GPU) {
+                    CLBackend::get().write(relu_masked->gpu_data(), rsize * sizeof(float), m_ptr);
+                }
+            }
+            gout = relu_masked;
+        }
 
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
@@ -113,7 +156,9 @@ public:
         int W_out = gout_c->shape[3];
 
         StorageUseGuard guard({input_c->storage, weight_c->storage, bias ? bias->storage : nullptr,
-                              gout_c->storage, grad_input->storage, grad_weight->storage, grad_bias ? grad_bias->storage : nullptr});
+                              gout_c->storage, grad_input->storage, grad_weight->storage, grad_bias ? grad_bias->storage : nullptr,
+                              relu_out_c ? relu_out_c->storage : nullptr, relu_gout_c ? relu_gout_c->storage : nullptr,
+                              relu_masked ? relu_masked->storage : nullptr});
 
         if (input_c->device.type == DeviceType::GPU) {
             auto native = BackendDispatcher::get().get_backend();
@@ -622,7 +667,7 @@ public:
 
 namespace Ops {
 
-std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding) {
+static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding, bool apply_relu) {
     if (input->device != weight->device) {
         if (input->device.type == DeviceType::GPU) weight = weight->to(input->device);
         else input = input->to(weight->device);
@@ -673,7 +718,7 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 bias_c ? static_cast<const float*>(bias_c->gpu_data()) : nullptr,
                 bias_c ? bias_c->offset : 0, bias_c ? 1 : 0,
                 static_cast<float*>(out->gpu_data()), out->offset,
-                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding, 0);
+                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding, apply_relu ? 1 : 0);
             done = true;
         }
         auto im2col_k = done ? nullptr : cached_kernel<KernelID::Im2colFlat>();
@@ -712,13 +757,13 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 cl_mem b_mem = bias_c ? bias_c->gpu_data() : nullptr;
                 int b_off = bias_c ? bias_c->offset : 0;
                 int has_bias = bias_c ? 1 : 0;
-                int apply_relu = 0;
+                int fuse_relu = apply_relu ? 1 : 0;
                 cl_mem out_mem = out->gpu_data();
                 int out_off = out->offset;
                 int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
                 size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
                 CLBackend::get().launch(epilogue_k, {total}, {},
-                    {&tmp_mem, &tmp_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &apply_relu, &n_v, &co_v, &ho_v, &wo_v},
+                    {&tmp_mem, &tmp_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &fuse_relu, &n_v, &co_v, &ho_v, &wo_v},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
             done = true;
@@ -745,6 +790,17 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                      &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),
                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            }
+            if (apply_relu) {
+                auto relu_k = cached_kernel<KernelID::ReLU>();
+                if (relu_k) {
+                    int rsize = N * C_out * H_out * W_out;
+                    cl_mem rm_mem = out->gpu_data();
+                    int rm_off = out->offset;
+                    CLBackend::get().launch(relu_k, {static_cast<size_t>(rsize)}, {},
+                        {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                }
             }
         }
     } else {
@@ -777,10 +833,17 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
                 }
             });
         }
+
+        if (apply_relu) {
+            int rtotal = N * C_out * H_out * W_out;
+            ThreadPool::get().parallel_for(0, rtotal, [&](int64_t i) {
+                if (out_ptr[i] < 0.0f) out_ptr[i] = 0.0f;
+            });
+        }
     }
 
     if (input->requires_grad || weight->requires_grad || (bias && bias->requires_grad)) {
-        auto node = std::make_shared<Conv2dNode>(stride, padding);
+        auto node = std::make_shared<Conv2dNode>(stride, padding, apply_relu);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
         node->saved_tensors = { input, weight };
@@ -789,11 +852,26 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
             node->next_nodes.push_back(bias->creator);
             node->saved_tensors.push_back(bias);
         }
+        if (apply_relu) {
+            node->saved_tensors.push_back(out);
+        }
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
     }
     return out;
+}
+
+std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding) {
+    return conv2d_with_relu(input, weight, bias, stride, padding, false);
+}
+
+std::shared_ptr<Tensor> conv2d_relu(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding) {
+    if (!bias) {
+        auto out = conv2d_with_relu(input, weight, bias, stride, padding, false);
+        return relu(out);
+    }
+    return conv2d_with_relu(input, weight, bias, stride, padding, true);
 }
 
 std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding) {

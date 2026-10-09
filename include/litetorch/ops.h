@@ -19,6 +19,7 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
+std::shared_ptr<Tensor> conv2d_relu(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);

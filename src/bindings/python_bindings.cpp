@@ -292,6 +292,7 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("fused_add_layernorm", &Ops::fused_add_layernorm, py::arg("input"), py::arg("residual"), py::arg("normalized_shape"), py::arg("weight") = nullptr, py::arg("bias") = nullptr, py::arg("eps") = 1e-5f);
     ops.def("batch_norm2d", &Ops::batch_norm2d, py::arg("input"), py::arg("running_mean"), py::arg("running_var"), py::arg("weight"), py::arg("bias"), py::arg("training"), py::arg("momentum") = 0.1f, py::arg("eps") = 1e-5f);
     ops.def("conv2d", &Ops::conv2d, py::arg("input"), py::arg("weight"), py::arg("bias") = nullptr, py::arg("stride") = 1, py::arg("padding") = 0);
+    ops.def("conv2d_relu", &Ops::conv2d_relu, py::arg("input"), py::arg("weight"), py::arg("bias") = nullptr, py::arg("stride") = 1, py::arg("padding") = 0);
     ops.def("conv3d", &Ops::conv3d, py::arg("input"), py::arg("weight"), py::arg("bias") = nullptr, py::arg("stride") = 1, py::arg("padding") = 0);
     ops.def("max_pool2d", &Ops::max_pool2d, py::arg("input"), py::arg("kernel_size"), py::arg("stride") = -1, py::arg("padding") = 0);
     ops.def("max_pool3d", &Ops::max_pool3d, py::arg("input"), py::arg("kernel_size"), py::arg("stride") = -1, py::arg("padding") = 0);
