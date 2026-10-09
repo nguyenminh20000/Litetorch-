@@ -34,6 +34,19 @@ std::shared_ptr<Tensor> Linear::forward(std::shared_ptr<Tensor> input) {
     return Ops::matmul(input, w_t);
 }
 
+std::shared_ptr<Tensor> Linear::forward_gelu(std::shared_ptr<Tensor> input) {
+    auto w = weight;
+    if (weight->dtype == DataType::INT8 && scales) {
+        auto w_fp32 = weight->cast(DataType::FP32);
+        w = Ops::mul(w_fp32, scales->view({weight->shape[0], 1}));
+    }
+    auto w_t = w->transpose(0, 1);
+    if (bias) {
+        return Ops::matmul_bias_gelu(input, w_t, bias);
+    }
+    return Ops::gelu_exact(Ops::matmul(input, w_t));
+}
+
 std::vector<std::shared_ptr<Tensor>> Linear::parameters() {
     if (bias) return { weight, bias };
     return { weight };

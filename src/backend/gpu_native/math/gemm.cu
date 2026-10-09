@@ -197,10 +197,11 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
 
 struct LtMatmulKey {
     int64_t M, N, K, lda, ldb;
-    bool trans_a, trans_b, tf32, has_bias;
+    bool trans_a, trans_b, tf32;
+    int epilogue;
     bool operator==(const LtMatmulKey& o) const {
         return M == o.M && N == o.N && K == o.K && lda == o.lda && ldb == o.ldb &&
-               trans_a == o.trans_a && trans_b == o.trans_b && tf32 == o.tf32 && has_bias == o.has_bias;
+               trans_a == o.trans_a && trans_b == o.trans_b && tf32 == o.tf32 && epilogue == o.epilogue;
     }
 };
 
@@ -209,7 +210,7 @@ struct LtMatmulKeyHash {
         size_t h = 1469598103934665603ULL;
         auto mix = [&](int64_t v) { h ^= (size_t)v; h *= 1099511628211ULL; };
         mix(k.M); mix(k.N); mix(k.K); mix(k.lda); mix(k.ldb);
-        mix(k.trans_a ? 1 : 0); mix(k.trans_b ? 1 : 0); mix(k.tf32 ? 1 : 0); mix(k.has_bias ? 1 : 0);
+        mix(k.trans_a ? 1 : 0); mix(k.trans_b ? 1 : 0); mix(k.tf32 ? 1 : 0); mix(k.epilogue);
         return h;
     }
 };
@@ -326,7 +327,7 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
     const float* b_ptr = (const float*)B + b_off;
     float* c_ptr = (float*)C + c_off;
     bool tf32 = gpu_is_tf32_enabled();
-    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, false};
+    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, 0};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
     cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
     cublasLtMatmulDesc_t desc = nullptr;
@@ -392,7 +393,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     const float* bias_ptr = (const float*)BIAS + bias_off;
     float* c_ptr = (float*)C + c_off;
     bool tf32 = gpu_is_tf32_enabled();
-    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, true};
+    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, 1};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
     cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
     cublasLtMatmulDesc_t desc = nullptr;
@@ -448,3 +449,102 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
 #endif
 }
+
+#ifndef __HIP_PLATFORM_AMD__
+extern "C" __global__ void gelu_exact_forward_kernel(float* out, int64_t out_off, const float* in, int64_t in_off, int64_t n) {
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        float x = in[in_off + idx];
+        out[out_off + idx] = 0.5f * x * (1.0f + erff(x * 0.70710678f));
+    }
+}
+
+extern "C" __global__ void gelu_exact_backward_kernel(float* gin, int64_t gin_off, const float* z, int64_t z_off, const float* gout, int64_t gout_off, int64_t n) {
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        float x = z[z_off + idx];
+        float cdf = 0.5f * (1.0f + erff(x * 0.70710678f));
+        float pdf = 0.39894228f * expf(-0.5f * x * x);
+        gin[gin_off + idx] = gout[gout_off + idx] * (cdf + x * pdf);
+    }
+}
+
+extern "C" void gpu_gelu_exact_forward(void* Z, int64_t z_off, void* OUT, int64_t out_off, int64_t n) {
+    if (n <= 0) return;
+    int threads = 256;
+    int64_t blocks = (n + threads - 1) / threads;
+    gelu_exact_forward_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>((float*)OUT, out_off, (const float*)Z, z_off, n);
+}
+
+extern "C" void gpu_gelu_exact_backward(void* Z, int64_t z_off, void* GOUT, int64_t gout_off, void* GIN, int64_t gin_off, int64_t n) {
+    if (n <= 0) return;
+    int threads = 256;
+    int64_t blocks = (n + threads - 1) / threads;
+    gelu_exact_backward_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>((float*)GIN, gin_off, (const float*)Z, z_off, (const float*)GOUT, gout_off, n);
+}
+
+extern "C" void gpu_matmul_ex_lt_bias_gelu(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                                           void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                                           void* BIAS, int64_t bias_off,
+                                           void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    if (M <= 0 || N <= 0 || K <= 0) return;
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    const float* bias_ptr = (const float*)BIAS + bias_off;
+    float* c_ptr = (float*)C + c_off;
+    bool tf32 = gpu_is_tf32_enabled();
+    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, 2};
+    cublasLtHandle_t lt_handle = get_cublaslt_handle();
+    cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+    cublasLtMatmulDesc_t desc = nullptr;
+    cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
+    bool built = false;
+    cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
+    if (cublasLtMatmulDescCreate(&desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+        cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+        cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+        cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS_GELU;
+        uint64_t a_rows = (uint64_t)(trans_a ? K : M);
+        uint64_t a_cols = (uint64_t)(trans_a ? M : K);
+        uint64_t b_rows = (uint64_t)(trans_b ? N : K);
+        uint64_t b_cols = (uint64_t)(trans_b ? K : N);
+        if (cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &opA, sizeof(opA)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &opB, sizeof(opB)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epi, sizeof(epi)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutSetAttribute(Adesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutSetAttribute(Bdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_32F, (uint64_t)M, (uint64_t)N, (int64_t)N) == CUBLAS_STATUS_SUCCESS &&
+            cublasLtMatrixLayoutSetAttribute(Cdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS) {
+            built = true;
+        }
+    }
+    cublasLtMatmulAlgo_t algo{};
+    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, a_ptr, b_ptr, c_ptr, key, &algo);
+    if (have_algo) {
+        void* ws = lt_workspace();
+        float alpha = 1.0f, beta = 0.0f;
+        if (ws && cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
+                                c_ptr, Cdesc, c_ptr, Cdesc, &algo,
+                                ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
+            cublasLtMatrixLayoutDestroy(Cdesc);
+            cublasLtMatrixLayoutDestroy(Bdesc);
+            cublasLtMatrixLayoutDestroy(Adesc);
+            cublasLtMatmulDescDestroy(desc);
+            return;
+        }
+    }
+    if (Cdesc) cublasLtMatrixLayoutDestroy(Cdesc);
+    if (Bdesc) cublasLtMatrixLayoutDestroy(Bdesc);
+    if (Adesc) cublasLtMatrixLayoutDestroy(Adesc);
+    if (desc) cublasLtMatmulDescDestroy(desc);
+    gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+    int64_t total = M * N;
+    int threads = 256;
+    int64_t blocks = (total + threads - 1) / threads;
+    matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
+    gelu_exact_forward_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, c_ptr, (int64_t)0, total);
+}
+#endif

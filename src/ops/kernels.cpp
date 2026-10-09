@@ -309,6 +309,27 @@ __kernel void gelu_backward_kernel(__global const float* A, int a_off,
         grad_input[gin_off + idx] = grad_output[gout_off + idx] * d_gelu;
     }
 }
+__kernel void gelu_exact_forward_kernel(__global const float* A, int a_off,
+                                        __global float* B, int b_off,
+                                        int size) {
+    int idx = get_global_id(0);
+    if (idx < size) {
+        float x = A[a_off + idx];
+        B[b_off + idx] = 0.5f * x * (1.0f + erf(x * 0.70710678f));
+    }
+}
+__kernel void gelu_exact_backward_kernel(__global const float* Z, int z_off,
+                                         __global const float* grad_output, int gout_off,
+                                         __global float* grad_input, int gin_off,
+                                         int size) {
+    int idx = get_global_id(0);
+    if (idx < size) {
+        float x = Z[z_off + idx];
+        float cdf = 0.5f * (1.0f + erf(x * 0.70710678f));
+        float pdf = 0.39894228f * exp(-0.5f * x * x);
+        grad_input[gin_off + idx] = grad_output[gout_off + idx] * (cdf + x * pdf);
+    }
+}
 __kernel void layer_norm_forward_kernel(__global const float* input, int in_off,
                                         __global const float* weight, int w_off, int has_weight,
                                         __global const float* bias, int b_off, int has_bias,
