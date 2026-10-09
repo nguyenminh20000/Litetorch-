@@ -131,3 +131,114 @@ extern "C" __global__ void rmsprop_step_kernel(
         P[p_off + idx] -= lr * grad_val / (sqrtf(SQ[sq_off + idx]) + eps);
     }
 }
+
+__global__ void adam_foreach_kernel(
+    float** P_list, int* p_offs,
+    float** G_list, int* g_offs,
+    float** M_list, int* m_offs,
+    float** V_list, int* v_offs,
+    int* sizes, int n_tensors,
+    float beta1, float beta2,
+    float lr, float eps, float weight_decay,
+    float bias_correction1, float bias_correction2)
+{
+    int t = blockIdx.y;
+    if (t >= n_tensors) return;
+    float* P = P_list[t];
+    const float* G = G_list[t];
+    float* M = M_list[t];
+    float* V = V_list[t];
+    int p_off = p_offs[t];
+    int g_off = g_offs[t];
+    int m_off = m_offs[t];
+    int v_off = v_offs[t];
+    int size = sizes[t];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        float p = P[p_off + idx];
+        float g = G[g_off + idx];
+        if (weight_decay != 0.0f) {
+            g += weight_decay * p;
+        }
+        float m = beta1 * M[m_off + idx] + (1.0f - beta1) * g;
+        float v = beta2 * V[v_off + idx] + (1.0f - beta2) * g * g;
+        M[m_off + idx] = m;
+        V[v_off + idx] = v;
+        float m_hat = m / bias_correction1;
+        float v_hat = v / bias_correction2;
+        P[p_off + idx] = p - lr * m_hat / (sqrtf(v_hat) + eps);
+    }
+}
+
+static float** g_adam_P_list = nullptr;
+static int* g_adam_p_offs = nullptr;
+static float** g_adam_G_list = nullptr;
+static int* g_adam_g_offs = nullptr;
+static float** g_adam_M_list = nullptr;
+static int* g_adam_m_offs = nullptr;
+static float** g_adam_V_list = nullptr;
+static int* g_adam_v_offs = nullptr;
+static int* g_adam_sizes = nullptr;
+static int g_adam_capacity = 0;
+
+static void ensure_adam_foreach_buffers(int n) {
+    if (n > g_adam_capacity) {
+        if (g_adam_P_list) GPU_API(Free)(g_adam_P_list);
+        if (g_adam_p_offs) GPU_API(Free)(g_adam_p_offs);
+        if (g_adam_G_list) GPU_API(Free)(g_adam_G_list);
+        if (g_adam_g_offs) GPU_API(Free)(g_adam_g_offs);
+        if (g_adam_M_list) GPU_API(Free)(g_adam_M_list);
+        if (g_adam_m_offs) GPU_API(Free)(g_adam_m_offs);
+        if (g_adam_V_list) GPU_API(Free)(g_adam_V_list);
+        if (g_adam_v_offs) GPU_API(Free)(g_adam_v_offs);
+        if (g_adam_sizes) GPU_API(Free)(g_adam_sizes);
+        int cap = n * 2;
+        GPU_API(Malloc)((void**)&g_adam_P_list, cap * sizeof(float*));
+        GPU_API(Malloc)((void**)&g_adam_p_offs, cap * sizeof(int));
+        GPU_API(Malloc)((void**)&g_adam_G_list, cap * sizeof(float*));
+        GPU_API(Malloc)((void**)&g_adam_g_offs, cap * sizeof(int));
+        GPU_API(Malloc)((void**)&g_adam_M_list, cap * sizeof(float*));
+        GPU_API(Malloc)((void**)&g_adam_m_offs, cap * sizeof(int));
+        GPU_API(Malloc)((void**)&g_adam_V_list, cap * sizeof(float*));
+        GPU_API(Malloc)((void**)&g_adam_v_offs, cap * sizeof(int));
+        GPU_API(Malloc)((void**)&g_adam_sizes, cap * sizeof(int));
+        g_adam_capacity = cap;
+    }
+}
+
+extern "C" void gpu_adam_foreach(
+    void** h_P_list, int* h_p_offs,
+    void** h_G_list, int* h_g_offs,
+    void** h_M_list, int* h_m_offs,
+    void** h_V_list, int* h_v_offs,
+    int* h_sizes, int n_tensors,
+    float beta1, float beta2, float lr, float eps, float weight_decay,
+    float bias_correction1, float bias_correction2, int max_size)
+{
+    if (n_tensors <= 0) return;
+    ensure_adam_foreach_buffers(n_tensors);
+    GPU_API(Memcpy)(g_adam_P_list, h_P_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_p_offs, h_p_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_G_list, h_G_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_g_offs, h_g_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_M_list, h_M_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_m_offs, h_m_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_V_list, h_V_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_v_offs, h_v_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    GPU_API(Memcpy)(g_adam_sizes, h_sizes, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    dim3 block(256, 1, 1);
+    dim3 grid((max_size + 255) / 256, n_tensors, 1);
+#ifndef __HIP_PLATFORM_AMD__
+    adam_foreach_kernel<<<grid, block, 0, g_compute_stream>>>(
+        g_adam_P_list, g_adam_p_offs, g_adam_G_list, g_adam_g_offs,
+        g_adam_M_list, g_adam_m_offs, g_adam_V_list, g_adam_v_offs,
+        g_adam_sizes, n_tensors, beta1, beta2, lr, eps, weight_decay,
+        bias_correction1, bias_correction2);
+#else
+    hipLaunchKernelGGL(adam_foreach_kernel, grid, block, 0, g_compute_stream,
+        g_adam_P_list, g_adam_p_offs, g_adam_G_list, g_adam_g_offs,
+        g_adam_M_list, g_adam_m_offs, g_adam_V_list, g_adam_v_offs,
+        g_adam_sizes, n_tensors, beta1, beta2, lr, eps, weight_decay,
+        bias_correction1, bias_correction2);
+#endif
+}

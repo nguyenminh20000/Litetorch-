@@ -217,6 +217,18 @@ struct LtMatmulKeyHash {
 static std::unordered_map<LtMatmulKey, cublasLtMatmulAlgo_t, LtMatmulKeyHash> lt_algo_cache;
 static std::mutex lt_algo_cache_mutex;
 
+struct LtPlan {
+    cublasLtMatmulDesc_t desc = nullptr;
+    cublasLtMatrixLayout_t Adesc = nullptr;
+    cublasLtMatrixLayout_t Bdesc = nullptr;
+    cublasLtMatrixLayout_t Cdesc = nullptr;
+    cublasLtMatmulAlgo_t algo{};
+    bool has_algo = false;
+};
+
+static std::unordered_map<LtMatmulKey, LtPlan, LtMatmulKeyHash> lt_plan_cache;
+static std::mutex lt_plan_cache_mutex;
+
 static const size_t LT_WS_BYTES = 32ULL * 1024ULL * 1024ULL;
 
 static void* lt_workspace() {
@@ -328,44 +340,53 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
     bool tf32 = gpu_is_tf32_enabled();
     LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, false};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
-    cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-    cublasLtMatmulDesc_t desc = nullptr;
-    cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
-    bool built = false;
-    if (cublasLtMatmulDescCreate(&desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
-        cublasOperation_t transA = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
-        cublasOperation_t transB = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
-        uint64_t a_rows = (uint64_t)(trans_b ? K : N);
-        uint64_t a_cols = (uint64_t)(trans_b ? N : K);
-        uint64_t b_rows = (uint64_t)(trans_a ? M : K);
-        uint64_t b_cols = (uint64_t)(trans_a ? K : M);
-        if (cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_32F, (uint64_t)N, (uint64_t)M, (int64_t)N) == CUBLAS_STATUS_SUCCESS) {
-            built = true;
+    LtPlan* plan = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
+        auto it = lt_plan_cache.find(key);
+        if (it == lt_plan_cache.end()) {
+            LtPlan p;
+            cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+            bool built = false;
+            if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+                cublasOperation_t transA = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+                cublasOperation_t transB = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+                uint64_t a_rows = (uint64_t)(trans_b ? K : N);
+                uint64_t a_cols = (uint64_t)(trans_b ? N : K);
+                uint64_t b_rows = (uint64_t)(trans_a ? M : K);
+                uint64_t b_cols = (uint64_t)(trans_a ? K : M);
+                if (cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Cdesc, CUDA_R_32F, (uint64_t)N, (uint64_t)M, (int64_t)N) == CUBLAS_STATUS_SUCCESS) {
+                    built = true;
+                }
+            }
+            if (built && matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, b_ptr, a_ptr, c_ptr, key, &p.algo)) {
+                p.has_algo = true;
+            }
+            if (!p.has_algo) {
+                if (p.Cdesc) cublasLtMatrixLayoutDestroy(p.Cdesc);
+                if (p.Bdesc) cublasLtMatrixLayoutDestroy(p.Bdesc);
+                if (p.Adesc) cublasLtMatrixLayoutDestroy(p.Adesc);
+                if (p.desc) cublasLtMatmulDescDestroy(p.desc);
+                gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+                return;
+            }
+            it = lt_plan_cache.emplace(key, p).first;
         }
+        plan = &it->second;
     }
-    cublasLtMatmulAlgo_t algo{};
-    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, b_ptr, a_ptr, c_ptr, key, &algo);
-    if (have_algo) {
+    if (plan && plan->has_algo) {
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
-        if (ws && cublasLtMatmul(lt_handle, desc, &alpha, b_ptr, Adesc, a_ptr, Bdesc, &beta,
-                                c_ptr, Cdesc, c_ptr, Cdesc, &algo,
+        if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, b_ptr, plan->Adesc, a_ptr, plan->Bdesc, &beta,
+                                c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
                                 ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
-            cublasLtMatrixLayoutDestroy(Cdesc);
-            cublasLtMatrixLayoutDestroy(Bdesc);
-            cublasLtMatrixLayoutDestroy(Adesc);
-            cublasLtMatmulDescDestroy(desc);
             return;
         }
     }
-    if (Cdesc) cublasLtMatrixLayoutDestroy(Cdesc);
-    if (Bdesc) cublasLtMatrixLayoutDestroy(Bdesc);
-    if (Adesc) cublasLtMatrixLayoutDestroy(Adesc);
-    if (desc) cublasLtMatmulDescDestroy(desc);
     gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
 #else
     gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
@@ -394,51 +415,66 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     bool tf32 = gpu_is_tf32_enabled();
     LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, true};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
-    cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-    cublasLtMatmulDesc_t desc = nullptr;
-    cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
-    bool built = false;
-    cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
-    if (cublasLtMatmulDescCreate(&desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
-        cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
-        cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
-        cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS;
-        uint64_t a_rows = (uint64_t)(trans_a ? K : M);
-        uint64_t a_cols = (uint64_t)(trans_a ? M : K);
-        uint64_t b_rows = (uint64_t)(trans_b ? N : K);
-        uint64_t b_cols = (uint64_t)(trans_b ? K : N);
-        if (cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &opA, sizeof(opA)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &opB, sizeof(opB)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epi, sizeof(epi)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutSetAttribute(Adesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutSetAttribute(Bdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_32F, (uint64_t)M, (uint64_t)N, (int64_t)N) == CUBLAS_STATUS_SUCCESS &&
-            cublasLtMatrixLayoutSetAttribute(Cdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS) {
-            built = true;
+    LtPlan* plan = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
+        auto it = lt_plan_cache.find(key);
+        if (it == lt_plan_cache.end()) {
+            LtPlan p;
+            cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+            bool built = false;
+            cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
+            if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+                cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+                cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+                cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS;
+                uint64_t a_rows = (uint64_t)(trans_a ? K : M);
+                uint64_t a_cols = (uint64_t)(trans_a ? M : K);
+                uint64_t b_rows = (uint64_t)(trans_b ? N : K);
+                uint64_t b_cols = (uint64_t)(trans_b ? K : N);
+                const float* null_bias = nullptr;
+                if (cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSA, &opA, sizeof(opA)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSB, &opB, sizeof(opB)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epi, sizeof(epi)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &null_bias, sizeof(null_bias)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutSetAttribute(p.Adesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutSetAttribute(p.Bdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutCreate(&p.Cdesc, CUDA_R_32F, (uint64_t)M, (uint64_t)N, (int64_t)N) == CUBLAS_STATUS_SUCCESS &&
+                    cublasLtMatrixLayoutSetAttribute(p.Cdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)) == CUBLAS_STATUS_SUCCESS) {
+                    built = true;
+                }
+            }
+            if (built && matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, a_ptr, b_ptr, c_ptr, key, &p.algo)) {
+                p.has_algo = true;
+            }
+            if (!p.has_algo) {
+                if (p.Cdesc) cublasLtMatrixLayoutDestroy(p.Cdesc);
+                if (p.Bdesc) cublasLtMatrixLayoutDestroy(p.Bdesc);
+                if (p.Adesc) cublasLtMatrixLayoutDestroy(p.Adesc);
+                if (p.desc) cublasLtMatmulDescDestroy(p.desc);
+                gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+                int64_t total = M * N;
+                int threads = 256;
+                int64_t blocks = (total + threads - 1) / threads;
+                matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
+                return;
+            }
+            it = lt_plan_cache.emplace(key, p).first;
         }
+        plan = &it->second;
     }
-    cublasLtMatmulAlgo_t algo{};
-    bool have_algo = built && matmul_lt_find_algo(lt_handle, desc, Adesc, Bdesc, Cdesc, a_ptr, b_ptr, c_ptr, key, &algo);
-    if (have_algo) {
+    if (plan && plan->has_algo) {
+        cublasLtMatmulDescSetAttribute(plan->desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr));
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
-        if (ws && cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
-                                c_ptr, Cdesc, c_ptr, Cdesc, &algo,
+        if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, a_ptr, plan->Adesc, b_ptr, plan->Bdesc, &beta,
+                                c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
                                 ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
-            cublasLtMatrixLayoutDestroy(Cdesc);
-            cublasLtMatrixLayoutDestroy(Bdesc);
-            cublasLtMatrixLayoutDestroy(Adesc);
-            cublasLtMatmulDescDestroy(desc);
             return;
         }
     }
-    if (Cdesc) cublasLtMatrixLayoutDestroy(Cdesc);
-    if (Bdesc) cublasLtMatrixLayoutDestroy(Bdesc);
-    if (Adesc) cublasLtMatrixLayoutDestroy(Adesc);
-    if (desc) cublasLtMatmulDescDestroy(desc);
     gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
     int64_t total = M * N;
     int threads = 256;

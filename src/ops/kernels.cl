@@ -2158,3 +2158,80 @@ __kernel void transpose_kernel(__global const float* src, int s_off, __global fl
     int c = idx - r * cols;
     dst[d_off + c * rows + r] = src[s_off + idx];
 }
+
+__kernel void qkv_split_transpose_kernel(__global const float* qkv, int qkv_off,
+                                         __global float* q, int q_off,
+                                         __global float* k, int k_off,
+                                         __global float* v, int v_off,
+                                         int B, int T, int H, int D) {
+    int C = H * D;
+    int idx = get_global_id(0);
+    int total = B * T * C;
+    if (idx >= total) return;
+    int d = idx % D;
+    int t = (idx / D) % T;
+    int h = (idx / (D * T)) % H;
+    int b = idx / (D * T * H);
+    int c = h * D + d;
+    int base = (b * T + t) * 3 * C + c;
+    q[q_off + idx] = qkv[qkv_off + base];
+    k[k_off + idx] = qkv[qkv_off + base + C];
+    v[v_off + idx] = qkv[qkv_off + base + 2 * C];
+}
+
+__kernel void qkv_split_transpose_backward_kernel(__global const float* gq, int gq_off,
+                                                  __global const float* gk, int gk_off,
+                                                  __global const float* gv, int gv_off,
+                                                  __global float* gqkv, int gqkv_off,
+                                                  int B, int T, int H, int D) {
+    int C = H * D;
+    int idx = get_global_id(0);
+    int total = B * T * 3 * C;
+    if (idx >= total) return;
+    int c3 = idx % (3 * C);
+    int s = c3 / C;
+    int c = c3 % C;
+    int t = (idx / (3 * C)) % T;
+    int b = idx / (3 * C * T);
+    int h = c / D;
+    int d = c % D;
+    int src = ((b * H + h) * T + t) * D + d;
+    float g = (s == 0) ? gq[gq_off + src] : ((s == 1) ? gk[gk_off + src] : gv[gv_off + src]);
+    gqkv[gqkv_off + idx] = g;
+}
+
+__kernel void qkv_extract_kernel(__global const float* qkv, int qkv_off,
+                                 __global float* out, int out_off,
+                                 int B, int T, int H, int D, int idx) {
+    int C = H * D;
+    int g = get_global_id(0);
+    int total = B * T * C;
+    if (g >= total) return;
+    int d = g % D;
+    int t = (g / D) % T;
+    int h = (g / (D * T)) % H;
+    int b = g / (D * T * H);
+    int c = h * D + d;
+    out[out_off + g] = qkv[qkv_off + (b * T + t) * 3 * C + idx * C + c];
+}
+
+__kernel void qkv_extract_backward_kernel(__global const float* gout, int gout_off,
+                                           __global float* gqkv, int gqkv_off,
+                                           int B, int T, int H, int D, int idx) {
+    int C = H * D;
+    int g = get_global_id(0);
+    int total = B * T * 3 * C;
+    if (g >= total) return;
+    int c3 = g % (3 * C);
+    int s = c3 / C;
+    if (s != idx) {
+        gqkv[gqkv_off + g] = 0.0f;
+        return;
+    }
+    int c = c3 % C;
+    int t = (g / (3 * C)) % T;
+    int b = g / (3 * C * T);
+    int h = c / D;
+    int d = c % D;
+    gqkv[gqkv_off + g] = gout[gout_off + ((b * H + h) * T + t) * D + d];
+}

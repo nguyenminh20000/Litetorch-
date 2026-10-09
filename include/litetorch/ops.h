@@ -55,6 +55,8 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
 std::shared_ptr<Tensor> cast(std::shared_ptr<Tensor> a, DataType target_dtype);
 std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale, float zero_point = 0.0f, int bits = 8);
 std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_ptr<Tensor> k, std::shared_ptr<Tensor> v);
+std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t num_heads);
+std::shared_ptr<Tensor> qkv_extract(std::shared_ptr<Tensor> qkv, int64_t num_heads, int64_t index);
 float clip_grad_norm_(const std::vector<std::shared_ptr<Tensor>>& params, float max_norm, float norm_type = 2.0f);
 std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> cos, std::shared_ptr<Tensor> sin);
 std::shared_ptr<Tensor> paged_attention(

@@ -56,6 +56,17 @@ struct LtCudnnBwdAlgoPerf {
 };
 typedef int (*lt_cudnnGetConvolutionBackwardDataAlgorithm_v7_fn)(lt_cudnnHandle_t, lt_cudnnFilterDescriptor_t, lt_cudnnTensorDescriptor_t, lt_cudnnConvolutionDescriptor_t, lt_cudnnTensorDescriptor_t, int, int*, LtCudnnBwdAlgoPerf*);
 typedef int (*lt_cudnnGetConvolutionBackwardFilterAlgorithm_v7_fn)(lt_cudnnHandle_t, lt_cudnnTensorDescriptor_t, lt_cudnnTensorDescriptor_t, lt_cudnnConvolutionDescriptor_t, lt_cudnnFilterDescriptor_t, int, int*, LtCudnnBwdAlgoPerf*);
+struct LtCudnnFwdAlgoPerf {
+    int algo;
+    int status;
+    float time;
+    size_t memory;
+    int determinism;
+    int mathType;
+    int reserved[3];
+};
+typedef int (*lt_cudnnGetConvolutionForwardAlgorithm_v7_fn)(lt_cudnnHandle_t, lt_cudnnTensorDescriptor_t, lt_cudnnFilterDescriptor_t, lt_cudnnConvolutionDescriptor_t, lt_cudnnTensorDescriptor_t, int, int*, LtCudnnFwdAlgoPerf*);
+typedef int (*lt_cudnnGetConvolutionForwardWorkspaceSize_fn)(lt_cudnnHandle_t, lt_cudnnTensorDescriptor_t, lt_cudnnFilterDescriptor_t, lt_cudnnConvolutionDescriptor_t, lt_cudnnTensorDescriptor_t, int, size_t*);
 typedef int (*lt_cudnnAddTensor_fn)(lt_cudnnHandle_t, const void*, lt_cudnnTensorDescriptor_t, const void*, const void*, lt_cudnnTensorDescriptor_t, void*);
 typedef int (*lt_cudnnSoftmaxForward_fn)(lt_cudnnHandle_t, int, int, const void*, lt_cudnnTensorDescriptor_t, const void*, const void*, lt_cudnnTensorDescriptor_t, void*);
 typedef int (*lt_cudnnDestroyTensorDescriptor_fn)(lt_cudnnTensorDescriptor_t);
@@ -84,6 +95,8 @@ struct LtCudnnApi {
     lt_cudnnGetConvolutionBackwardFilterWorkspaceSize_fn GetConvolutionBackwardFilterWorkspaceSize;
     lt_cudnnGetConvolutionBackwardDataAlgorithm_v7_fn GetConvolutionBackwardDataAlgorithm_v7;
     lt_cudnnGetConvolutionBackwardFilterAlgorithm_v7_fn GetConvolutionBackwardFilterAlgorithm_v7;
+    lt_cudnnGetConvolutionForwardAlgorithm_v7_fn GetConvolutionForwardAlgorithm_v7;
+    lt_cudnnGetConvolutionForwardWorkspaceSize_fn GetConvolutionForwardWorkspaceSize;
     lt_cudnnAddTensor_fn AddTensor;
     lt_cudnnSoftmaxForward_fn SoftmaxForward;
     lt_cudnnDestroyTensorDescriptor_fn DestroyTensorDescriptor;
@@ -133,6 +146,8 @@ inline bool cudnn_dyn_bind(void* lib) {
     api.SetConvolutionMathType = reinterpret_cast<lt_cudnnSetConvolutionMathType_fn>(dlsym(lib, "cudnnSetConvolutionMathType"));
     api.GetConvolutionBackwardDataAlgorithm_v7 = reinterpret_cast<lt_cudnnGetConvolutionBackwardDataAlgorithm_v7_fn>(dlsym(lib, "cudnnGetConvolutionBackwardDataAlgorithm_v7"));
     api.GetConvolutionBackwardFilterAlgorithm_v7 = reinterpret_cast<lt_cudnnGetConvolutionBackwardFilterAlgorithm_v7_fn>(dlsym(lib, "cudnnGetConvolutionBackwardFilterAlgorithm_v7"));
+    api.GetConvolutionForwardAlgorithm_v7 = reinterpret_cast<lt_cudnnGetConvolutionForwardAlgorithm_v7_fn>(dlsym(lib, "cudnnGetConvolutionForwardAlgorithm_v7"));
+    api.GetConvolutionForwardWorkspaceSize = reinterpret_cast<lt_cudnnGetConvolutionForwardWorkspaceSize_fn>(dlsym(lib, "cudnnGetConvolutionForwardWorkspaceSize"));
     if (!ok) return false;
     g_cudnn = api;
     g_cudnn_lib = lib;

@@ -480,11 +480,14 @@ static const KernelMap& gpu_kernel_map() {
         m["sgd_step_kernel"] = (void*)&sgd_step_kernel;
         m["rmsprop_step_kernel"] = (void*)&rmsprop_step_kernel;
         m["adam_step_kernel"] = (void*)&adam_step_kernel;
+        m["adam_foreach"] = (void*)&gpu_adam_foreach;
         m["adamw_step_kernel"] = (void*)&adamw_step_kernel;
         m["gelu_forward_kernel"] = (void*)&gelu_forward_kernel;
         m["gelu_backward_kernel"] = (void*)&gelu_backward_kernel;
         m["reduce_broadcast_prepended"] = (void*)&reduce_broadcast_prepended;
         m["reduce_broadcast_dim"] = (void*)&reduce_broadcast_dim;
+        m["gpu_reduce_broadcast_prepended"] = (void*)&gpu_reduce_broadcast_prepended;
+        m["gpu_reduce_broadcast_dim"] = (void*)&gpu_reduce_broadcast_dim;
         m["elementwise_broadcast_add"] = (void*)&elementwise_broadcast_add;
         m["elementwise_broadcast_sub"] = (void*)&elementwise_broadcast_sub;
         m["elementwise_broadcast_mul"] = (void*)&elementwise_broadcast_mul;
@@ -492,6 +495,10 @@ static const KernelMap& gpu_kernel_map() {
         m["rope_forward"] = (void*)&rope_forward;
         m["rope_backward"] = (void*)&rope_backward;
         m["paged_attention_forward"] = (void*)&paged_attention_forward;
+        m["qkv_split_transpose"] = (void*)&gpu_qkv_split_transpose;
+        m["qkv_split_transpose_backward"] = (void*)&gpu_qkv_split_transpose_backward;
+        m["qkv_extract"] = (void*)&gpu_qkv_extract;
+        m["qkv_extract_backward"] = (void*)&gpu_qkv_extract_backward;
         m["w8a8_matmul_kernel"] = (void*)&w8a8_matmul_kernel;
         m["gpu_set_tf32_enabled"] = (void*)&gpu_set_tf32_enabled;
         m["gpu_is_tf32_enabled"] = (void*)&gpu_is_tf32_enabled;

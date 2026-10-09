@@ -1131,3 +1131,120 @@ extern "C" void gpu_flash_attention_backward_half_with_p(
                                   batch_count);
 #endif
 }
+
+__global__ void qkv_split_transpose_kernel(const float* qkv, float* q, float* k, float* v,
+                                           int B, int T, int H, int D) {
+    int C = H * D;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = B * T * C;
+    if (idx >= total) return;
+    int d = idx % D;
+    int t = (idx / D) % T;
+    int h = (idx / (D * T)) % H;
+    int b = idx / (D * T * H);
+    int c = h * D + d;
+    int base = (b * T + t) * 3 * C + c;
+    q[idx] = qkv[base];
+    k[idx] = qkv[base + C];
+    v[idx] = qkv[base + 2 * C];
+}
+
+__global__ void qkv_split_transpose_backward_kernel(const float* gq, const float* gk, const float* gv,
+                                                    float* gqkv, int B, int T, int H, int D) {
+    int C = H * D;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = B * T * 3 * C;
+    if (idx >= total) return;
+    int c3 = idx % (3 * C);
+    int s = c3 / C;
+    int c = c3 % C;
+    int t = (idx / (3 * C)) % T;
+    int b = idx / (3 * C * T);
+    int h = c / D;
+    int d = c % D;
+    int src = ((b * H + h) * T + t) * D + d;
+    gqkv[idx] = (s == 0) ? gq[src] : ((s == 1) ? gk[src] : gv[src]);
+}
+
+extern "C" void gpu_qkv_split_transpose(void* QKV, int64_t qkv_off, void* Q, int64_t q_off,
+                                        void* K, int64_t k_off, void* V, int64_t v_off,
+                                        int64_t B, int64_t T, int64_t H, int64_t D) {
+    const float* qkv_ptr = (const float*)QKV + qkv_off;
+    float* q_ptr = (float*)Q + q_off;
+    float* k_ptr = (float*)K + k_off;
+    float* v_ptr = (float*)V + v_off;
+    int total = (int)(B * T * H * D);
+    int block = 256;
+    int grid = (total + block - 1) / block;
+    qkv_split_transpose_kernel<<<grid, block, 0, g_compute_stream>>>(qkv_ptr, q_ptr, k_ptr, v_ptr,
+                                                                     (int)B, (int)T, (int)H, (int)D);
+}
+
+extern "C" void gpu_qkv_split_transpose_backward(void* GQ, int64_t gq_off, void* GK, int64_t gk_off,
+                                                 void* GV, int64_t gv_off, void* GQKV, int64_t gqkv_off,
+                                                 int64_t B, int64_t T, int64_t H, int64_t D) {
+    const float* gq_ptr = (const float*)GQ + gq_off;
+    const float* gk_ptr = (const float*)GK + gk_off;
+    const float* gv_ptr = (const float*)GV + gv_off;
+    float* gqkv_ptr = (float*)GQKV + gqkv_off;
+    int total = (int)(B * T * 3 * H * D);
+    int block = 256;
+    int grid = (total + block - 1) / block;
+    qkv_split_transpose_backward_kernel<<<grid, block, 0, g_compute_stream>>>(gq_ptr, gk_ptr, gv_ptr, gqkv_ptr,
+                                                                              (int)B, (int)T, (int)H, (int)D);
+}
+
+__global__ void qkv_extract_kernel(const float* qkv, float* out, int B, int T, int H, int D, int idx) {
+    int C = H * D;
+    int g = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = B * T * C;
+    if (g >= total) return;
+    int d = g % D;
+    int t = (g / D) % T;
+    int h = (g / (D * T)) % H;
+    int b = g / (D * T * H);
+    int c = h * D + d;
+    out[g] = qkv[(b * T + t) * 3 * C + idx * C + c];
+}
+
+__global__ void qkv_extract_backward_kernel(const float* gout, float* gqkv,
+                                            int B, int T, int H, int D, int idx) {
+    int C = H * D;
+    int g = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = B * T * 3 * C;
+    if (g >= total) return;
+    int c3 = g % (3 * C);
+    int s = c3 / C;
+    if (s != idx) {
+        gqkv[g] = 0.0f;
+        return;
+    }
+    int c = c3 % C;
+    int t = (g / (3 * C)) % T;
+    int b = g / (3 * C * T);
+    int h = c / D;
+    int d = c % D;
+    gqkv[g] = gout[((b * H + h) * T + t) * D + d];
+}
+
+extern "C" void gpu_qkv_extract(void* QKV, int64_t qkv_off, void* OUT, int64_t out_off,
+                                int64_t B, int64_t T, int64_t H, int64_t D, int64_t idx) {
+    const float* qkv_ptr = (const float*)QKV + qkv_off;
+    float* out_ptr = (float*)OUT + out_off;
+    int total = (int)(B * T * H * D);
+    int block = 256;
+    int grid = (total + block - 1) / block;
+    qkv_extract_kernel<<<grid, block, 0, g_compute_stream>>>(qkv_ptr, out_ptr,
+                                                             (int)B, (int)T, (int)H, (int)D, (int)idx);
+}
+
+extern "C" void gpu_qkv_extract_backward(void* GOUT, int64_t gout_off, void* GQKV, int64_t gqkv_off,
+                                          int64_t B, int64_t T, int64_t H, int64_t D, int64_t idx) {
+    const float* gout_ptr = (const float*)GOUT + gout_off;
+    float* gqkv_ptr = (float*)GQKV + gqkv_off;
+    int total = (int)(B * T * 3 * H * D);
+    int block = 256;
+    int grid = (total + block - 1) / block;
+    qkv_extract_backward_kernel<<<grid, block, 0, g_compute_stream>>>(gout_ptr, gqkv_ptr,
+                                                                      (int)B, (int)T, (int)H, (int)D, (int)idx);
+}

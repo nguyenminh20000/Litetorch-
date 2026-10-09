@@ -53,8 +53,8 @@ void test_transformer(const Device& dev) {
     assert(tgt_grad_sum > 0.0f);
 
     float w_grad_sum = 0.0f;
-    if (layer->self_attn->q_proj->weight->grad) {
-        auto w_grad_vec = layer->self_attn->q_proj->weight->grad->to_vector();
+    if (layer->self_attn->qkv_proj->weight->grad) {
+        auto w_grad_vec = layer->self_attn->qkv_proj->weight->grad->to_vector();
         for (float g : w_grad_vec) w_grad_sum += std::abs(g);
     }
     std::cout << "Self-attn Q-proj weight gradient absolute sum: " << w_grad_sum << "\n";
@@ -96,8 +96,8 @@ void test_transformer(const Device& dev) {
     assert(mem_grad_cross_sum > 0.0f);
 
     float cross_w_grad_sum = 0.0f;
-    if (layer->multihead_attn->q_proj->weight->grad) {
-        auto w_grad_vec = layer->multihead_attn->q_proj->weight->grad->to_vector();
+    if (layer->multihead_attn->qkv_proj->weight->grad) {
+        auto w_grad_vec = layer->multihead_attn->qkv_proj->weight->grad->to_vector();
         for (float g : w_grad_vec) cross_w_grad_sum += std::abs(g);
     }
     std::cout << "Cross-attn Q-proj weight gradient absolute sum: " << cross_w_grad_sum << "\n";

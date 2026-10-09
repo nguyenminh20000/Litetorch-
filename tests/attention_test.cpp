@@ -46,15 +46,15 @@ void test_attention(const Device& dev) {
     }
     std::cout << "Backward success. Input Gradient absolute sum: " << input_grad_sum << "\n";
 
-    float q_proj_weight_grad_sum = 0.0f;
-    if (mha->q_proj->weight->grad) {
-        auto q_grad_vec = mha->q_proj->weight->grad->to_vector();
-        for (float g : q_grad_vec) q_proj_weight_grad_sum += std::abs(g);
+    float qkv_proj_weight_grad_sum = 0.0f;
+    if (mha->qkv_proj->weight->grad) {
+        auto qkv_grad_vec = mha->qkv_proj->weight->grad->to_vector();
+        for (float g : qkv_grad_vec) qkv_proj_weight_grad_sum += std::abs(g);
     }
-    std::cout << "Q Proj Weight Gradient absolute sum: " << q_proj_weight_grad_sum << "\n";
+    std::cout << "QKV Proj Weight Gradient absolute sum: " << qkv_proj_weight_grad_sum << "\n";
 
     assert(input_grad_sum > 0.0f);
-    assert(q_proj_weight_grad_sum > 0.0f);
+    assert(qkv_proj_weight_grad_sum > 0.0f);
     std::cout << "[RESULT] SUCCESS: MultiHeadAttention forward/backward passed on " << (dev.type == DeviceType::GPU ? "GPU" : "CPU") << "\n";
 }
 

@@ -602,7 +602,7 @@ std::shared_ptr<Tensor> Tensor::transpose(int64_t dim0, int64_t dim1) {
     std::swap(new_strides[dim0], new_strides[dim1]);
 
     auto out = std::make_shared<Tensor>(storage, new_shape, new_strides, offset, device, requires_grad);
-    if (requires_grad) {
+    if (requires_grad && Autograd::is_grad_enabled()) {
         auto node = std::make_shared<TransposeNode>(dim0, dim1);
         node->inputs = { {shared_from_this(), true} };
         node->next_nodes = { creator };

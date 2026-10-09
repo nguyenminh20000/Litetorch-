@@ -297,9 +297,7 @@ public:
     int num_heads;
     int head_dim;
 
-    std::shared_ptr<Linear> q_proj;
-    std::shared_ptr<Linear> k_proj;
-    std::shared_ptr<Linear> v_proj;
+    std::shared_ptr<Linear> qkv_proj;
     std::shared_ptr<Linear> out_proj;
 
     MultiHeadAttention(int embed_dim, int num_heads);
@@ -308,7 +306,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
     std::vector<std::shared_ptr<Module>> children() override {
-        return {q_proj, k_proj, v_proj, out_proj};
+        return {qkv_proj, out_proj};
     }
 };
 

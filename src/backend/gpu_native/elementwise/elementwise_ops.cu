@@ -126,6 +126,35 @@ extern "C" __global__ void reduce_broadcast_dim(const float* A, int a_off,
     }
 }
 
+extern "C" void gpu_reduce_broadcast_prepended(
+    void* A, int a_off, void* B, int b_off, int prod_prepended, int remaining) {
+    if (remaining <= 0) return;
+    int threads = 256;
+    int blocks = (remaining + threads - 1) / threads;
+#ifndef __HIP_PLATFORM_AMD__
+    reduce_broadcast_prepended<<<blocks, threads, 0, g_compute_stream>>>(
+        (const float*)A, a_off, (float*)B, b_off, prod_prepended, remaining);
+#else
+    hipLaunchKernelGGL(reduce_broadcast_prepended, dim3(blocks), dim3(threads), 0, g_compute_stream,
+        (const float*)A, a_off, (float*)B, b_off, prod_prepended, remaining);
+#endif
+}
+
+extern "C" void gpu_reduce_broadcast_dim(
+    void* A, int a_off, void* B, int b_off, int outer_size, int dim_size, int inner_size) {
+    int total = outer_size * inner_size;
+    if (total <= 0) return;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+#ifndef __HIP_PLATFORM_AMD__
+    reduce_broadcast_dim<<<blocks, threads, 0, g_compute_stream>>>(
+        (const float*)A, a_off, (float*)B, b_off, outer_size, dim_size, inner_size);
+#else
+    hipLaunchKernelGGL(reduce_broadcast_dim, dim3(blocks), dim3(threads), 0, g_compute_stream,
+        (const float*)A, a_off, (float*)B, b_off, outer_size, dim_size, inner_size);
+#endif
+}
+
 struct Int8Val {
     int s0, s1, s2, s3, s4, s5, s6, s7;
 };

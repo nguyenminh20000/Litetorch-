@@ -559,5 +559,309 @@ std::shared_ptr<Tensor> paged_attention(
     return out;
 }
 
+namespace {
+void qkv_do_split(std::shared_ptr<Tensor> qkv_c, std::shared_ptr<Tensor> q,
+                  std::shared_ptr<Tensor> k, std::shared_ptr<Tensor> v,
+                  int64_t B, int64_t T, int64_t H, int64_t D) {
+    auto native = BackendDispatcher::get().get_backend();
+    bool done = false;
+    if (qkv_c->device.type == DeviceType::GPU && native && native->is_available() && qkv_c->dtype == DataType::FP32) {
+        typedef void (*QkvSplitFn)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
+        auto fn = reinterpret_cast<QkvSplitFn>(native->get_kernel("", "", "qkv_split_transpose"));
+        if (fn) {
+            StorageUseGuard guard({qkv_c->storage, q->storage, k->storage, v->storage});
+            fn(qkv_c->gpu_data(), qkv_c->offset, q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+               v->gpu_data(), v->offset, B, T, H, D);
+            done = true;
+        }
+    }
+    if (!done) {
+        StorageUseGuard guard({qkv_c->storage, q->storage, k->storage, v->storage});
+        float* qkv_ptr = qkv_c->data_ptr();
+        float* q_ptr = q->data_ptr();
+        float* k_ptr = k->data_ptr();
+        float* v_ptr = v->data_ptr();
+        int64_t C = H * D;
+        ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t idx) {
+            int64_t d = idx % D;
+            int64_t t = (idx / D) % T;
+            int64_t h = (idx / (D * T)) % H;
+            int64_t b = idx / (D * T * H);
+            int64_t c = h * D + d;
+            int64_t base = (b * T + t) * 3 * C + c;
+            q_ptr[idx] = qkv_ptr[base];
+            k_ptr[idx] = qkv_ptr[base + C];
+            v_ptr[idx] = qkv_ptr[base + 2 * C];
+        });
+        if (q->device.type == DeviceType::GPU) {
+            CLBackend::get().write(q->gpu_data(), q->numel() * sizeof(float), q_ptr);
+            CLBackend::get().write(k->gpu_data(), k->numel() * sizeof(float), k_ptr);
+            CLBackend::get().write(v->gpu_data(), v->numel() * sizeof(float), v_ptr);
+        }
+    }
+}
+
+void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::shared_ptr<Tensor> gv,
+                  std::shared_ptr<Tensor> gqkv, int64_t B, int64_t T, int64_t H, int64_t D) {
+    auto native = BackendDispatcher::get().get_backend();
+    bool done = false;
+    if (gq->device.type == DeviceType::GPU && native && native->is_available() && gq->dtype == DataType::FP32) {
+        typedef void (*QkvMergeFn)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
+        auto fn = reinterpret_cast<QkvMergeFn>(native->get_kernel("", "", "qkv_split_transpose_backward"));
+        if (fn) {
+            StorageUseGuard guard({gq->storage, gk->storage, gv->storage, gqkv->storage});
+            fn(gq->gpu_data(), gq->offset, gk->gpu_data(), gk->offset, gv->gpu_data(), gv->offset,
+               gqkv->gpu_data(), gqkv->offset, B, T, H, D);
+            done = true;
+        }
+    }
+    if (!done) {
+        StorageUseGuard guard({gq->storage, gk->storage, gv->storage, gqkv->storage});
+        float* gq_ptr = gq->data_ptr();
+        float* gk_ptr = gk->data_ptr();
+        float* gv_ptr = gv->data_ptr();
+        float* gqkv_ptr = gqkv->data_ptr();
+        int64_t C = H * D;
+        ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t idx) {
+            int64_t c3 = idx % (3 * C);
+            int64_t s = c3 / C;
+            int64_t c = c3 % C;
+            int64_t t = (idx / (3 * C)) % T;
+            int64_t b = idx / (3 * C * T);
+            int64_t h = c / D;
+            int64_t d = c % D;
+            int64_t src = ((b * H + h) * T + t) * D + d;
+            gqkv_ptr[idx] = (s == 0) ? gq_ptr[src] : ((s == 1) ? gk_ptr[src] : gv_ptr[src]);
+        });
+        if (gqkv->device.type == DeviceType::GPU) {
+            CLBackend::get().write(gqkv->gpu_data(), gqkv->numel() * sizeof(float), gqkv_ptr);
+        }
+    }
+}
+}
+
+class FlashAttentionQKVNode : public Node {
+public:
+    int64_t num_heads;
+    FlashAttentionQKVNode(int64_t nh) : Node("FlashAttentionQKV"), num_heads(nh) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        auto qkv_c = saved_tensors[0];
+        auto q = saved_tensors[1];
+        auto k = saved_tensors[2];
+        auto v = saved_tensors[3];
+        std::shared_ptr<Tensor> saved_p = saved_tensors.size() > 4 ? saved_tensors[4] : nullptr;
+        int64_t B = q->shape[0];
+        int64_t H = q->shape[1];
+        int64_t T = q->shape[2];
+        int64_t D = q->shape[3];
+        int64_t H_kv = k->shape[1];
+        int64_t Tk = k->shape[2];
+        float scale = 1.0f / std::sqrt(static_cast<float>(D));
+        auto out_shared = output.lock();
+        if (!out_shared) return { nullptr };
+        auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto grad_q = Tensor::create(q->shape, q->device, false, q->dtype);
+        auto grad_k = Tensor::create(k->shape, k->device, false, k->dtype);
+        auto grad_v = Tensor::create(v->shape, v->device, false, v->dtype);
+        auto native = BackendDispatcher::get().get_backend();
+        if (q->device.type == DeviceType::GPU && native && native->is_available() && q->dtype == DataType::FP32) {
+            std::vector<std::shared_ptr<StorageImpl>> storages = {q->storage, k->storage, v->storage,
+                out_c->storage, gout_c->storage, grad_q->storage, grad_k->storage, grad_v->storage};
+            if (saved_p) storages.push_back(saved_p->storage);
+            StorageUseGuard guard(storages);
+            if (saved_p) {
+                native->flash_attention_backward_with_p(
+                    grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
+                    out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
+                    q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
+                    saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale);
+            } else {
+                native->flash_attention_backward(
+                    grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
+                    out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
+                    q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
+                    B, H, H_kv, T, Tk, D, scale);
+            }
+        } else {
+            return { nullptr };
+        }
+        auto grad_qkv = Tensor::create(qkv_c->shape, qkv_c->device, false, qkv_c->dtype);
+        qkv_do_merge(grad_q, grad_k, grad_v, grad_qkv, B, T, H, D);
+        return { grad_qkv };
+    }
+};
+
+std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t num_heads) {
+    if (qkv->shape.size() != 3) {
+        throw std::runtime_error("[litetorch Error] flash_attention_qkv input must be 3D (B, T, 3*C)");
+    }
+    int64_t B = qkv->shape[0];
+    int64_t T = qkv->shape[1];
+    int64_t C3 = qkv->shape[2];
+    if (C3 % (3 * num_heads) != 0) {
+        throw std::runtime_error("[litetorch Error] flash_attention_qkv: 3*C must be divisible by 3*num_heads");
+    }
+    int64_t H = num_heads;
+    int64_t D = C3 / (3 * H);
+    if (qkv->dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] flash_attention_qkv: only FP32 supported");
+    }
+    auto qkv_c = qkv->is_contiguous() ? qkv : qkv->contiguous();
+    auto q = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
+    auto k = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
+    auto v = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
+    qkv_do_split(qkv_c, q, k, v, B, T, H, D);
+    auto out = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
+    float scale = 1.0f / std::sqrt(static_cast<float>(D));
+    std::shared_ptr<Tensor> attn_p;
+    bool p_saved = false;
+    bool need_p = qkv->requires_grad;
+    if (need_p && qkv_c->device.type == DeviceType::GPU) {
+        attn_p = Tensor::create({B, H, T, T}, qkv_c->device, false, qkv_c->dtype);
+    }
+    auto native = BackendDispatcher::get().get_backend();
+    bool run_gpu = false;
+    if (qkv_c->device.type == DeviceType::GPU && native && native->is_available()) {
+        run_gpu = true;
+        std::vector<std::shared_ptr<StorageImpl>> fwd_storages = {q->storage, k->storage, v->storage, out->storage};
+        if (attn_p) fwd_storages.push_back(attn_p->storage);
+        StorageUseGuard guard(fwd_storages);
+        if (attn_p) {
+            p_saved = native->flash_attention_forward_save_p(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset,
+                B, H, H, T, T, D, scale);
+        } else {
+            native->flash_attention(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                v->gpu_data(), v->offset, out->gpu_data(), out->offset, B, H, H, T, T, D, scale);
+        }
+    }
+    if (!run_gpu) {
+        throw std::runtime_error("[litetorch Error] flash_attention_qkv: GPU native backend required");
+    }
+    if (qkv->requires_grad) {
+        auto node = std::make_shared<FlashAttentionQKVNode>(num_heads);
+        node->inputs = { {qkv, true} };
+        node->next_nodes = { qkv->creator };
+        node->saved_tensors = { qkv_c, q, k, v };
+        if (p_saved && attn_p) node->saved_tensors.push_back(attn_p);
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+class QKVExtractNode : public Node {
+public:
+    int64_t num_heads;
+    int64_t index;
+    QKVExtractNode(int64_t nh, int64_t idx) : Node("QKVExtract"), num_heads(nh), index(idx) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        auto qkv_c = saved_tensors[0];
+        int64_t B = qkv_c->shape[0];
+        int64_t T = qkv_c->shape[1];
+        int64_t H = num_heads;
+        int64_t D = qkv_c->shape[2] / (3 * H);
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto grad_qkv = Tensor::create(qkv_c->shape, qkv_c->device, false, qkv_c->dtype);
+        auto native = BackendDispatcher::get().get_backend();
+        bool done = false;
+        if (qkv_c->device.type == DeviceType::GPU && native && native->is_available() && qkv_c->dtype == DataType::FP32) {
+            typedef void (*QkvExtBwdFn)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+            auto fn = reinterpret_cast<QkvExtBwdFn>(native->get_kernel("", "", "qkv_extract_backward"));
+            if (fn) {
+                StorageUseGuard guard({gout_c->storage, grad_qkv->storage});
+                fn(gout_c->gpu_data(), gout_c->offset, grad_qkv->gpu_data(), grad_qkv->offset, B, T, H, D, index);
+                done = true;
+            }
+        }
+        if (!done) {
+            StorageUseGuard guard({gout_c->storage, grad_qkv->storage});
+            float* gout_ptr = gout_c->data_ptr();
+            float* gqkv_ptr = grad_qkv->data_ptr();
+            int64_t C = H * D;
+            ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t g) {
+                int64_t c3 = g % (3 * C);
+                int64_t s = c3 / C;
+                if (s != index) {
+                    gqkv_ptr[g] = 0.0f;
+                    return;
+                }
+                int64_t c = c3 % C;
+                int64_t t = (g / (3 * C)) % T;
+                int64_t b = g / (3 * C * T);
+                int64_t h = c / D;
+                int64_t d = c % D;
+                gqkv_ptr[g] = gout_ptr[((b * H + h) * T + t) * D + d];
+            });
+            if (grad_qkv->device.type == DeviceType::GPU) {
+                CLBackend::get().write(grad_qkv->gpu_data(), grad_qkv->numel() * sizeof(float), gqkv_ptr);
+            }
+        }
+        return { grad_qkv };
+    }
+};
+
+std::shared_ptr<Tensor> qkv_extract(std::shared_ptr<Tensor> qkv, int64_t num_heads, int64_t index) {
+    if (qkv->shape.size() != 3) {
+        throw std::runtime_error("[litetorch Error] qkv_extract input must be 3D (B, T, 3*C)");
+    }
+    if (index < 0 || index > 2) {
+        throw std::runtime_error("[litetorch Error] qkv_extract index must be 0, 1, or 2");
+    }
+    int64_t B = qkv->shape[0];
+    int64_t T = qkv->shape[1];
+    int64_t C3 = qkv->shape[2];
+    if (C3 % (3 * num_heads) != 0) {
+        throw std::runtime_error("[litetorch Error] qkv_extract: 3*C must be divisible by 3*num_heads");
+    }
+    int64_t H = num_heads;
+    int64_t D = C3 / (3 * H);
+    if (qkv->dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] qkv_extract: only FP32 supported");
+    }
+    auto qkv_c = qkv->is_contiguous() ? qkv : qkv->contiguous();
+    auto out = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
+    auto native = BackendDispatcher::get().get_backend();
+    bool done = false;
+    if (qkv_c->device.type == DeviceType::GPU && native && native->is_available()) {
+        typedef void (*QkvExtFn)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+        auto fn = reinterpret_cast<QkvExtFn>(native->get_kernel("", "", "qkv_extract"));
+        if (fn) {
+            StorageUseGuard guard({qkv_c->storage, out->storage});
+            fn(qkv_c->gpu_data(), qkv_c->offset, out->gpu_data(), out->offset, B, T, H, D, index);
+            done = true;
+        }
+    }
+    if (!done) {
+        StorageUseGuard guard({qkv_c->storage, out->storage});
+        float* qkv_ptr = qkv_c->data_ptr();
+        float* out_ptr = out->data_ptr();
+        int64_t C = H * D;
+        ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t g) {
+            int64_t d = g % D;
+            int64_t t = (g / D) % T;
+            int64_t h = (g / (D * T)) % H;
+            int64_t b = g / (D * T * H);
+            int64_t c = h * D + d;
+            out_ptr[g] = qkv_ptr[(b * T + t) * 3 * C + index * C + c];
+        });
+        if (out->device.type == DeviceType::GPU) {
+            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+        }
+    }
+    if (qkv->requires_grad) {
+        auto node = std::make_shared<QKVExtractNode>(num_heads, index);
+        node->inputs = { {qkv, true} };
+        node->next_nodes = { qkv->creator };
+        node->saved_tensors = { qkv_c };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
 }
 }

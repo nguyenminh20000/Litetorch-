@@ -721,6 +721,34 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                 N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding, apply_relu ? 1 : 0);
             done = true;
         }
+        typedef void (*Conv2dMiopenFn)(
+            const float*, int, const float*, int, const float*, int, int,
+            float*, int, int, int, int, int, int, int, int, int, int, int, int);
+        Conv2dMiopenFn miopen_conv2d = nullptr;
+        if (!done) {
+            miopen_conv2d = cached_native_kernel<Conv2dMiopenFn>("conv2d_miopen");
+        }
+        if (!done && miopen_conv2d) {
+            miopen_conv2d(
+                static_cast<const float*>(input_c->gpu_data()), input_c->offset,
+                static_cast<const float*>(weight_c->gpu_data()), weight_c->offset,
+                bias_c ? static_cast<const float*>(bias_c->gpu_data()) : nullptr,
+                bias_c ? bias_c->offset : 0, bias_c ? 1 : 0,
+                static_cast<float*>(out->gpu_data()), out->offset,
+                N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+            if (apply_relu) {
+                auto relu_k = cached_kernel<KernelID::ReLU>();
+                if (relu_k) {
+                    int rsize = N * C_out * H_out * W_out;
+                    cl_mem rm_mem = out->gpu_data();
+                    int rm_off = out->offset;
+                    CLBackend::get().launch(relu_k, {static_cast<size_t>(rsize)}, {},
+                        {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                }
+            }
+            done = true;
+        }
         auto im2col_k = done ? nullptr : cached_kernel<KernelID::Im2colFlat>();
         void* epilogue_k = nullptr;
         if (!done) {

@@ -128,25 +128,41 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
 
         bool run_gpu = false;
         if (grad->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastPrepended);
-            if (kernel) {
-                run_gpu = true;
-                auto reshaped = current->view({prod_prepended, remaining});
-                auto summed = Tensor::create({remaining}, grad->device);
-                StorageUseGuard guard({reshaped->storage, summed->storage});
-                
-                cl_mem in_mem = reshaped->gpu_data();
-                int in_off = reshaped->offset;
-                cl_mem out_mem = summed->gpu_data();
-                int out_off = summed->offset;
-                int prod_val = prod_prepended;
-                int rem_val = remaining;
+            auto native = BackendDispatcher::get().get_backend();
+            if (native && native->is_available()) {
+                typedef void (*ReducePrependedFn)(void*, int, void*, int, int, int);
+                auto fn = reinterpret_cast<ReducePrependedFn>(native->get_kernel("", "", "gpu_reduce_broadcast_prepended"));
+                if (fn) {
+                    run_gpu = true;
+                    auto reshaped = current->view({prod_prepended, remaining});
+                    auto summed = Tensor::create({remaining}, grad->device);
+                    StorageUseGuard guard({reshaped->storage, summed->storage});
+                    fn(reshaped->gpu_data(), reshaped->offset, summed->gpu_data(), summed->offset,
+                       (int)prod_prepended, (int)remaining);
+                    current = summed->view(final_shape);
+                }
+            }
+            if (!run_gpu) {
+                auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastPrepended);
+                if (kernel) {
+                    run_gpu = true;
+                    auto reshaped = current->view({prod_prepended, remaining});
+                    auto summed = Tensor::create({remaining}, grad->device);
+                    StorageUseGuard guard({reshaped->storage, summed->storage});
+                    
+                    cl_mem in_mem = reshaped->gpu_data();
+                    int in_off = reshaped->offset;
+                    cl_mem out_mem = summed->gpu_data();
+                    int out_off = summed->offset;
+                    int prod_val = prod_prepended;
+                    int rem_val = remaining;
 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(remaining)}, {},
-                    {&in_mem, &in_off, &out_mem, &out_off, &prod_val, &rem_val},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+                    CLBackend::get().launch(kernel, {static_cast<size_t>(remaining)}, {},
+                        {&in_mem, &in_off, &out_mem, &out_off, &prod_val, &rem_val},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
 
-                current = summed->view(final_shape);
+                    current = summed->view(final_shape);
+                }
             }
         }
         if (!run_gpu) {
@@ -189,26 +205,41 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
 
             bool run_gpu = false;
             if (grad->device.type == DeviceType::GPU) {
-                auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastDim);
-                if (kernel) {
-                    run_gpu = true;
-                    auto summed = Tensor::create(new_shape, grad->device);
-                    StorageUseGuard guard({current->storage, summed->storage});
+                auto native = BackendDispatcher::get().get_backend();
+                if (native && native->is_available()) {
+                    typedef void (*ReduceDimFn)(void*, int, void*, int, int, int, int);
+                    auto fn = reinterpret_cast<ReduceDimFn>(native->get_kernel("", "", "gpu_reduce_broadcast_dim"));
+                    if (fn) {
+                        run_gpu = true;
+                        auto summed = Tensor::create(new_shape, grad->device);
+                        StorageUseGuard guard({current->storage, summed->storage});
+                        fn(current->gpu_data(), current->offset, summed->gpu_data(), summed->offset,
+                           (int)outer_size, (int)dim_size, (int)inner_size);
+                        current = summed;
+                    }
+                }
+                if (!run_gpu) {
+                    auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastDim);
+                    if (kernel) {
+                        run_gpu = true;
+                        auto summed = Tensor::create(new_shape, grad->device);
+                        StorageUseGuard guard({current->storage, summed->storage});
 
-                    cl_mem in_mem = current->gpu_data();
-                    int in_off = current->offset;
-                    cl_mem out_mem = summed->gpu_data();
-                    int out_off = summed->offset;
-                    int out_sz = outer_size;
-                    int d_sz = dim_size;
-                    int in_sz = inner_size;
+                        cl_mem in_mem = current->gpu_data();
+                        int in_off = current->offset;
+                        cl_mem out_mem = summed->gpu_data();
+                        int out_off = summed->offset;
+                        int out_sz = outer_size;
+                        int d_sz = dim_size;
+                        int in_sz = inner_size;
 
-                    int total_threads = outer_size * inner_size;
-                    CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
-                        {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                        int total_threads = outer_size * inner_size;
+                        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+                            {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
 
-                    current = summed;
+                        current = summed;
+                    }
                 }
             }
             if (!run_gpu) {

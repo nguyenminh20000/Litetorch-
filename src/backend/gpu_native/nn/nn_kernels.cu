@@ -76,43 +76,6 @@ extern "C" __global__ void relu_inplace_kernel(float* data, int64_t n) {
     if (idx < n && data[idx] < 0.0f) data[idx] = 0.0f;
 }
 
-extern "C" void gpu_conv2d_cudnn(
-    const float* input, int in_off,
-    const float* weight, int w_off,
-    const float* bias, int b_off, int has_bias,
-    float* output, int out_off,
-    int N, int C_in, int H_in, int W_in,
-    int C_out, int H_out, int W_out,
-    int kh, int kw, int stride, int padding, int apply_relu) {
-    lt_cudnnHandle_t handle = get_cudnn_handle();
-    if (!handle) return;
-    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
-    CudnnConvDescs& d = get_cudnn_conv_descs(key);
-
-    float alpha = 1.0f, beta = 0.0f;
-    lt_cudnnActivationDescriptor_t reluDesc = nullptr;
-    if (apply_relu && has_bias && bias && g_cudnn.ConvolutionBiasActivationForward) {
-        reluDesc = get_relu_act_desc();
-    }
-    if (reluDesc) {
-        int st = g_cudnn.ConvolutionBiasActivationForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, nullptr, nullptr, d.bDesc, bias + b_off, reluDesc, d.yDesc, output + out_off);
-        if (st == 0) return;
-    }
-
-    g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, nullptr, 0, &beta, d.yDesc, output + out_off);
-
-    if (has_bias && bias) {
-        g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
-    }
-
-    if (apply_relu) {
-        int64_t total = (int64_t)N * C_out * H_out * W_out;
-        int threads = 256;
-        int64_t blocks = (total + threads - 1) / threads;
-        relu_inplace_kernel<<<(unsigned)blocks, threads>>>(output + out_off, total);
-    }
-}
-
 struct CudnnWorkspace {
     void* ptr = nullptr;
     size_t bytes = 0;
@@ -131,6 +94,83 @@ static void* cudnn_workspace(size_t need) {
     return ws.ptr;
 }
 
+static std::unordered_map<CudnnConvKey, int, CudnnConvKeyHash> cudnn_fwd_algo_cache;
+static std::mutex cudnn_fwd_algo_cache_mutex;
+
+static const size_t CUDNN_FWD_ALGO_WS_LIMIT = 256ULL * 1024ULL * 1024ULL;
+
+static int cudnn_pick_fwd_algo(LtCudnnFwdAlgoPerf* perfs, int count) {
+    for (int i = 0; i < count; ++i) {
+        if (perfs[i].status == 0 && perfs[i].memory <= CUDNN_FWD_ALGO_WS_LIMIT) return perfs[i].algo;
+    }
+    return 0;
+}
+
+static int cudnn_fwd_algo(lt_cudnnHandle_t handle, const CudnnConvKey& key, CudnnConvDescs& d) {
+    {
+        std::lock_guard<std::mutex> lock(cudnn_fwd_algo_cache_mutex);
+        auto it = cudnn_fwd_algo_cache.find(key);
+        if (it != cudnn_fwd_algo_cache.end()) return it->second;
+    }
+    int algo = 0;
+    if (g_cudnn.GetConvolutionForwardAlgorithm_v7) {
+        LtCudnnFwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionForwardAlgorithm_v7(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            algo = cudnn_pick_fwd_algo(perfs, returned);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(cudnn_fwd_algo_cache_mutex);
+        cudnn_fwd_algo_cache.emplace(key, algo);
+    }
+    return algo;
+}
+
+extern "C" void gpu_conv2d_cudnn(
+    const float* input, int in_off,
+    const float* weight, int w_off,
+    const float* bias, int b_off, int has_bias,
+    float* output, int out_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding, int apply_relu) {
+    lt_cudnnHandle_t handle = get_cudnn_handle();
+    if (!handle) return;
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs(key);
+
+    float alpha = 1.0f, beta = 0.0f;
+    int fwd_algo = cudnn_fwd_algo(handle, key, d);
+    size_t fwd_ws_bytes = 0;
+    void* fwd_ws = nullptr;
+    if (g_cudnn.GetConvolutionForwardWorkspaceSize &&
+        g_cudnn.GetConvolutionForwardWorkspaceSize(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, fwd_algo, &fwd_ws_bytes) == 0) {
+        fwd_ws = cudnn_workspace(fwd_ws_bytes);
+    }
+    lt_cudnnActivationDescriptor_t reluDesc = nullptr;
+    if (apply_relu && has_bias && bias && g_cudnn.ConvolutionBiasActivationForward) {
+        reluDesc = get_relu_act_desc();
+    }
+    if (reluDesc) {
+        int st = g_cudnn.ConvolutionBiasActivationForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, nullptr, nullptr, d.bDesc, bias + b_off, reluDesc, d.yDesc, output + out_off);
+        if (st == 0) return;
+    }
+
+    g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, d.yDesc, output + out_off);
+
+    if (has_bias && bias) {
+        g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
+    }
+
+    if (apply_relu) {
+        int64_t total = (int64_t)N * C_out * H_out * W_out;
+        int threads = 256;
+        int64_t blocks = (total + threads - 1) / threads;
+        relu_inplace_kernel<<<(unsigned)blocks, threads>>>(output + out_off, total);
+    }
+}
+
 struct CudnnBwdAlgos {
     int data_algo;
     int filter_algo;
@@ -139,7 +179,7 @@ struct CudnnBwdAlgos {
 static std::unordered_map<CudnnConvKey, CudnnBwdAlgos, CudnnConvKeyHash> cudnn_bwd_algo_cache;
 static std::mutex cudnn_bwd_algo_cache_mutex;
 
-static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 64ULL * 1024ULL * 1024ULL;
+static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 256ULL * 1024ULL * 1024ULL;
 
 static int cudnn_pick_bwd_algo(LtCudnnBwdAlgoPerf* perfs, int count) {
     for (int i = 0; i < count; ++i) {
@@ -236,6 +276,53 @@ extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output,
 #endif
 
 #ifdef USE_MIOPEN
+struct MiopenConvKey {
+    int N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding;
+    bool operator==(const MiopenConvKey& o) const {
+        return N == o.N && C_in == o.C_in && H_in == o.H_in && W_in == o.W_in &&
+               C_out == o.C_out && H_out == o.H_out && W_out == o.W_out &&
+               kh == o.kh && kw == o.kw && stride == o.stride && padding == o.padding;
+    }
+};
+
+struct MiopenConvKeyHash {
+    size_t operator()(const MiopenConvKey& k) const {
+        size_t h = 1469598103934665603ULL;
+        auto mix = [&](int v) { h ^= (size_t)v; h *= 1099511628211ULL; };
+        mix(k.N); mix(k.C_in); mix(k.H_in); mix(k.W_in);
+        mix(k.C_out); mix(k.H_out); mix(k.W_out);
+        mix(k.kh); mix(k.kw); mix(k.stride); mix(k.padding);
+        return h;
+    }
+};
+
+struct MiopenConvDescs {
+    miopenTensorDescriptor_t xDesc, yDesc, bDesc, wDesc;
+    miopenConvolutionDescriptor_t convDesc;
+};
+
+static std::unordered_map<MiopenConvKey, MiopenConvDescs, MiopenConvKeyHash> miopen_conv_cache;
+static std::mutex miopen_conv_cache_mutex;
+
+static MiopenConvDescs& get_miopen_conv_descs(const MiopenConvKey& key) {
+    std::lock_guard<std::mutex> lock(miopen_conv_cache_mutex);
+    auto it = miopen_conv_cache.find(key);
+    if (it != miopen_conv_cache.end()) return it->second;
+    MiopenConvDescs d;
+    miopenCreateTensorDescriptor(&d.xDesc);
+    miopenCreateTensorDescriptor(&d.yDesc);
+    miopenCreateTensorDescriptor(&d.bDesc);
+    miopenCreateTensorDescriptor(&d.wDesc);
+    miopenCreateConvolutionDescriptor(&d.convDesc);
+    miopenSet4dTensorDescriptor(d.xDesc, miopenFloat, key.N, key.C_in, key.H_in, key.W_in);
+    miopenSet4dTensorDescriptor(d.wDesc, miopenFloat, key.C_out, key.C_in, key.kh, key.kw);
+    miopenInitConvolutionDescriptor(d.convDesc, miopenConvolution, key.padding, key.padding, key.stride, key.stride, 1, 1);
+    miopenSet4dTensorDescriptor(d.yDesc, miopenFloat, key.N, key.C_out, key.H_out, key.W_out);
+    miopenSet4dTensorDescriptor(d.bDesc, miopenFloat, 1, key.C_out, 1, 1);
+    auto inserted = miopen_conv_cache.emplace(key, d);
+    return inserted.first->second;
+}
+
 extern "C" void gpu_conv2d_miopen(
     const float* input, int in_off,
     const float* weight, int w_off,
@@ -245,34 +332,15 @@ extern "C" void gpu_conv2d_miopen(
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding) {
     miopenHandle_t handle = get_miopen_handle();
-    miopenTensorDescriptor_t xDesc, yDesc, bDesc;
-    miopenTensorDescriptor_t wDesc;
-    miopenConvolutionDescriptor_t convDesc;
-
-    miopenCreateTensorDescriptor(&xDesc);
-    miopenCreateTensorDescriptor(&yDesc);
-    miopenCreateTensorDescriptor(&bDesc);
-    miopenCreateTensorDescriptor(&wDesc);
-    miopenCreateConvolutionDescriptor(&convDesc);
-
-    miopenSet4dTensorDescriptor(xDesc, miopenFloat, N, C_in, H_in, W_in);
-    miopenSet4dTensorDescriptor(wDesc, miopenFloat, C_out, C_in, kh, kw);
-    miopenInitConvolutionDescriptor(convDesc, miopenConvolution, padding, padding, stride, stride, 1, 1);
-    miopenSet4dTensorDescriptor(yDesc, miopenFloat, N, C_out, H_out, W_out);
+    MiopenConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    MiopenConvDescs& d = get_miopen_conv_descs(key);
 
     float alpha = 1.0f, beta = 0.0f;
-    miopenConvolutionForward(handle, &alpha, xDesc, input + in_off, wDesc, weight + w_off, convDesc, miopenConvolutionFwdAlgoGEMM, &beta, yDesc, output + out_off, nullptr, 0);
+    miopenConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, miopenConvolutionFwdAlgoGEMM, &beta, d.yDesc, output + out_off, nullptr, 0);
 
     if (has_bias && bias) {
-        miopenSet4dTensorDescriptor(bDesc, miopenFloat, 1, C_out, 1, 1);
-        miopenOpTensor(handle, miopenTensorOpAdd, &alpha, yDesc, output + out_off, &alpha, bDesc, bias + b_off, &beta, yDesc, output + out_off);
+        miopenOpTensor(handle, miopenTensorOpAdd, &alpha, d.yDesc, output + out_off, &alpha, d.bDesc, bias + b_off, &beta, d.yDesc, output + out_off);
     }
-
-    miopenDestroyTensorDescriptor(xDesc);
-    miopenDestroyTensorDescriptor(yDesc);
-    miopenDestroyTensorDescriptor(bDesc);
-    miopenDestroyTensorDescriptor(wDesc);
-    miopenDestroyConvolutionDescriptor(convDesc);
 }
 
 extern "C" void gpu_softmax_miopen(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {

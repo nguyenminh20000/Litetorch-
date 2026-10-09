@@ -6,6 +6,7 @@
 #include "litetorch/amp.h"
 #include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <stdexcept>
 
 namespace litetorch {
@@ -36,6 +37,8 @@ class MatMulNode : public Node {
 public:
     MatMulNode() : Node("MatMul") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
         std::shared_ptr<Tensor> grad_a = nullptr;
@@ -61,6 +64,8 @@ class BmmNode : public Node {
 public:
     BmmNode() : Node("Bmm") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
         std::shared_ptr<Tensor> grad_a = nullptr;
@@ -97,7 +102,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             auto b_fp32 = b->dtype == DataType::FP32 ? b : b->cast(DataType::FP32);
             auto out_fp32 = matmul(a_fp32, b_fp32);
             auto out = out_fp32->cast(a->dtype);
-            if (a->requires_grad || b->requires_grad) {
+            if ((a->requires_grad || b->requires_grad) && Autograd::is_grad_enabled()) {
                 auto node = std::make_shared<MatMulNode>();
                 node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
                 node->next_nodes = { a->creator, b->creator };
@@ -293,7 +298,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         }
     }
 
-    if (a->requires_grad || b->requires_grad) {
+    if ((a->requires_grad || b->requires_grad) && Autograd::is_grad_enabled()) {
         auto node = std::make_shared<MatMulNode>();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
@@ -309,6 +314,8 @@ class MatMulBiasNode : public Node {
 public:
     MatMulBiasNode() : Node("MatMulBias") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
         auto bias = saved_tensors[2];
@@ -388,7 +395,7 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
         auto result = Ops::add(mm, b_view);
         out->copy_(result);
     }
-    if (a->requires_grad || b->requires_grad || bias->requires_grad) {
+    if ((a->requires_grad || b->requires_grad || bias->requires_grad) && Autograd::is_grad_enabled()) {
         auto node = std::make_shared<MatMulBiasNode>();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad}, {bias, bias->requires_grad} };
         node->next_nodes = { a->creator, b->creator, bias->creator };
@@ -407,7 +414,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             auto b_fp32 = b->dtype == DataType::FP32 ? b : b->cast(DataType::FP32);
             auto out_fp32 = bmm(a_fp32, b_fp32);
             auto out = out_fp32->cast(a->dtype);
-            if (a->requires_grad || b->requires_grad) {
+            if ((a->requires_grad || b->requires_grad) && Autograd::is_grad_enabled()) {
                 auto node = std::make_shared<BmmNode>();
                 node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
                 node->next_nodes = { a->creator, b->creator };
@@ -520,7 +527,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             }
         }
     }
-    if (a->requires_grad || b->requires_grad) {
+    if ((a->requires_grad || b->requires_grad) && Autograd::is_grad_enabled()) {
         auto node = std::make_shared<BmmNode>();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
