@@ -12,7 +12,11 @@
 #include "math/reduction.cu"
 #include "elementwise/elementwise_ops.cu"
 #include "optim/optimizers.cu"
-#include "nn/nn_kernels.cu"
+#include "nn/conv_kernels.cu"
+#include "nn/pool_kernels.cu"
+#include "nn/softmax_kernels.cu"
+#include "nn/norm_kernels.cu"
+#include "nn/misc_kernels.cu"
 #include "nn/flash_attention.cu"
 
 GPU_API(Stream_t) g_compute_stream = nullptr;
