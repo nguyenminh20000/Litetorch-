@@ -56,6 +56,7 @@ public:
 
     Linear(int in_features, int out_features, bool has_bias = true);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward_gelu(std::shared_ptr<Tensor> input);
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
 };

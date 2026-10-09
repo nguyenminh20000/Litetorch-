@@ -115,7 +115,9 @@ static const char* g_precompiled_kernel_names[] = {
     "cast_fp32_to_fp8_e4m3",
     "cast_fp8_e4m3_to_fp32",
     "cast_fp32_to_fp8_e5m2",
-    "cast_fp8_e5m2_to_fp32"
+    "cast_fp8_e5m2_to_fp32",
+    "gelu_exact_forward_kernel",
+    "gelu_exact_backward_kernel"
 };
 
 CLBackend& CLBackend::get() {

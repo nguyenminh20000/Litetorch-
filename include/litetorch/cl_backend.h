@@ -140,6 +140,8 @@ enum class KernelID {
     CastFP8E4M3ToFP32,
     CastFP32ToFP8E5M2,
     CastFP8E5M2ToFP32,
+    GeluExactForward,
+    GeluExactBackward,
     COUNT
 };
 
