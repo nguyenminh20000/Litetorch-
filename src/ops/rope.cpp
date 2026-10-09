@@ -149,7 +149,7 @@ std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> 
         });
     }
 
-    if (Autograd::active_tensors.size() > 0 || requires_grad) {
+    if (Autograd::is_grad_enabled() && (Autograd::active_tensors.size() > 0 || requires_grad)) {
         auto node = std::make_shared<RopeNode>();
         node->next_nodes = {x->creator, cos->creator, sin->creator};
         node->inputs = {{x, x->requires_grad}, {cos, cos->requires_grad}, {sin, sin->requires_grad}};

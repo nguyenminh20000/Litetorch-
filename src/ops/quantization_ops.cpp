@@ -46,7 +46,7 @@ std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale
         auto input_fp32 = input->cast(DataType::FP32);
         auto out_fp32 = fake_quantize(input_fp32, scale, zero_point, bits);
         auto out = out_fp32->cast(input->dtype);
-        if (input->requires_grad) {
+        if (Autograd::is_grad_enabled() && (input->requires_grad)) {
             auto node = std::make_shared<FakeQuantizeNode>(scale, zero_point, bits);
             node->inputs = { {input, true} };
             node->next_nodes = { input->creator };
@@ -91,7 +91,7 @@ std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale
         });
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<FakeQuantizeNode>(scale, zero_point, bits);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };

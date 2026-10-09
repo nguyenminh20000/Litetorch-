@@ -313,7 +313,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
         });
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<MaxPool2dNode>(kernel_size, stride, padding);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
@@ -411,7 +411,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
         });
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<MaxPool3dNode>(kernel_size, stride, padding);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
@@ -478,7 +478,7 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
         });
     }
     
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<AdaptiveAvgPool2dNode>();
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };

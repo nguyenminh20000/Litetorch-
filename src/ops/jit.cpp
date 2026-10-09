@@ -390,13 +390,13 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
     bool any_requires_grad = false;
     std::vector<bool> inputs_need_grad(args.size(), false);
     for (size_t i = 0; i < args.size(); ++i) {
-        if (args[i]->requires_grad) {
+        if (Autograd::is_grad_enabled() && (args[i]->requires_grad)) {
             any_requires_grad = true;
             inputs_need_grad[i] = true;
         }
     }
 
-    if (any_requires_grad) {
+    if (Autograd::is_grad_enabled() && (any_requires_grad)) {
         auto node = std::make_shared<JITNode>(expr_, inputs_, args, inputs_need_grad);
         for (size_t i = 0; i < args.size(); ++i) {
             node->inputs.push_back({ args[i], inputs_need_grad[i] });

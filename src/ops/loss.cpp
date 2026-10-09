@@ -247,7 +247,7 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
         out->data_ptr()[0] = total * inv_n;
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<L1LossNode>();
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
@@ -306,7 +306,7 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         out->data_ptr()[0] = total_loss / size;
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<BceLossNode>();
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
@@ -356,7 +356,7 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         out->data_ptr()[0] = total * inv_n;
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<MseLossNode>();
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
@@ -428,7 +428,7 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
         }
     }
 
-    if (input->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<CrossEntropyLossNode>();
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };

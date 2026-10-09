@@ -754,7 +754,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
         });
     }
 
-    if (input->requires_grad || weight->requires_grad || bias->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad || bias->requires_grad)) {
         auto node = std::make_shared<BatchNorm2dNode>(eps);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad}, {bias, bias->requires_grad} };
         node->next_nodes = { input->creator, weight->creator, bias->creator };

@@ -379,7 +379,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         }
     }
 
-    if (q->requires_grad || k->requires_grad || v->requires_grad) {
+    if (Autograd::is_grad_enabled() && (q->requires_grad || k->requires_grad || v->requires_grad)) {
         auto node = std::make_shared<FlashAttentionNode>();
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
@@ -739,7 +739,7 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
     if (!run_gpu) {
         throw std::runtime_error("[litetorch Error] flash_attention_qkv: GPU native backend required");
     }
-    if (qkv->requires_grad) {
+    if (Autograd::is_grad_enabled() && (qkv->requires_grad)) {
         auto node = std::make_shared<FlashAttentionQKVNode>(num_heads);
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
@@ -851,7 +851,7 @@ std::shared_ptr<Tensor> qkv_extract(std::shared_ptr<Tensor> qkv, int64_t num_hea
             CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
-    if (qkv->requires_grad) {
+    if (Autograd::is_grad_enabled() && (qkv->requires_grad)) {
         auto node = std::make_shared<QKVExtractNode>(num_heads, index);
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };

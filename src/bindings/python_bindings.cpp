@@ -19,6 +19,7 @@
 #include "litetorch/quantization.h"
 #include "litetorch/guided_decoding.h"
 #include "litetorch/zero3_optimizer.h"
+#include "litetorch/autograd.h"
 #include "litetorch/fsdp.h"
 #include "litetorch/dtensor.h"
 #include "litetorch/device_mesh.h"
@@ -978,4 +979,16 @@ PYBIND11_MODULE(litetorch, m) {
     m.def("get_cached_gpu_bytes", []() -> size_t {
         return CachingAllocator::get().get_cached_gpu_bytes();
     });
+
+    py::class_<NoGradContext>(m, "no_grad")
+        .def(py::init<>())
+        .def("__enter__", [](NoGradContext& self) -> NoGradContext& { self.enter(); return self; })
+        .def("__exit__", [](NoGradContext& self, py::object, py::object, py::object) { self.exit(); });
+
+    m.def("is_grad_enabled", []() -> bool {
+        return Autograd::is_grad_enabled();
+    });
+    m.def("set_grad_enabled", [](bool enabled) {
+        Autograd::set_grad_enabled(enabled);
+    }, py::arg("enabled"));
 }

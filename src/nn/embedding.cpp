@@ -138,7 +138,7 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
         });
     }
 
-    if (input->requires_grad || weight->requires_grad) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad)) {
         auto node = std::make_shared<EmbeddingNode>(num_embeddings, embedding_dim);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };

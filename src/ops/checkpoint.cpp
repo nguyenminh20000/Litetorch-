@@ -76,7 +76,7 @@ std::shared_ptr<Tensor> checkpoint(std::shared_ptr<nn::Module> module, std::shar
         if (r) any_requires_grad = true;
     }
 
-    if (any_requires_grad) {
+    if (Autograd::is_grad_enabled() && (any_requires_grad)) {
         auto node = std::make_shared<ModuleCheckpointNode>(module, std::vector<std::shared_ptr<Tensor>>{input}, params);
         node->inputs.push_back({input, input_requires_grad});
         node->next_nodes.push_back(input->creator);

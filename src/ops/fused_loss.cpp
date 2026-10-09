@@ -177,7 +177,7 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
     float final_loss = static_cast<float>(total_loss / N);
     auto loss_tensor = Tensor::from_vector({final_loss}, {1}, x->device, requires_grad);
 
-    if (Autograd::active_tensors.size() > 0 || requires_grad) {
+    if (Autograd::is_grad_enabled() && (Autograd::active_tensors.size() > 0 || requires_grad)) {
         auto node = std::make_shared<FusedLinearCrossEntropyNode>();
         node->next_nodes = {x_2d->creator, weight->creator, target_1d->creator};
         node->inputs = {{x_2d, x_2d->requires_grad}, {weight, weight->requires_grad}, {target_1d, target_1d->requires_grad}};

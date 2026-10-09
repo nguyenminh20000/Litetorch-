@@ -870,7 +870,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
         }
     }
 
-    if (input->requires_grad || weight->requires_grad || (bias && bias->requires_grad)) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad || (bias && bias->requires_grad))) {
         auto node = std::make_shared<Conv2dNode>(stride, padding, apply_relu);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
@@ -1004,7 +1004,7 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         });
     }
 
-    if (input->requires_grad || weight->requires_grad || (bias && bias->requires_grad)) {
+    if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad || (bias && bias->requires_grad))) {
         auto node = std::make_shared<Conv3dNode>(stride, padding);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };

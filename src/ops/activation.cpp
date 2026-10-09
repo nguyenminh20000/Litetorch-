@@ -365,7 +365,7 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<ReluNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -410,7 +410,7 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SigmoidNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -455,7 +455,7 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<TanhNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -500,7 +500,7 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<LeakyReluNode>(negative_slope);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -593,7 +593,7 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         }
     }
     
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SoftmaxNode>(dim);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -652,7 +652,7 @@ std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
         }
     }
     
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<GeluNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };

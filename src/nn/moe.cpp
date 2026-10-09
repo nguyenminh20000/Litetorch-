@@ -229,7 +229,7 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         requires_grad = requires_grad || experts[e]->weight->requires_grad || (experts[e]->bias && experts[e]->bias->requires_grad);
     }
 
-    if (Autograd::active_tensors.size() > 0 || requires_grad) {
+    if (Autograd::is_grad_enabled() && (Autograd::active_tensors.size() > 0 || requires_grad)) {
         out->requires_grad = requires_grad;
         auto node = std::make_shared<MoeForwardNode>(num_experts, top_k, indices, probs, in_shape);
         node->next_nodes = {input->creator, gate_weight->creator};

@@ -1,3 +1,4 @@
+#include "litetorch/autograd.h"
 #include "litetorch/custom_ops.h"
 
 namespace litetorch {
@@ -45,13 +46,13 @@ std::shared_ptr<Tensor> Registry::call(const std::string& name, const std::vecto
 
     bool any_requires_grad = false;
     for (auto& a : args) {
-        if (a->requires_grad) {
+        if (Autograd::is_grad_enabled() && (a->requires_grad)) {
             any_requires_grad = true;
             break;
         }
     }
 
-    if (any_requires_grad && it->second.backward) {
+    if (Autograd::is_grad_enabled() && (any_requires_grad && it->second.backward)) {
         auto node = std::make_shared<CustomOpNode>(name, it->second.backward);
         for (auto& a : args) {
             node->inputs.push_back({a, a->requires_grad});

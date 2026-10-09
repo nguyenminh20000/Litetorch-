@@ -43,12 +43,12 @@ public:
         auto b = saved_tensors[1];
         std::shared_ptr<Tensor> grad_a = nullptr;
         std::shared_ptr<Tensor> grad_b = nullptr;
-        if (inputs.size() > 0 && inputs[0].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 0 && inputs[0].requires_grad)) {
             int64_t ndim_b = static_cast<int64_t>(b->shape.size());
             auto b_t = b->transpose(ndim_b - 2, ndim_b - 1);
             grad_a = Ops::matmul(grad_output, b_t);
         }
-        if (inputs.size() > 1 && inputs[1].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 1 && inputs[1].requires_grad)) {
             int64_t ndim_a = static_cast<int64_t>(a->shape.size());
             auto a_t = a->transpose(ndim_a - 2, ndim_a - 1);
             grad_b = Ops::matmul(a_t, grad_output);
@@ -70,11 +70,11 @@ public:
         auto b = saved_tensors[1];
         std::shared_ptr<Tensor> grad_a = nullptr;
         std::shared_ptr<Tensor> grad_b = nullptr;
-        if (inputs.size() > 0 && inputs[0].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 0 && inputs[0].requires_grad)) {
             auto b_t = b->transpose(1, 2);
             grad_a = Ops::bmm(grad_output, b_t);
         }
-        if (inputs.size() > 1 && inputs[1].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 1 && inputs[1].requires_grad)) {
             auto a_t = a->transpose(1, 2);
             grad_b = Ops::bmm(a_t, grad_output);
         }
@@ -322,12 +322,12 @@ public:
         std::shared_ptr<Tensor> grad_a = nullptr;
         std::shared_ptr<Tensor> grad_b = nullptr;
         std::shared_ptr<Tensor> grad_bias = nullptr;
-        if (inputs.size() > 0 && inputs[0].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 0 && inputs[0].requires_grad)) {
             int64_t ndim_b = static_cast<int64_t>(b->shape.size());
             auto b_t = b->transpose(ndim_b - 2, ndim_b - 1);
             grad_a = Ops::matmul(grad_output, b_t);
         }
-        if (inputs.size() > 1 && inputs[1].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 1 && inputs[1].requires_grad)) {
             int64_t ndim_a = static_cast<int64_t>(a->shape.size());
             auto a_t = a->transpose(ndim_a - 2, ndim_a - 1);
             grad_b = Ops::matmul(a_t, grad_output);
@@ -335,7 +335,7 @@ public:
                 grad_b = Ops::reduce_broadcast(grad_b, b->shape);
             }
         }
-        if (inputs.size() > 2 && inputs[2].requires_grad) {
+        if (Autograd::is_grad_enabled() && (inputs.size() > 2 && inputs[2].requires_grad)) {
             grad_bias = Ops::reduce_broadcast(grad_output, bias->shape);
         }
         return { grad_a, grad_b, grad_bias };

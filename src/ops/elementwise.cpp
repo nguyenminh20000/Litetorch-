@@ -436,7 +436,7 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
     }
 
-    if (a->requires_grad || b->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
         auto node = std::make_shared<AddNode>(a->shape, b->shape);
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
@@ -559,7 +559,7 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
     }
 
-    if (a->requires_grad || b->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
         auto node = std::make_shared<SubNode>(a->shape, b->shape);
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
@@ -682,7 +682,7 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
     }
 
-    if (a->requires_grad || b->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
         auto node = std::make_shared<MulNode>();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
@@ -805,7 +805,7 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
     }
 
-    if (a->requires_grad || b->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
         auto node = std::make_shared<DivNode>();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
@@ -864,7 +864,7 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<PowNode>(exponent);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -922,7 +922,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SqrtNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -979,7 +979,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<ExpNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1035,7 +1035,7 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<LogNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1101,7 +1101,7 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<AbsNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1156,7 +1156,7 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<NegNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1259,7 +1259,7 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
             if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
         }
     }
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SumNode>(a->shape);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1316,7 +1316,7 @@ std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a) {
     auto out = sum(a);
     auto scale = Tensor::from_vector({1.0f / num_el}, {1}, a->device);
     out = mul(out, scale);
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<MeanNode>(a->shape);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1392,7 +1392,7 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         }
     }
 
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<MaxNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1554,7 +1554,7 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
         out->copy_(cpu_out);
     }
 
-    if (any_requires_grad) {
+    if (Autograd::is_grad_enabled() && (any_requires_grad)) {
         auto node = std::make_shared<CatNode>(dim, shapes);
         node->output = out;
         out->creator = node;
@@ -1600,7 +1600,7 @@ std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
     }
 
     auto out = std::make_shared<Tensor>(a->storage, new_shape, new_strides, a->offset, a->device, a->requires_grad);
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SqueezeNode>(a->shape, a->strides);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1640,7 +1640,7 @@ std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim) {
     }
 
     auto out = std::make_shared<Tensor>(a->storage, new_shape, new_strides, a->offset, a->device, a->requires_grad);
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<UnsqueezeNode>(a->shape, a->strides);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1690,7 +1690,7 @@ std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float ma
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
     }
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<ClampNode>(min_val, max_val);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1721,7 +1721,7 @@ std::shared_ptr<Tensor> sin(std::shared_ptr<Tensor> a) {
     ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
         dst[i] = std::sin(src[i]);
     });
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<SinNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
@@ -1753,7 +1753,7 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a) {
     ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
         dst[i] = std::cos(src[i]);
     });
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<CosNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };

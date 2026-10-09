@@ -89,6 +89,27 @@ public:
     static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false);
 };
 
+class NoGradContext {
+private:
+    bool prev_state_ = true;
+    bool active_ = false;
+public:
+    NoGradContext() = default;
+    void enter() {
+        if (!active_) {
+            prev_state_ = Autograd::is_grad_enabled();
+            Autograd::set_grad_enabled(false);
+            active_ = true;
+        }
+    }
+    void exit() {
+        if (active_) {
+            Autograd::set_grad_enabled(prev_state_);
+            active_ = false;
+        }
+    }
+};
+
 }
 
 #endif

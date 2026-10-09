@@ -32,7 +32,7 @@ std::shared_ptr<Tensor> cast(std::shared_ptr<Tensor> a, DataType target_dtype) {
     
     auto out = a->cast(target_dtype);
     
-    if (a->requires_grad) {
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
         auto node = std::make_shared<CastNode>(a->dtype);
         node->inputs = { {a, a->requires_grad} };
         node->next_nodes = { a->creator };
