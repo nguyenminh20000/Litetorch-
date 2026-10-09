@@ -116,6 +116,7 @@ def copy_init_from_torch(torch_model, lt_model, dev):
 
 def sync():
     torch.cuda.synchronize()
+    lt.cuda_synchronize()
 
 
 def train_torch(x_train, y_train, x_test, y_test):
