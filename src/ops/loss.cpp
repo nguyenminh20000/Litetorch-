@@ -69,12 +69,13 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(input_c->shape, input_c->device);
 
         int N = input_c->shape[0];
         int C = input_c->shape[1];
 
-        StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
+        StorageUseGuard guard({input_c->storage, target_c->storage, gout_c->storage, grad_input->storage});
 
         if (input_c->device.type == DeviceType::GPU) {
             auto kernel = CLBackend::get().get_kernel(KernelID::CrossEntropyLossBackward);
@@ -82,8 +83,8 @@ public:
             int in_off = input_c->offset;
             cl_mem tgt_mem = target_c->gpu_data();
             int tgt_off = target_c->offset;
-            cl_mem gout_mem = grad_output->gpu_data();
-            int gout_off = grad_output->offset;
+            cl_mem gout_mem = gout_c->gpu_data();
+            int gout_off = gout_c->offset;
             cl_mem gin_mem = grad_input->gpu_data();
             int gin_off = grad_input->offset;
 
