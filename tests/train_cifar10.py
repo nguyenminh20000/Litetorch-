@@ -209,12 +209,12 @@ def eval_lt(model, x_test, y_test, dev):
 
 def main():
     x_train, y_train, x_test, y_test = get_data()
-    print("== cats/dogs: pytorch ==", flush=True)
+    print("== cifar10: pytorch ==", flush=True)
     t_times, t_acc, t_model = train_torch(x_train, y_train, x_test, y_test)
-    print("== cats/dogs: litetorch ==", flush=True)
+    print("== cifar10: litetorch ==", flush=True)
     l_times, l_acc = train_lt(x_train, y_train, x_test, y_test, t_model)
     tt, ll = sum(t_times) / len(t_times), sum(l_times) / len(l_times)
-    print(f"CATS_DOGS RESULT: torch {tt:.2f}s/epoch acc={t_acc:.4f} | lt {ll:.2f}s/epoch acc={l_acc:.4f} | speedup x{tt/ll:.2f}", flush=True)
+    print(f"CIFAR10 RESULT: torch {tt:.2f}s/epoch acc={t_acc:.4f} | lt {ll:.2f}s/epoch acc={l_acc:.4f} | speedup x{tt/ll:.2f}", flush=True)
     print("TRAIN_DONE", flush=True)
 
 
