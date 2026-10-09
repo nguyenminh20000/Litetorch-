@@ -94,6 +94,29 @@ def main():
     print(f"vocab={vocab} chars={len(text)}", flush=True)
     ids = np.array([stoi[c] for c in text], dtype=np.int64)
 
+    tdev = torch.device("cuda:0")
+    tmodel = TorchTransformer(vocab).to(tdev)
+    topt = torch.optim.Adam(tmodel.parameters(), lr=LR)
+    tloss = tnn.CrossEntropyLoss()
+    n_tok = 0
+    t0 = time.perf_counter()
+    for ep in range(EPOCHS):
+        te = time.perf_counter()
+        for xb, yb in get_batches(ids, BATCH, SEQ_LEN):
+            xt = torch.tensor(xb, dtype=torch.long, device=tdev)
+            yt = torch.tensor(yb, dtype=torch.long, device=tdev)
+            topt.zero_grad()
+            logits = tmodel(xt)
+            loss = tloss(logits.reshape(-1, vocab), yt.reshape(-1))
+            loss.backward()
+            topt.step()
+            n_tok += xb.shape[0] * SEQ_LEN
+        torch.cuda.synchronize()
+        dt = time.perf_counter() - te
+        print(f"[torch] epoch {ep+1}/{EPOCHS}: {dt:.2f}s", flush=True)
+    total = time.perf_counter() - t0
+    print(f"TORCH TRANSFORMER RESULT: {total/EPOCHS:.2f}s/epoch, {n_tok} tokens", flush=True)
+
     dev = lt.Device("gpu:0")
     emb, pos, layers, fc, _ = build_lt(vocab)
     params = emb.parameters() + pos.parameters() + fc.parameters()
@@ -116,6 +139,8 @@ def main():
             loss.backward()
             opt.step()
             n_tok += b * SEQ_LEN
+        torch.cuda.synchronize()
+        lt.cuda_synchronize()
         dt = time.perf_counter() - te
         print(f"[lt] epoch {ep+1}/{EPOCHS}: {dt:.2f}s", flush=True)
     total = time.perf_counter() - t0
