@@ -1,17 +1,26 @@
 #include "litetorch/autograd.h"
 #include "litetorch/tensor.h"
 #include "litetorch/ops.h"
+#include <algorithm>
 #include <unordered_set>
 #include <unordered_map>
 
 namespace litetorch {
 
-thread_local std::vector<std::shared_ptr<Tensor>> Autograd::active_tensors;
+thread_local std::vector<std::weak_ptr<Tensor>> Autograd::active_tensors;
 thread_local bool Autograd::is_create_graph_ = false;
 thread_local bool Autograd::is_grad_enabled_ = true;
 
 ActiveTensorsGuard::~ActiveTensorsGuard() {
     Autograd::active_tensors.clear();
+}
+
+bool Autograd::has_active_tensors() {
+    auto& v = active_tensors;
+    v.erase(std::remove_if(v.begin(), v.end(),
+        [](const std::weak_ptr<Tensor>& w) { return w.expired(); }),
+        v.end());
+    return !v.empty();
 }
 
 NoGradGuard::NoGradGuard() {

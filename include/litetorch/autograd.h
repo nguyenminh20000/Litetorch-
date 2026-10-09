@@ -81,11 +81,12 @@ public:
 
 class Autograd {
 public:
-    static thread_local std::vector<std::shared_ptr<Tensor>> active_tensors;
+    static thread_local std::vector<std::weak_ptr<Tensor>> active_tensors;
     static thread_local bool is_create_graph_;
     static thread_local bool is_grad_enabled_;
     static bool is_grad_enabled() { return is_grad_enabled_; }
     static void set_grad_enabled(bool enabled) { is_grad_enabled_ = enabled; }
+    static bool has_active_tensors();
     static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false);
 };
 

@@ -182,7 +182,7 @@ std::shared_ptr<Tensor> moe_gate(
     }
 
     bool requires_grad = input->requires_grad || gate_weight->requires_grad;
-    if (Autograd::is_grad_enabled() && (Autograd::active_tensors.size() > 0 || requires_grad)) {
+    if (Autograd::is_grad_enabled() && (Autograd::has_active_tensors() || requires_grad)) {
         out_probs->requires_grad = requires_grad;
         auto node = std::make_shared<MoeGateNode>(top_k, indices_out);
         node->next_nodes = {input->creator, gate_weight->creator};
