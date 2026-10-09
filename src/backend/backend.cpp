@@ -35,6 +35,10 @@ typedef void (*gpu_flash_attention_t)(void*, int64_t, void*, int64_t, void*, int
 typedef void (*gpu_flash_attention_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
 typedef void (*gpu_flash_attention_backward_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
 typedef void (*gpu_flash_attention_backward_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
+typedef int (*gpu_flash_attention_forward_save_p_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
+typedef int (*gpu_flash_attention_half_forward_save_p_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
+typedef void (*gpu_flash_attention_backward_with_p_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
+typedef void (*gpu_flash_attention_backward_half_with_p_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float);
 
 typedef void (*gpu_cat_forward_t)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_cat_backward_t)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
@@ -92,6 +96,10 @@ public:
     gpu_flash_attention_half_t gpu_flash_attention_half_fn = nullptr;
     gpu_flash_attention_backward_t gpu_flash_attention_backward_fn = nullptr;
     gpu_flash_attention_backward_half_t gpu_flash_attention_backward_half_fn = nullptr;
+    gpu_flash_attention_forward_save_p_t gpu_flash_attention_forward_save_p_fn = nullptr;
+    gpu_flash_attention_half_forward_save_p_t gpu_flash_attention_half_forward_save_p_fn = nullptr;
+    gpu_flash_attention_backward_with_p_t gpu_flash_attention_backward_with_p_fn = nullptr;
+    gpu_flash_attention_backward_half_with_p_t gpu_flash_attention_backward_half_with_p_fn = nullptr;
     gpu_cat_forward_t gpu_cat_forward_fn = nullptr;
     gpu_cat_backward_t gpu_cat_backward_fn = nullptr;
     gpu_moe_gate_t gpu_moe_gate_fn = nullptr;
@@ -195,6 +203,10 @@ public:
         gpu_flash_attention_half_fn = (gpu_flash_attention_half_t)dlsym(handle, "gpu_flash_attention_half");
         gpu_flash_attention_backward_fn = (gpu_flash_attention_backward_t)dlsym(handle, "gpu_flash_attention_backward");
         gpu_flash_attention_backward_half_fn = (gpu_flash_attention_backward_half_t)dlsym(handle, "gpu_flash_attention_backward_half");
+        gpu_flash_attention_forward_save_p_fn = (gpu_flash_attention_forward_save_p_t)dlsym(handle, "gpu_flash_attention_forward_save_p");
+        gpu_flash_attention_half_forward_save_p_fn = (gpu_flash_attention_half_forward_save_p_t)dlsym(handle, "gpu_flash_attention_half_forward_save_p");
+        gpu_flash_attention_backward_with_p_fn = (gpu_flash_attention_backward_with_p_t)dlsym(handle, "gpu_flash_attention_backward_with_p");
+        gpu_flash_attention_backward_half_with_p_fn = (gpu_flash_attention_backward_half_with_p_t)dlsym(handle, "gpu_flash_attention_backward_half_with_p");
         gpu_cat_forward_fn = (gpu_cat_forward_t)dlsym(handle, "gpu_cat_forward");
         gpu_cat_backward_fn = (gpu_cat_backward_t)dlsym(handle, "gpu_cat_backward");
         gpu_moe_gate_fn = (gpu_moe_gate_t)dlsym(handle, "gpu_moe_gate");
@@ -277,6 +289,30 @@ public:
     }
     void flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
         if (gpu_flash_attention_backward_half_fn) gpu_flash_attention_backward_half_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+    }
+    bool flash_attention_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
+        if (gpu_flash_attention_forward_save_p_fn) return gpu_flash_attention_forward_save_p_fn(Q, q_off, K, k_off, V, v_off, O, o_off, P, p_off, B, H, H_kv, Tq, Tk, D, scale) != 0;
+        flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+        return false;
+    }
+    bool flash_attention_half_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
+        if (gpu_flash_attention_half_forward_save_p_fn) return gpu_flash_attention_half_forward_save_p_fn(Q, q_off, K, k_off, V, v_off, O, o_off, P, p_off, B, H, H_kv, Tq, Tk, D, scale) != 0;
+        flash_attention_half(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+        return false;
+    }
+    void flash_attention_backward_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
+        if (gpu_flash_attention_backward_with_p_fn) {
+            gpu_flash_attention_backward_with_p_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, P, p_off, B, H, H_kv, Tq, Tk, D, scale);
+        } else {
+            flash_attention_backward(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+        }
+    }
+    void flash_attention_backward_half_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) override {
+        if (gpu_flash_attention_backward_half_with_p_fn) {
+            gpu_flash_attention_backward_half_with_p_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, P, p_off, B, H, H_kv, Tq, Tk, D, scale);
+        } else {
+            flash_attention_backward_half(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+        }
     }
     
     void cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) override {

@@ -457,6 +457,22 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
 #endif
 }
 
+extern "C" int gpu_flash_attention_forward_save_p(void *Q, int64_t q_off, void *K, int64_t k_off,
+                                    void *V, int64_t v_off, void *O, int64_t o_off,
+                                    void *P, int64_t p_off,
+                                    int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
+                                    int64_t D, float scale) {
+    gpu_flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+    if (g_fa3_fwd_fn) {
+        return 0;
+    }
+    size_t total_elements = (size_t)B * H * Tq * Tk;
+    float* p_out = (float*)P + p_off;
+    GPU_API(MemcpyAsync)(p_out, g_attn_scratch_p, total_elements * sizeof(float),
+                         GPU_API(MemcpyDeviceToDevice), g_compute_stream);
+    return 1;
+}
+
 extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_t k_off,
                                          void *V, int64_t v_off, void *O, int64_t o_off,
                                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
@@ -545,6 +561,23 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
                                   o_ptr, D, strideO,
                                   batch_count);
 #endif
+}
+
+extern "C" int gpu_flash_attention_half_forward_save_p(void *Q, int64_t q_off, void *K, int64_t k_off,
+                                    void *V, int64_t v_off, void *O, int64_t o_off,
+                                    void *P, int64_t p_off,
+                                    int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
+                                    int64_t D, float scale) {
+    gpu_flash_attention_half(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+    if (g_fa3_fwd_fn) {
+        return 0;
+    }
+    size_t total_elements = (size_t)B * H * Tq * Tk;
+    __half* p_out = (__half*)P + p_off;
+    __half* p_scratch = (__half*)g_attn_scratch_p;
+    GPU_API(MemcpyAsync)(p_out, p_scratch, total_elements * sizeof(__half),
+                         GPU_API(MemcpyDeviceToDevice), g_compute_stream);
+    return 1;
 }
 
 extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK, int64_t dk_off,
@@ -678,6 +711,127 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                                   batch_count);
 
     launch_softmax_bwd_hip(g_attn_scratch_dp, g_attn_scratch_p, g_attn_scratch_ds, total_rows, Tk, scale);
+
+    rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+                                  D, Tq, Tk,
+                                  &one,
+                                  k_ptr, D, strideK,
+                                  g_attn_scratch_ds, Tk, strideS,
+                                  &zero,
+                                  dq_ptr, D, strideQ,
+                                  batch_count);
+
+    rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+                                  D, Tk, Tq,
+                                  &one,
+                                  q_ptr, D, strideQ,
+                                  g_attn_scratch_ds, Tk, strideS,
+                                  &zero,
+                                  dk_ptr, D, strideK,
+                                  batch_count);
+#endif
+}
+
+extern "C" void gpu_flash_attention_backward_with_p(void *dQ, int64_t dq_off, void *dK, int64_t dk_off,
+                                             void *dV, int64_t dv_off, void *O, int64_t o_off, void *dO,
+                                             int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
+                                             void *V, int64_t v_off, void *P, int64_t p_off,
+                                             int64_t B, int64_t H, int64_t H_kv, int64_t Tq,
+                                             int64_t Tk, int64_t D, float scale) {
+    size_t total_elements = (size_t)B * H * Tq * Tk;
+    ensure_attn_scratch(total_elements);
+
+    float* dq_ptr = (float*)dQ + dq_off;
+    float* dk_ptr = (float*)dK + dk_off;
+    float* dv_ptr = (float*)dV + dv_off;
+    const float* do_ptr = (const float*)dO + do_off;
+    const float* q_ptr = (const float*)Q + q_off;
+    const float* k_ptr = (const float*)K + k_off;
+    const float* v_ptr = (const float*)V + v_off;
+    const float* p_ptr = (const float*)P + p_off;
+
+#ifndef __HIP_PLATFORM_AMD__
+    cublasHandle_t handle = get_cublas_handle();
+    long long strideK = Tk * D;
+    long long strideQ = Tq * D;
+    long long strideS = Tq * Tk;
+    long long strideV = Tk * D;
+    long long strideO = Tq * D;
+    int batch_count = B * H;
+
+    int total_rows = B * H * Tq;
+
+    float one = 1.0f;
+    float zero = 0.0f;
+    cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+                             D, Tk, Tq,
+                             &one,
+                             do_ptr, D, strideO,
+                             p_ptr, Tk, strideS,
+                             &zero,
+                             dv_ptr, D, strideV,
+                             batch_count);
+
+    cublasSgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                             Tk, Tq, D,
+                             &one,
+                             v_ptr, D, strideV,
+                             do_ptr, D, strideO,
+                             &zero,
+                             g_attn_scratch_dp, Tk, strideS,
+                             batch_count);
+
+    launch_softmax_bwd(g_attn_scratch_dp, p_ptr, g_attn_scratch_ds, total_rows, Tk, scale);
+
+    cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                             D, Tq, Tk,
+                             &one,
+                             k_ptr, D, strideK,
+                             g_attn_scratch_ds, Tk, strideS,
+                             &zero,
+                             dq_ptr, D, strideQ,
+                             batch_count);
+
+    cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+                             D, Tk, Tq,
+                             &one,
+                             q_ptr, D, strideQ,
+                             g_attn_scratch_ds, Tk, strideS,
+                             &zero,
+                             dk_ptr, D, strideK,
+                             batch_count);
+#else
+    rocblas_handle handle = get_rocblas_handle();
+    long long strideK = Tk * D;
+    long long strideQ = Tq * D;
+    long long strideS = Tq * Tk;
+    long long strideV = Tk * D;
+    long long strideO = Tq * D;
+    int batch_count = B * H;
+
+    int total_rows = B * H * Tq;
+
+    float one = 1.0f;
+    float zero = 0.0f;
+    rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+                                  D, Tk, Tq,
+                                  &one,
+                                  do_ptr, D, strideO,
+                                  p_ptr, Tk, strideS,
+                                  &zero,
+                                  dv_ptr, D, strideV,
+                                  batch_count);
+
+    rocblas_sgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+                                  Tk, Tq, D,
+                                  &one,
+                                  v_ptr, D, strideV,
+                                  do_ptr, D, strideO,
+                                  &zero,
+                                  g_attn_scratch_dp, Tk, strideS,
+                                  batch_count);
+
+    launch_softmax_bwd_hip(g_attn_scratch_dp, p_ptr, g_attn_scratch_ds, total_rows, Tk, scale);
 
     rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
                                   D, Tq, Tk,
@@ -834,6 +988,129 @@ extern "C" void gpu_flash_attention_backward_half(
                                   batch_count);
 
     launch_softmax_bwd_half_hip(dp_half, p_half, ds_half, total_rows, Tk, scale);
+
+    rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+                                  D, Tq, Tk,
+                                  &one,
+                                  k_ptr, D, strideK,
+                                  ds_half, Tk, strideS,
+                                  &zero,
+                                  dq_ptr, D, strideQ,
+                                  batch_count);
+
+    rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+                                  D, Tk, Tq,
+                                  &one,
+                                  q_ptr, D, strideQ,
+                                  ds_half, Tk, strideS,
+                                  &zero,
+                                  dk_ptr, D, strideK,
+                                  batch_count);
+#endif
+}
+
+extern "C" void gpu_flash_attention_backward_half_with_p(
+    void *dQ, int64_t dq_off, void *dK, int64_t dk_off, void *dV, int64_t dv_off, void *O,
+    int64_t o_off, void *dO, int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
+    void *V, int64_t v_off, void *P, int64_t p_off,
+    int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
+    float scale) {
+    size_t total_elements = (size_t)B * H * Tq * Tk;
+    ensure_attn_scratch(total_elements);
+
+    __half* dq_ptr = (__half*)dQ + dq_off;
+    __half* dk_ptr = (__half*)dK + dk_off;
+    __half* dv_ptr = (__half*)dV + dv_off;
+    const __half* do_ptr = (const __half*)dO + do_off;
+    const __half* q_ptr = (const __half*)Q + q_off;
+    const __half* k_ptr = (const __half*)K + k_off;
+    const __half* v_ptr = (const __half*)V + v_off;
+    const __half* p_ptr = (const __half*)P + p_off;
+    __half* dp_half = (__half*)g_attn_scratch_dp;
+    __half* ds_half = (__half*)g_attn_scratch_ds;
+
+#ifndef __HIP_PLATFORM_AMD__
+    cublasHandle_t handle = get_cublas_handle();
+    long long strideK = Tk * D;
+    long long strideQ = Tq * D;
+    long long strideS = Tq * Tk;
+    long long strideV = Tk * D;
+    long long strideO = Tq * D;
+    int batch_count = B * H;
+
+    int total_rows = B * H * Tq;
+
+    const __half one = __float2half(1.0f);
+    const __half zero = __float2half(0.0f);
+    cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+                             D, Tk, Tq,
+                             &one,
+                             do_ptr, D, strideO,
+                             p_ptr, Tk, strideS,
+                             &zero,
+                             dv_ptr, D, strideV,
+                             batch_count);
+
+    cublasHgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                             Tk, Tq, D,
+                             &one,
+                             v_ptr, D, strideV,
+                             do_ptr, D, strideO,
+                             &zero,
+                             dp_half, Tk, strideS,
+                             batch_count);
+
+    launch_softmax_bwd_half(dp_half, p_ptr, ds_half, total_rows, Tk, scale);
+
+    cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                             D, Tq, Tk,
+                             &one,
+                             k_ptr, D, strideK,
+                             ds_half, Tk, strideS,
+                             &zero,
+                             dq_ptr, D, strideQ,
+                             batch_count);
+
+    cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+                             D, Tk, Tq,
+                             &one,
+                             q_ptr, D, strideQ,
+                             ds_half, Tk, strideS,
+                             &zero,
+                             dk_ptr, D, strideK,
+                             batch_count);
+#else
+    rocblas_handle handle = get_rocblas_handle();
+    long long strideK = Tk * D;
+    long long strideQ = Tq * D;
+    long long strideS = Tq * Tk;
+    long long strideV = Tk * D;
+    long long strideO = Tq * D;
+    int batch_count = B * H;
+
+    int total_rows = B * H * Tq;
+
+    const __half one = __float2half(1.0f);
+    const __half zero = __float2half(0.0f);
+    rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+                                  D, Tk, Tq,
+                                  &one,
+                                  do_ptr, D, strideO,
+                                  p_ptr, Tk, strideS,
+                                  &zero,
+                                  dv_ptr, D, strideV,
+                                  batch_count);
+
+    rocblas_hgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+                                  Tk, Tq, D,
+                                  &one,
+                                  v_ptr, D, strideV,
+                                  do_ptr, D, strideO,
+                                  &zero,
+                                  dp_half, Tk, strideS,
+                                  batch_count);
+
+    launch_softmax_bwd_half_hip(dp_half, p_ptr, ds_half, total_rows, Tk, scale);
 
     rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
                                   D, Tq, Tk,
