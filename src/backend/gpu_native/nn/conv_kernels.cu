@@ -2,6 +2,8 @@
 #include <unordered_map>
 #include <mutex>
 
+extern "C" __global__ void relu_inplace_kernel(float* data, int64_t n);
+
 #ifndef __HIP_PLATFORM_AMD__
 
 struct CudnnConvKey {
