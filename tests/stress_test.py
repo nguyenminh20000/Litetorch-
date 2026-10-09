@@ -29,15 +29,18 @@ def stress_conv(depth=8, width=128, size=32, batch=64, iters=20):
     for i in range(depth):
         c = lt.nn.Conv2d(width if i else 3, width, 3, padding=1)
         c.to(dev)
-        layers_l += [c, lt.nn.ReLU()]
+        layers_l.append(c)
+        layers_l.append(lt.nn.ReLU())
     model_l = lt.nn.Sequential(layers_l)
     model_l.to(dev)
     x_l = lt.Tensor.from_vector(torch.randn(batch * 3 * size * size).tolist(), [batch, 3, size, size], dev)
     for _ in range(3):
         model_l.forward(x_l)
+    lt.cuda_synchronize()
     t0 = time.time()
     for _ in range(iters):
         model_l.forward(x_l)
+    lt.cuda_synchronize()
     t_lt = (time.time() - t0) / iters * 1000
     print(f"STRESS CONV: torch {t_torch:.2f}ms | lt {t_lt:.2f}ms | x{t_torch/t_lt:.2f}", flush=True)
 
@@ -65,15 +68,18 @@ def stress_linear(depth=8, width=1024, batch=512, iters=50):
     for i in range(depth):
         l = lt.nn.Linear(width, width)
         l.to(dev)
-        layers_l += [l, lt.nn.ReLU()]
+        layers_l.append(l)
+        layers_l.append(lt.nn.ReLU())
     model_l = lt.nn.Sequential(layers_l)
     model_l.to(dev)
     x_l = lt.Tensor.from_vector(torch.randn(batch * width).tolist(), [batch, width], dev)
     for _ in range(3):
         model_l.forward(x_l)
+    lt.cuda_synchronize()
     t0 = time.time()
     for _ in range(iters):
         model_l.forward(x_l)
+    lt.cuda_synchronize()
     t_lt = (time.time() - t0) / iters * 1000
     print(f"STRESS LINEAR: torch {t_torch:.2f}ms | lt {t_lt:.2f}ms | x{t_torch/t_lt:.2f}", flush=True)
 
@@ -105,9 +111,11 @@ def stress_large_batch():
             x_l = lt.Tensor.from_vector(torch.randn(batch * 3 * 64 * 64).tolist(), [batch, 3, 64, 64], dev)
             for _ in range(3):
                 model_l.forward(x_l)
+            lt.cuda_synchronize()
             t0 = time.time()
             for _ in range(10):
                 model_l.forward(x_l)
+            lt.cuda_synchronize()
             t_lt = (time.time() - t0) / 10 * 1000
             print(f"  batch={batch}: torch {t_torch:.2f}ms | lt {t_lt:.2f}ms | x{t_torch/t_lt:.2f}", flush=True)
         except Exception as e:
