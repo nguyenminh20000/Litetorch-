@@ -51,7 +51,7 @@ class TorchTransformer(tnn.Module):
         self.emb = tnn.Embedding(vocab, EMB_DIM)
         self.pos = tnn.Embedding(SEQ_LEN, EMB_DIM)
         self.layers = tnn.ModuleList([
-            tnn.TransformerDecoderLayer(EMB_DIM, N_HEAD, EMB_DIM*4, batch_first=True)
+            tnn.TransformerEncoderLayer(EMB_DIM, N_HEAD, EMB_DIM*4, batch_first=True)
             for _ in range(N_LAYER)
         ])
         self.fc = tnn.Linear(EMB_DIM, vocab)
