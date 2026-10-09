@@ -71,6 +71,11 @@ static lt_cudnnActivationDescriptor_t get_relu_act_desc() {
     return relu_act_desc;
 }
 
+extern "C" __global__ void relu_inplace_kernel(float* data, int64_t n) {
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n && data[idx] < 0.0f) data[idx] = 0.0f;
+}
+
 extern "C" void gpu_conv2d_cudnn(
     const float* input, int in_off,
     const float* weight, int w_off,
@@ -98,6 +103,13 @@ extern "C" void gpu_conv2d_cudnn(
 
     if (has_bias && bias) {
         g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
+    }
+
+    if (apply_relu) {
+        int64_t total = (int64_t)N * C_out * H_out * W_out;
+        int threads = 256;
+        int64_t blocks = (total + threads - 1) / threads;
+        relu_inplace_kernel<<<(unsigned)blocks, threads>>>(output + out_off, total);
     }
 }
 
