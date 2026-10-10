@@ -504,10 +504,19 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
     if (!src || !dst || size == 0) return;
     int sdev = ptr_device(src);
     int ddev = ptr_device(dst);
-    if (sdev == ddev || ensure_p2p(ddev, sdev)) {
+    if (sdev == ddev) {
         GPU_API(SetDevice)(ddev);
-        GPU_API(Error_t) err = GPU_API(Memcpy)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice));
-        (void)err;
+        GPU_API(Stream_t) s = dev_stream(ddev);
+        GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), s);
+        GPU_API(StreamSynchronize)(s);
+        return;
+    }
+    if (ensure_p2p(ddev, sdev)) {
+        GPU_API(StreamSynchronize)(dev_stream(sdev));
+        GPU_API(SetDevice)(ddev);
+        GPU_API(Stream_t) ds = dev_stream(ddev);
+        GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), ds);
+        GPU_API(StreamSynchronize)(ds);
         return;
     }
     void* tmp = malloc(size);

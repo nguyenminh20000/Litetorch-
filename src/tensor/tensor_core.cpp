@@ -5,6 +5,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/allocator.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <numeric>
 #include <cstdint>
 #include <stdexcept>
@@ -252,7 +253,7 @@ std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, cons
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
         if (gpu_ptr) {
             size_t bytes_to_copy = std::min(data.size(), static_cast<size_t>(tensor->numel())) * sizeof(float);
-            CLBackend::get().write(gpu_ptr, bytes_to_copy, data.data(), tensor->offset * sizeof(float));
+            rt_gpu_write(gpu_ptr, bytes_to_copy, data.data(), tensor->offset * sizeof(float));
         }
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -276,16 +277,15 @@ std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, cons
 std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const Device& device, bool requires_grad) {
     auto tensor = create(shape, device, requires_grad);
     if (tensor->device.type == DeviceType::GPU) {
-        auto native = BackendDispatcher::get().get_backend();
-        if (native && native->is_available()) {
+        if (auto native = native_gpu_backend()) {
             std::vector<float> zeros_vec(tensor->numel(), 0.0f);
             native->write(tensor->gpu_data(), tensor->numel() * sizeof(float), zeros_vec.data(), tensor->offset * sizeof(float));
         } else {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
+            void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
             int size_val = static_cast<int>(tensor->numel());
             int off_val = static_cast<int>(tensor->offset);
             cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-            CLBackend::get().launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+            rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -462,13 +462,7 @@ std::shared_ptr<Tensor> Tensor::to(const Device& target_device) {
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
-            size_t bytes = storage->size * elem_sz;
-            void* tmp = malloc(bytes);
-            if (tmp) {
-                native->read(storage->get_gpu_ptr(), bytes, tmp, 0);
-                native->write(new_storage->get_gpu_ptr(), bytes, tmp, 0);
-                free(tmp);
-            }
+            native->copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
         } else if (storage->get_gpu_ptr() && new_storage->get_gpu_ptr()) {
             CLBackend::get().copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
         }

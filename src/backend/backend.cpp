@@ -355,11 +355,8 @@ public:
     void* get_compute_stream() override { return gpu_get_compute_stream_fn ? gpu_get_compute_stream_fn() : nullptr; }
     void sync_stream(void* stream) override { if (gpu_sync_stream_fn && stream) gpu_sync_stream_fn(stream); }
     void set_device(int device_id) override {
-        thread_local int cached_device = -1;
-        if (cached_device == device_id) return;
         if (gpu_set_device_fn) {
             gpu_set_device_fn(device_id);
-            cached_device = device_id;
         }
     }
     int get_device() override { return gpu_get_device_fn ? gpu_get_device_fn() : 0; }
