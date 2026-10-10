@@ -926,7 +926,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<SqrtNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {};
+        node->saved_tensors = {out};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -983,7 +983,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<ExpNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {};
+        node->saved_tensors = {out};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

@@ -414,7 +414,7 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<SigmoidNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {};
+        node->saved_tensors = {out};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -459,7 +459,7 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<TanhNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {};
+        node->saved_tensors = {out};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -597,7 +597,7 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         auto node = std::make_shared<SoftmaxNode>(dim);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {};
+        node->saved_tensors = {out};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
