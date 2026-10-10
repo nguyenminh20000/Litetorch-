@@ -224,7 +224,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
         } else {
             std::memcpy(tensor->data_ptr(), acc.data(), N * elem_sz);
         }
-    } else {
+    } else if (tensor->dtype == DataType::FP32) {
         std::vector<float> acc(N, 0.0f);
         for (size_t j = 0; j < N; ++j) {
             float sum = 0.0f;
@@ -238,6 +238,8 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
         } else {
             std::memcpy(tensor->data_ptr(), acc.data(), N * elem_sz);
         }
+    } else {
+        throw std::runtime_error("shm all_reduce: unsupported dtype for collective");
     }
 
     shm_ctrl_->steps[rank_].store(cur_step + 2);
