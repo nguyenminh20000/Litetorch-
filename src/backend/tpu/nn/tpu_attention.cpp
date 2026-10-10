@@ -81,9 +81,20 @@ void tpu_flash_attention_backward(const float* Q, const float* K, const float* V
         int64_t h_kv = h / group_ratio;
         int64_t kv_idx = b * H_kv + h_kv;
 
-        std::vector<float> local_dk(Tk * D, 0.0f);
-        std::vector<float> local_dv(Tk * D, 0.0f);
-        std::vector<float> scores(Tk);
+        thread_local std::vector<float> local_dk;
+        thread_local std::vector<float> local_dv;
+        thread_local std::vector<float> scores;
+        int64_t need_kv = Tk * D;
+        if (static_cast<int64_t>(local_dk.size()) < need_kv) {
+            local_dk.assign(need_kv, 0.0f);
+            local_dv.assign(need_kv, 0.0f);
+        } else {
+            std::fill(local_dk.begin(), local_dk.begin() + need_kv, 0.0f);
+            std::fill(local_dv.begin(), local_dv.begin() + need_kv, 0.0f);
+        }
+        if (static_cast<int64_t>(scores.size()) < Tk) {
+            scores.resize(Tk);
+        }
 
         const float* k_base = K + b * (H_kv * Tk * D) + h_kv * (Tk * D);
         const float* v_base = V + b * (H_kv * Tk * D) + h_kv * (Tk * D);

@@ -1,9 +1,11 @@
 #include "tpu_backend.h"
 #include "common/tpu_common.h"
 #include "litetorch/tpu.h"
+#include "litetorch/thread_pool.h"
 #include <iostream>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace litetorch {
 
@@ -107,10 +109,23 @@ void TPUBackend::sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t siz
     if (!A || !B || size <= 0) return;
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     float* b_ptr = reinterpret_cast<float*>(B) + b_off;
-    float total = 0.0f;
-    for (int64_t i = 0; i < size; ++i) {
-        total += a_ptr[i];
+    if (size < 50000) {
+        float total = 0.0f;
+        for (int64_t i = 0; i < size; ++i) total += a_ptr[i];
+        b_ptr[0] = total;
+        return;
     }
+    int64_t nchunks = 8;
+    std::vector<float> partials(nchunks, 0.0f);
+    ThreadPool::get().parallel_for(0, nchunks, [&](int64_t c) {
+        int64_t s = (size * c) / nchunks;
+        int64_t e = (size * (c + 1)) / nchunks;
+        float acc = 0.0f;
+        for (int64_t i = s; i < e; ++i) acc += a_ptr[i];
+        partials[c] = acc;
+    });
+    float total = 0.0f;
+    for (int64_t c = 0; c < nchunks; ++c) total += partials[c];
     b_ptr[0] = total;
 }
 
@@ -118,9 +133,28 @@ void TPUBackend::max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t siz
     if (!A || !B || size <= 0) return;
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     float* b_ptr = reinterpret_cast<float*>(B) + b_off;
-    float max_val = a_ptr[0];
-    for (int64_t i = 0; i < size; ++i) {
-        if (a_ptr[i] > max_val) max_val = a_ptr[i];
+    if (size < 50000) {
+        float max_val = a_ptr[0];
+        for (int64_t i = 1; i < size; ++i) {
+            if (a_ptr[i] > max_val) max_val = a_ptr[i];
+        }
+        b_ptr[0] = max_val;
+        return;
+    }
+    int64_t nchunks = 8;
+    std::vector<float> partials(nchunks);
+    ThreadPool::get().parallel_for(0, nchunks, [&](int64_t c) {
+        int64_t s = (size * c) / nchunks;
+        int64_t e = (size * (c + 1)) / nchunks;
+        float m = a_ptr[s];
+        for (int64_t i = s + 1; i < e; ++i) {
+            if (a_ptr[i] > m) m = a_ptr[i];
+        }
+        partials[c] = m;
+    });
+    float max_val = partials[0];
+    for (int64_t c = 1; c < nchunks; ++c) {
+        if (partials[c] > max_val) max_val = partials[c];
     }
     b_ptr[0] = max_val;
 }
