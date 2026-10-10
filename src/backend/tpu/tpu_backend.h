@@ -14,6 +14,7 @@ class TPUBackend : public DeviceBackend {
 public:
     int current_device_id = 0;
     std::mutex tpu_mutex;
+    bool use_pjrt = false;
 
     TPUBackend();
     ~TPUBackend() override;

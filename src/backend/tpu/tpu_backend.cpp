@@ -2,6 +2,7 @@
 #include "common/tpu_common.h"
 #include "litetorch/tpu.h"
 #include "litetorch/thread_pool.h"
+#include "pjrt/tpu_pjrt_backend.h"
 #include <iostream>
 #include <cstring>
 #include <stdexcept>
@@ -11,17 +12,26 @@ namespace litetorch {
 
 TPUBackend::TPUBackend() {
     tpu_internal::init_tpu_runtime();
+    if (tpu_pjrt::TpuPjrtBackend::instance().initialize()) {
+        use_pjrt = true;
+    }
 }
 
 TPUBackend::~TPUBackend() {
+    if (use_pjrt) tpu_pjrt::TpuPjrtBackend::instance().shutdown();
     tpu_internal::shutdown_tpu_runtime();
 }
 
 bool TPUBackend::is_available() const {
+    if (use_pjrt) return true;
     return tpu_internal::get_tpu_driver_state().is_available;
 }
 
 void* TPUBackend::allocate(size_t size) {
+    if (use_pjrt) {
+        void* p = tpu_pjrt::TpuPjrtBackend::instance().allocate(size);
+        if (p) return p;
+    }
     return tpu_internal::tpu_hbm_allocate(size);
 }
 
@@ -68,6 +78,7 @@ void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
     float* c_ptr = reinterpret_cast<float*>(C) + c_off;
+    if (use_pjrt && tpu_pjrt::TpuPjrtBackend::instance().matmul(a_ptr, b_ptr, c_ptr, M, N, K)) return;
     tpu_internal::tpu_systolic_matmul(a_ptr, b_ptr, c_ptr, M, N, K);
 }
 
