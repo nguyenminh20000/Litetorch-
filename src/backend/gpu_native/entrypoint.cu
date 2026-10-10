@@ -362,6 +362,7 @@ static inline size_t gpu_pool_bucket(size_t size) {
 extern "C" void* gpu_allocate(size_t size) {
     if (size == 0) return nullptr;
     int dev = current_device();
+    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_allocate size=%zu dev=%d\n", size, dev);
     GPU_API(Stream_t) stream = dev_stream(dev);
     size_t bucket = gpu_pool_bucket(size);
     auto key = std::make_pair(bucket, dev);
@@ -490,6 +491,7 @@ extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) 
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
     int dev = ptr_device(ptr);
+    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_write ptr=%p size=%zu dev=%d\n", ptr, size, dev);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) s = dev_stream(dev);
     GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), s);
@@ -546,6 +548,7 @@ extern "C" void gpu_finish() {
 
 extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
     int dev = launch_device(args, arg_count);
+    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_launch dev=%d\n", dev);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) stream = dev_stream(dev);
     dim3 block(256, 1, 1);
