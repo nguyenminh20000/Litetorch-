@@ -1025,7 +1025,6 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
     
     size_t num_elements = 1;
     for (auto dim : shape) num_elements *= dim;
-    if (shape.empty()) num_elements = 0;
 
     if (device.type == DeviceType::GPU) {
         KernelID kernel_id;
