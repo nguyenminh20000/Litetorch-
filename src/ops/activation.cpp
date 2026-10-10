@@ -37,6 +37,8 @@ class ReluNode : public Node {
 public:
     ReluNode() : Node("ReLU") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
@@ -78,6 +80,8 @@ class SigmoidNode : public Node {
 public:
     SigmoidNode() : Node("Sigmoid") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
@@ -120,6 +124,8 @@ class TanhNode : public Node {
 public:
     TanhNode() : Node("Tanh") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
@@ -163,6 +169,8 @@ public:
     LeakyReluNode(float negative_slope) : Node("LeakyReLU"), negative_slope(negative_slope) {}
     float negative_slope;
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
@@ -207,6 +215,8 @@ public:
     int64_t dim;
     SoftmaxNode(int64_t dim) : Node("Softmax"), dim(dim) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
@@ -278,6 +288,8 @@ class GeluNode : public Node {
 public:
     GeluNode() : Node("GELU") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto save_tanh = saved_tensors[1];
         auto a_c = a->is_contiguous() ? a : a->contiguous();
