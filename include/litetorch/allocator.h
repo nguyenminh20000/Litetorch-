@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <mutex>
 #include <map>
+#include <vector>
 #include <unordered_set>
 
 namespace litetorch {
