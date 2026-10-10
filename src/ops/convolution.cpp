@@ -25,16 +25,19 @@ inline cl_kernel cached_kernel() {
     static cl_kernel k = CLBackend::get().get_kernel(ID);
     return k;
 }
-inline void* get_native_kernel_cached(const char* name) {
-    auto native = BackendDispatcher::get().get_backend();
-    if (native && native->is_available()) {
-        return native->get_kernel("", "", name);
-    }
-    return nullptr;
-}
 template <typename Fn>
 inline Fn cached_native_kernel(const char* name) {
-    static void* k = get_native_kernel_cached(name);
+    static std::unordered_map<std::string, void*> cache;
+    static std::mutex cache_mutex;
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = cache.find(name);
+    if (it != cache.end()) return reinterpret_cast<Fn>(it->second);
+    void* k = nullptr;
+    auto native = BackendDispatcher::get().get_backend();
+    if (native && native->is_available()) {
+        k = native->get_kernel("", "", name);
+    }
+    cache[name] = k;
     return reinterpret_cast<Fn>(k);
 }
 struct StorageUseGuard {
