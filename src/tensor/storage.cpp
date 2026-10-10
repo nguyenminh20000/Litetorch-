@@ -161,17 +161,9 @@ void StorageImpl::to(const Device& new_device) {
             if (tpu) tpu->free(gpu_data);
             CachingAllocator::get().free_cpu(tmp);
         } else if (gpu_data) {
-            int src_dev = device.index;
-            int dst_dev = new_device.index;
-            if (src_dev != dst_dev && native && native->is_available()) {
-                native->copy_peer(gpu_data, src_dev, new_gpu_data, dst_dev, size * element_size());
-                native->set_device(src_dev);
-                CLBackend::get().free(gpu_data);
-                native->set_device(dst_dev);
-            } else {
-                CLBackend::get().copy(gpu_data, new_gpu_data, size * element_size());
-                CLBackend::get().free(gpu_data);
-            }
+            // GPU -> GPU (different index): device-to-device copy, then free old buffer
+            CLBackend::get().copy(gpu_data, new_gpu_data, size * element_size());
+            CLBackend::get().free(gpu_data);
         }
         gpu_data = new_gpu_data;
         device = new_device;
