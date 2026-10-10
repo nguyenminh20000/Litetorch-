@@ -292,6 +292,7 @@ private:
     int map_dtype(DataType dtype);
     void* get_gpu_raw_ptr(std::shared_ptr<Tensor> t);
     void order_for_stream(void* stream);
+    void sync_stream_(void* stream);
     static void nccl_check(int res, const char* op);
 
     bool initialized_ = false;

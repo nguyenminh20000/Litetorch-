@@ -968,6 +968,7 @@ bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
         order_for_stream(comm_stream_);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, comm_, comm_stream_), "all_reduce");
+        sync_stream_(comm_stream_);
         return true;
     }
     return false;
@@ -985,6 +986,7 @@ bool NCCLBridge::tp_all_reduce(std::shared_ptr<Tensor> tensor) {
         order_for_stream(s);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, c, s), "tp_all_reduce");
+        sync_stream_(s);
         return true;
     }
     return false;
@@ -1003,6 +1005,7 @@ bool NCCLBridge::tp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
         order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "tp_all_gather");
+        sync_stream_(s);
         return true;
     }
     return false;
@@ -1021,6 +1024,7 @@ bool NCCLBridge::dp_reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_pt
         order_for_stream(s);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, c, s), "dp_reduce_scatter");
+        sync_stream_(s);
         return true;
     }
     return false;
@@ -1039,6 +1043,7 @@ bool NCCLBridge::dp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
         order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "dp_all_gather");
+        sync_stream_(s);
         return true;
     }
     return false;
@@ -1056,6 +1061,7 @@ bool NCCLBridge::broadcast(std::shared_ptr<Tensor> tensor, int src) {
         order_for_stream(comm_stream_);
         typedef int (*broadcast_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((broadcast_t)broadcast_fn)(gpu_ptr, gpu_ptr, count, datatype, src, comm_, comm_stream_), "broadcast");
+        sync_stream_(comm_stream_);
         return true;
     }
     return false;
@@ -1074,6 +1080,7 @@ bool NCCLBridge::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tenso
         order_for_stream(comm_stream_);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, comm_, comm_stream_), "all_gather");
+        sync_stream_(comm_stream_);
         return true;
     }
     return false;
@@ -1092,6 +1099,7 @@ bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<T
         order_for_stream(comm_stream_);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, comm_, comm_stream_), "reduce_scatter");
+        sync_stream_(comm_stream_);
         return true;
     }
     return false;
@@ -1168,7 +1176,18 @@ int NCCLBridge::map_dtype(DataType dtype) {
 
 void* NCCLBridge::get_gpu_raw_ptr(std::shared_ptr<Tensor> t) {
     if (t->device.type != DeviceType::GPU) return nullptr;
-    return (void*)t->gpu_data();
+    char* base = (char*)t->gpu_data();
+    size_t elem_sz = t->storage->element_size();
+    return (void*)(base + t->offset * elem_sz);
+}
+
+void NCCLBridge::sync_stream_(void* stream) {
+    if (available_ && initialized_ && stream) {
+        auto backend = BackendDispatcher::get().get_backend();
+        if (backend && backend->is_available()) {
+            backend->sync_stream(stream);
+        }
+    }
 }
 
 OverlappedAllReducer& OverlappedAllReducer::get() {
