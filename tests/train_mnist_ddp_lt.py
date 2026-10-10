@@ -60,6 +60,10 @@ def train_rank(rank, world_size, port, data):
                 g = p.grad
                 if g is not None:
                     pg.all_reduce(g)
+            pg.sync_comm()
+            for p in params:
+                g = p.grad
+                if g is not None:
                     p.grad = div(g, scale)
             step()
         lt.cuda_synchronize()
