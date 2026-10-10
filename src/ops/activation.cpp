@@ -18,6 +18,16 @@ inline cl_kernel cached_kernel() {
     static cl_kernel k = CLBackend::get().get_kernel(ID);
     return k;
 }
+inline void* cached_relu_forward_kernel() {
+    static void* k = []() -> void* {
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            return native->get_kernel("", "", "relu_forward");
+        }
+        return nullptr;
+    }();
+    return k;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -339,15 +349,25 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
 
     bool run_gpu = false;
     if (a_c->device.type == DeviceType::GPU) {
-        auto kernel = cached_kernel<KernelID::ReLU>();
-        if (kernel) {
+        typedef void (*ReluForwardFn)(const float*, int, float*, int, int);
+        ReluForwardFn relu_fwd = reinterpret_cast<ReluForwardFn>(cached_relu_forward_kernel());
+        if (relu_fwd) {
+            int size = static_cast<int>(out->numel());
+            relu_fwd(static_cast<const float*>(a_c->gpu_data()), a_c->offset,
+                     static_cast<float*>(out->gpu_data()), out->offset, size);
             run_gpu = true;
-            int size = out->numel();
-            cl_mem a_mem = a_c->gpu_data();
-            cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+        }
+        if (!run_gpu) {
+            auto kernel = cached_kernel<KernelID::ReLU>();
+            if (kernel) {
+                run_gpu = true;
+                int size = out->numel();
+                cl_mem a_mem = a_c->gpu_data();
+                cl_mem b_mem = out->gpu_data();
+                int a_off = a_c->offset;
+                int b_off = out->offset;
+                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            }
         }
     }
     if (!run_gpu) {

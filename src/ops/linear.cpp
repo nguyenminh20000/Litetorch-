@@ -18,6 +18,28 @@ inline bool cublaslt_disabled() {
     static const bool disabled = std::getenv("LITETORCH_NO_CUBLASLT") != nullptr;
     return disabled;
 }
+inline void* cached_matmul_lt_kernel() {
+    static void* k = []() -> void* {
+        if (cublaslt_disabled()) return nullptr;
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            return native->get_kernel("", "", "matmul_ex_cublaslt");
+        }
+        return nullptr;
+    }();
+    return k;
+}
+inline void* cached_matmul_lt_bias_kernel() {
+    static void* k = []() -> void* {
+        if (cublaslt_disabled()) return nullptr;
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            return native->get_kernel("", "", "matmul_ex_cublaslt_bias");
+        }
+        return nullptr;
+    }();
+    return k;
+}
 struct StorageUseGuard {
     std::vector<std::shared_ptr<StorageImpl>> storages;
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -218,10 +240,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                 }
             } else {
                 typedef void (*MatmulExLtFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
-                MatmulExLtFn matmul_lt = nullptr;
-                if (!cublaslt_disabled()) {
-                    matmul_lt = reinterpret_cast<MatmulExLtFn>(native->get_kernel("", "", "matmul_ex_cublaslt"));
-                }
+                MatmulExLtFn matmul_lt = reinterpret_cast<MatmulExLtFn>(cached_matmul_lt_kernel());
                 if (matmul_lt) {
                     matmul_lt(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
                 } else {
@@ -377,9 +396,9 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
     StorageUseGuard guard({a_c->storage, b_use->storage, bias_c->storage, out->storage});
     bool run_fused = false;
     auto native = BackendDispatcher::get().get_backend();
-    if (native && native->is_available() && a->dtype == DataType::FP32 && !cublaslt_disabled()) {
+    if (native && native->is_available() && a->dtype == DataType::FP32) {
         typedef void (*MatmulExLtBiasFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
-        MatmulExLtBiasFn matmul_lt_bias = reinterpret_cast<MatmulExLtBiasFn>(native->get_kernel("", "", "matmul_ex_cublaslt_bias"));
+        MatmulExLtBiasFn matmul_lt_bias = reinterpret_cast<MatmulExLtBiasFn>(cached_matmul_lt_bias_kernel());
         if (matmul_lt_bias) {
             matmul_lt_bias(a_c->gpu_data(), a_c->offset, false, K,
                            b_use->gpu_data(), b_use->offset, b_trans, ldb,
