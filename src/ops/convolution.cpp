@@ -83,6 +83,8 @@ public:
     bool apply_relu;
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
         size_t n_saved = saved_tensors.size();
@@ -475,6 +477,8 @@ public:
     int padding;
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
         auto bias = saved_tensors.size() > 2 ? saved_tensors[2] : nullptr;

@@ -39,6 +39,8 @@ public:
     int stride;
     int padding;
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto save_indices = saved_tensors[1];
         auto out_shared = output.lock();
@@ -109,6 +111,8 @@ public:
     int padding;
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto save_indices = saved_tensors[1];
         auto out_shared = output.lock();
@@ -178,6 +182,8 @@ class AdaptiveAvgPool2dNode : public Node {
 public:
     AdaptiveAvgPool2dNode() : Node("AdaptiveAvgPool2d") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();

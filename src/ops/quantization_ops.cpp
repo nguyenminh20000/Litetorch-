@@ -33,6 +33,8 @@ public:
         : Node("FakeQuantize"), scale(scale), zero_point(zero_point), bits(bits) {}
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output };
     }
 };

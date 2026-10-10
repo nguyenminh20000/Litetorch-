@@ -13,6 +13,8 @@ public:
         : Node("CustomOp_" + name), op_name(name), backward_func(bw) {}
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         if (!backward_func) {
             throw std::runtime_error("[litetorch Error] Custom operator " + op_name + " backward was called but no backward function was registered");
         }
