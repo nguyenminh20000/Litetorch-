@@ -280,6 +280,8 @@ public:
     AddNode(const std::vector<int64_t>& shape_a, const std::vector<int64_t>& shape_b)
         : Node("Add"), shape_a(shape_a), shape_b(shape_b) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_a = reduce_broadcast(grad_output, shape_a);
         auto grad_b = reduce_broadcast(grad_output, shape_b);
         return { grad_a, grad_b };
@@ -293,6 +295,8 @@ public:
     SubNode(const std::vector<int64_t>& shape_a, const std::vector<int64_t>& shape_b)
         : Node("Sub"), shape_a(shape_a), shape_b(shape_b) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_a = reduce_broadcast(grad_output, shape_a);
         auto grad_b = reduce_broadcast(neg(grad_output), shape_b);
         return { grad_a, grad_b };
@@ -303,6 +307,8 @@ class MulNode : public Node {
 public:
     MulNode() : Node("Mul") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
         auto grad_a = reduce_broadcast(mul(grad_output, b), a->shape);
@@ -315,6 +321,8 @@ class DivNode : public Node {
 public:
     DivNode() : Node("Div") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto a = saved_tensors[0];
         auto b = saved_tensors[1];
         auto grad_a = reduce_broadcast(div(grad_output, b), a->shape);
@@ -822,6 +830,8 @@ public:
     float exponent;
     PowNode(float exponent) : Node("Pow"), exponent(exponent) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto exponent_t = Tensor::from_vector({exponent}, {1}, input->device);
         auto exponent_minus_one_t = Tensor::from_vector({exponent - 1.0f}, {1}, input->device);
@@ -880,6 +890,8 @@ class SqrtNode : public Node {
 public:
     SqrtNode() : Node("Sqrt") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
         auto two_t = Tensor::from_vector({2.0f}, {1}, out->device);
@@ -938,6 +950,8 @@ class ExpNode : public Node {
 public:
     ExpNode() : Node("Exp") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
         auto grad_input = mul(grad_output, out);
@@ -995,6 +1009,8 @@ class LogNode : public Node {
 public:
     LogNode() : Node("Log") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto grad_input = div(grad_output, input);
         return { grad_input };
@@ -1051,6 +1067,8 @@ class AbsNode : public Node {
 public:
     AbsNode() : Node("Abs") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto signs = Tensor::create(input_c->shape, Device(DeviceType::CPU, 0));
@@ -1117,6 +1135,8 @@ class NegNode : public Node {
 public:
     NegNode() : Node("Neg") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_input = neg(grad_output);
         return { grad_input };
     }
@@ -1173,6 +1193,8 @@ public:
     std::vector<int64_t> input_shape;
     SumNode(const std::vector<int64_t>& input_shape) : Node("Sum"), input_shape(input_shape) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_input = Tensor::create(input_shape, grad_output->device);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         bool run_gpu = false;
@@ -1275,6 +1297,8 @@ public:
     std::vector<int64_t> input_shape;
     MeanNode(const std::vector<int64_t>& input_shape) : Node("Mean"), input_shape(input_shape) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_input = Tensor::create(input_shape, grad_output->device);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         float num_el = static_cast<float>(grad_input->numel());
@@ -1331,6 +1355,8 @@ class MaxNode : public Node {
 public:
     MaxNode() : Node("Max") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto grad_input = Tensor::zeros(input->shape, grad_output->device);
         StorageUseGuard guard({input->storage, grad_input->storage, grad_output->storage});
@@ -1411,6 +1437,8 @@ public:
     CatNode(int64_t dim, const std::vector<std::vector<int64_t>>& shapes)
         : Node("Cat"), dim(dim), input_shapes(shapes) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         std::vector<std::shared_ptr<Tensor>> grads;
         int64_t offset = 0;
         int64_t ndim = grad_output->shape.size();
@@ -1573,6 +1601,8 @@ public:
     std::vector<int64_t> input_strides;
     SqueezeNode(const std::vector<int64_t>& input_shape, const std::vector<int64_t>& input_strides) : Node("Squeeze"), input_shape(input_shape), input_strides(input_strides) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, input_strides, grad_output->offset, grad_output->device, false);
         return { grad_input };
     }
@@ -1616,6 +1646,8 @@ public:
     std::vector<int64_t> input_strides;
     UnsqueezeNode(const std::vector<int64_t>& input_shape, const std::vector<int64_t>& input_strides) : Node("Unsqueeze"), input_shape(input_shape), input_strides(input_strides) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto grad_input = std::make_shared<Tensor>(grad_output->storage, input_shape, input_strides, grad_output->offset, grad_output->device, false);
         return { grad_input };
     }
@@ -1656,6 +1688,8 @@ public:
     float max_val;
     ClampNode(float min_val, float max_val) : Node("Clamp"), min_val(min_val), max_val(max_val) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto mask = Tensor::create(input_c->shape, Device(DeviceType::CPU, 0));
@@ -1706,6 +1740,8 @@ class SinNode : public Node {
 public:
     SinNode() : Node("Sin") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto grad_input = mul(grad_output, cos(input));
         return { grad_input };
@@ -1737,6 +1773,8 @@ class CosNode : public Node {
 public:
     CosNode() : Node("Cos") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto neg_sin = mul(sin(input), Tensor::from_vector({-1.0f}, {1}, input->device));
         auto grad_input = mul(grad_output, neg_sin);
