@@ -81,10 +81,10 @@ static void* cudnn_workspace(size_t need) {
     thread_local CudnnWorkspace ws;
     if (need == 0) return nullptr;
     if (need > ws.bytes) {
-        if (ws.ptr) cudaFree(ws.ptr);
+        if (ws.ptr) cudaFreeAsync(ws.ptr, g_compute_stream);
         ws.ptr = nullptr;
         ws.bytes = 0;
-        if (cudaMalloc(&ws.ptr, need) != cudaSuccess) return nullptr;
+        if (cudaMallocAsync(&ws.ptr, need, g_compute_stream) != cudaSuccess) return nullptr;
         ws.bytes = need;
     }
     return ws.ptr;
