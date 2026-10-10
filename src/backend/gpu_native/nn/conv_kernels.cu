@@ -93,7 +93,7 @@ static void* cudnn_workspace(size_t need) {
 static std::unordered_map<CudnnConvKey, int, CudnnConvKeyHash> cudnn_fwd_algo_cache;
 static std::mutex cudnn_fwd_algo_cache_mutex;
 
-static const size_t CUDNN_FWD_ALGO_WS_LIMIT = 256ULL * 1024ULL * 1024ULL;
+static const size_t CUDNN_FWD_ALGO_WS_LIMIT = 1024ULL * 1024ULL * 1024ULL;
 
 static int cudnn_pick_fwd_algo(LtCudnnFwdAlgoPerf* perfs, int count) {
     for (int i = 0; i < count; ++i) {
@@ -175,7 +175,7 @@ struct CudnnBwdAlgos {
 static std::unordered_map<CudnnConvKey, CudnnBwdAlgos, CudnnConvKeyHash> cudnn_bwd_algo_cache;
 static std::mutex cudnn_bwd_algo_cache_mutex;
 
-static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 256ULL * 1024ULL * 1024ULL;
+static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 1024ULL * 1024ULL * 1024ULL;
 
 static int cudnn_pick_bwd_algo(LtCudnnBwdAlgoPerf* perfs, int count) {
     for (int i = 0; i < count; ++i) {
