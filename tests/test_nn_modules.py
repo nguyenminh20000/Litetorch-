@@ -113,7 +113,7 @@ def test_decoder_layer_nomem():
     out = m.forward(x)
     lt.Ops.sum(out).backward()
     params = m.parameters()
-    used = params[:4] + params[8:]
+    used = params[:4] + params[8:14] + params[16:]
     check_params(used, "decoder_nomem")
 
 

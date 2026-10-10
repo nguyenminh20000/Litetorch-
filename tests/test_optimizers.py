@@ -85,6 +85,7 @@ def test_sgd_momentum():
     for p0, p1 in zip(m0.parameters(), m1.parameters()):
         p1.copy_(p0)
     s0 = snap(m0.parameters())
+    s1 = snap(m1.parameters())
     opt0 = lt.optim.SGD(m0.parameters(), lr=1e-2, momentum=0.0)
     opt1 = lt.optim.SGD(m1.parameters(), lr=1e-2, momentum=0.9)
     for _ in range(2):

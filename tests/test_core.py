@@ -161,7 +161,7 @@ def ag_create_graph():
     g1 = vec(x.grad)
     if any(abs(g - 2.0 * v) > 1e-3 for g, v in zip(g1, [2.0, 3.0])):
         return False, f"first-order wrong: {g1}"
-    z = lt.Ops.sum(x.grad * x.grad)
+    z = lt.Ops.sum(lt.Ops.mul(x.grad, x.grad))
     z.backward()
     return True, ""
 
