@@ -1,6 +1,17 @@
 #include "gpu_common.h"
 #include <unordered_map>
 #include <mutex>
+#include <cstdio>
+#include <cstdlib>
+
+static bool cudnn_algo_log_enabled() {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = std::getenv("LITETORCH_CUDNN_ALGO_LOG");
+        cached = (v && v[0] == '1') ? 1 : 0;
+    }
+    return cached == 1;
+}
 
 extern "C" __global__ void relu_inplace_kernel(float* data, int64_t n);
 
@@ -31,6 +42,30 @@ struct CudnnConvDescs {
     lt_cudnnFilterDescriptor_t wDesc;
     lt_cudnnConvolutionDescriptor_t convDesc;
 };
+
+static void cudnn_log_shape(const CudnnConvKey& key, const char* what) {
+    fprintf(stderr, "[litetorch] cudnn %s algo candidates N=%d C_in=%d H_in=%d W_in=%d C_out=%d H_out=%d W_out=%d k=%dx%d s=%d p=%d ws_limit=%zuMB:\n",
+            what, key.N, key.C_in, key.H_in, key.W_in, key.C_out, key.H_out, key.W_out,
+            key.kh, key.kw, key.stride, key.padding, (size_t)(1024ULL * 1024ULL * 1024ULL) >> 20);
+}
+
+static void cudnn_log_fwd_cands(const CudnnConvKey& key, LtCudnnFwdAlgoPerf* perfs, int count, int chosen) {
+    if (!cudnn_algo_log_enabled()) return;
+    cudnn_log_shape(key, "fwd");
+    for (int i = 0; i < count; ++i)
+        fprintf(stderr, "  cand[%d] algo=%d status=%d time=%.3fms ws=%zuMB mathType=%d\n",
+                i, perfs[i].algo, perfs[i].status, perfs[i].time, perfs[i].memory >> 20, perfs[i].mathType);
+    fprintf(stderr, "[litetorch] cudnn fwd algo chosen=%d\n", chosen);
+}
+
+static void cudnn_log_bwd_cands(const CudnnConvKey& key, const char* what, LtCudnnBwdAlgoPerf* perfs, int count, int chosen) {
+    if (!cudnn_algo_log_enabled()) return;
+    cudnn_log_shape(key, what);
+    for (int i = 0; i < count; ++i)
+        fprintf(stderr, "  cand[%d] algo=%d status=%d time=%.3fms ws=%zuMB mathType=%d\n",
+                i, perfs[i].algo, perfs[i].status, perfs[i].time, perfs[i].memory >> 20, perfs[i].mathType);
+    fprintf(stderr, "[litetorch] cudnn %s algo chosen=%d\n", what, chosen);
+}
 
 static std::unordered_map<CudnnConvKey, CudnnConvDescs, CudnnConvKeyHash> cudnn_conv_cache;
 static std::mutex cudnn_conv_cache_mutex;
@@ -114,6 +149,7 @@ static int cudnn_fwd_algo(lt_cudnnHandle_t handle, const CudnnConvKey& key, Cudn
         int returned = 0;
         if (g_cudnn.GetConvolutionForwardAlgorithm_v7(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, 8, &returned, perfs) == 0 && returned > 0) {
             algo = cudnn_pick_fwd_algo(perfs, returned);
+            cudnn_log_fwd_cands(key, perfs, returned, algo);
         }
     }
     {
@@ -196,6 +232,7 @@ static CudnnBwdAlgos cudnn_bwd_algos(lt_cudnnHandle_t handle, const CudnnConvKey
         int returned = 0;
         if (g_cudnn.GetConvolutionBackwardDataAlgorithm_v7(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, 8, &returned, perfs) == 0 && returned > 0) {
             a.data_algo = cudnn_pick_bwd_algo(perfs, returned);
+            cudnn_log_bwd_cands(key, "bwd-data", perfs, returned, a.data_algo);
         }
     }
     if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7) {
@@ -203,6 +240,7 @@ static CudnnBwdAlgos cudnn_bwd_algos(lt_cudnnHandle_t handle, const CudnnConvKey
         int returned = 0;
         if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, 8, &returned, perfs) == 0 && returned > 0) {
             a.filter_algo = cudnn_pick_bwd_algo(perfs, returned);
+            cudnn_log_bwd_cands(key, "bwd-filter", perfs, returned, a.filter_algo);
         }
     }
     {
