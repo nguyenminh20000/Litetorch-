@@ -360,15 +360,13 @@ extern "C" void gpu_free(void* ptr) {
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
-    GPU_API(Stream_t) s = g_d2h_stream ? g_d2h_stream : g_compute_stream;
-    GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), s);
-    GPU_API(StreamSynchronize)(s);
+    GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), g_compute_stream);
+    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
-    GPU_API(Stream_t) s = g_h2d_stream ? g_h2d_stream : g_compute_stream;
-    GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), s);
-    GPU_API(StreamSynchronize)(s);
+    GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(StreamSynchronize)(g_compute_stream);
 }
 
 extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
