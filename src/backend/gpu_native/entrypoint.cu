@@ -8,15 +8,6 @@
 #include <mutex>
 #include <map>
 #include <unordered_map>
-
-#ifdef __HIP_PLATFORM_AMD__
-#define GPU_MALLOC_ASYNC(p, s, st) hipMallocAsync(p, s, st)
-#define GPU_FREE_ASYNC(p, st) hipFreeAsync(p, st)
-#else
-#define GPU_MALLOC_ASYNC(p, s, st) cudaMallocAsync(p, s, st)
-#define GPU_FREE_ASYNC(p, st) cudaFreeAsync(p, st)
-#endif
-
 #include "math/gemm.cu"
 #include "math/reduction.cu"
 #include "elementwise/elementwise_ops.cu"
@@ -284,17 +275,29 @@ extern "C" void* gpu_allocate(size_t size) {
         }
     }
     void* ptr = nullptr;
-GPU_MALLOC_ASYNC(&ptr, bucket, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+    cudaMallocAsync(&ptr, bucket, g_compute_stream);
+#else
+    GPU_API(Malloc)(&ptr, bucket);
+#endif
     if (!ptr) {
         std::lock_guard<std::mutex> lock(pool.mutex_);
         for (auto& kv : pool.free_) {
             for (void* p : kv.second)
-GPU_FREE_ASYNC(p, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+                cudaFreeAsync(p, g_compute_stream);
+#else
+                GPU_API(Free)(p);
+#endif
             kv.second.clear();
         }
         pool.cached_bytes_ = 0;
         ptr = nullptr;
-GPU_MALLOC_ASYNC(&ptr, bucket, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+        cudaMallocAsync(&ptr, bucket, g_compute_stream);
+#else
+        GPU_API(Malloc)(&ptr, bucket);
+#endif
         if (!ptr) return nullptr;
     }
     {
@@ -309,7 +312,11 @@ extern "C" void gpu_empty_cache() {
     std::lock_guard<std::mutex> lock(pool.mutex_);
     for (auto& kv : pool.free_) {
         for (void* p : kv.second)
-GPU_FREE_ASYNC(p, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+            cudaFreeAsync(p, g_compute_stream);
+#else
+            GPU_API(Free)(p);
+#endif
         kv.second.clear();
     }
     pool.cached_bytes_ = 0;
@@ -321,13 +328,21 @@ extern "C" void gpu_free(void* ptr) {
     std::lock_guard<std::mutex> lock(pool.mutex_);
     auto it = pool.live_.find(ptr);
     if (it == pool.live_.end()) {
-GPU_FREE_ASYNC(ptr, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+        cudaFreeAsync(ptr, g_compute_stream);
+#else
+        GPU_API(Free)(ptr);
+#endif
         return;
     }
     size_t bucket = it->second;
     pool.live_.erase(it);
     if (pool.cached_bytes_ + bucket > gpu_cache_cap_bytes()) {
-GPU_FREE_ASYNC(ptr, g_compute_stream);
+#ifndef __HIP_PLATFORM_AMD__
+        cudaFreeAsync(ptr, g_compute_stream);
+#else
+        GPU_API(Free)(ptr);
+#endif
         return;
     }
     pool.free_[bucket].push_back(ptr);
