@@ -519,7 +519,8 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
         GPU_API(StreamSynchronize)(ds);
         return;
     }
-    void* tmp = malloc(size);
+    void* tmp = nullptr;
+    GPU_API(MallocHost)(&tmp, size);
     if (!tmp) return;
     GPU_API(SetDevice)(sdev);
     GPU_API(Stream_t) ss = dev_stream(sdev);
@@ -529,7 +530,7 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
     GPU_API(Stream_t) ds = dev_stream(ddev);
     GPU_API(MemcpyAsync)((char*)dst + dst_offset, tmp, size, GPU_API(MemcpyHostToDevice), ds);
     GPU_API(StreamSynchronize)(ds);
-    free(tmp);
+    GPU_API(FreeHost)(tmp);
 }
 
 extern "C" void gpu_copy_peer(void* src, int sdev, void* dst, int ddev, size_t size) {
@@ -543,18 +544,18 @@ extern "C" void gpu_copy_peer(void* src, int sdev, void* dst, int ddev, size_t s
         GPU_API(StreamSynchronize)(s);
         return;
     }
-    void* tmp = malloc(size);
+    void* tmp = nullptr;
+    GPU_API(MallocHost)(&tmp, size);
     if (!tmp) return;
     GPU_API(SetDevice)(sdev);
     GPU_API(Stream_t) ss = dev_stream(sdev);
-    GPU_API(Error_t) e1 = GPU_API(MemcpyAsync)(tmp, src, size, GPU_API(MemcpyDeviceToHost), ss);
+    GPU_API(MemcpyAsync)(tmp, src, size, GPU_API(MemcpyDeviceToHost), ss);
     GPU_API(StreamSynchronize)(ss);
     GPU_API(SetDevice)(ddev);
     GPU_API(Stream_t) ds = dev_stream(ddev);
-    GPU_API(Error_t) e2 = GPU_API(MemcpyAsync)(dst, tmp, size, GPU_API(MemcpyHostToDevice), ds);
+    GPU_API(MemcpyAsync)(dst, tmp, size, GPU_API(MemcpyHostToDevice), ds);
     GPU_API(StreamSynchronize)(ds);
-    free(tmp);
-    (void)e1; (void)e2;
+    GPU_API(FreeHost)(tmp);
 }
 
 extern "C" void gpu_read_async(void* ptr, size_t size, void* host_ptr, size_t offset) {
