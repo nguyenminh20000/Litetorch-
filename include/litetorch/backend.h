@@ -21,6 +21,7 @@ public:
     virtual void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) = 0;
     virtual void write_async(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) = 0;
     virtual void copy(void* src, void* dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0) = 0;
+    virtual void copy_peer(void* src, int src_device, void* dst, int dst_device, size_t size) { copy(src, dst, size); }
     virtual void finish() = 0;
     virtual void* get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name) = 0;
     virtual void* get_precompiled_kernel(int kernel_id) = 0;

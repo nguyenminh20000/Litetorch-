@@ -460,7 +460,11 @@ std::shared_ptr<Tensor> Tensor::to(const Device& target_device) {
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::CPU) {
         rt_gpu_read(storage->get_gpu_ptr(), storage->size * elem_sz, new_storage->get_cpu_ptr());
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::GPU) {
-        rt_gpu_copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
+        if (auto native = native_gpu_backend()) {
+            native->copy_peer((void*)storage->get_gpu_ptr(), device.index, (void*)new_storage->get_gpu_ptr(), final_device.index, storage->size * elem_sz);
+        } else {
+            rt_gpu_copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
+        }
     } else if (device.type == DeviceType::CPU && final_device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         float* cpu_src = storage->get_cpu_ptr();
@@ -514,7 +518,11 @@ std::shared_ptr<Tensor> Tensor::to_device_async(const Device& target_device) {
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::CPU) {
         rt_gpu_read_async(storage->get_gpu_ptr(), storage->size * elem_sz, new_storage->get_cpu_ptr());
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::GPU) {
-        rt_gpu_copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
+        if (auto native2 = native_gpu_backend()) {
+            native2->copy_peer((void*)storage->get_gpu_ptr(), device.index, (void*)new_storage->get_gpu_ptr(), final_device.index, storage->size * elem_sz);
+        } else {
+            rt_gpu_copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
+        }
     } else if (device.type == DeviceType::CPU && final_device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu && new_storage->get_gpu_ptr()) {
