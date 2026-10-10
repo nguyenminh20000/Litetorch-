@@ -312,7 +312,7 @@ void TPUBackend::adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void
     tpu_internal::tpu_adamw_update(p, g, m, v, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
 }
 
-void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     if (!Q || !K || !V || !O) return;
     const float* q_ptr = reinterpret_cast<const float*>(Q) + q_off;
     const float* k_ptr = reinterpret_cast<const float*>(K) + k_off;
@@ -321,14 +321,14 @@ void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off,
     tpu_internal::tpu_flash_attention_forward(q_ptr, k_ptr, v_ptr, o_ptr, B, H, H_kv, Tq, Tk, D, scale);
 }
 
-void TPUBackend::flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+void TPUBackend::flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     throw std::runtime_error("[litetorch Error] TPUBackend::flash_attention_half not implemented (FP32-only backend)");
 }
 
 void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
                                           void* O, int64_t o_off, void* dO, int64_t do_off,
                                           void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
-                                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+                                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     if (!dQ || !dK || !dV || !O || !dO || !Q || !K || !V) return;
     float* dq_ptr = reinterpret_cast<float*>(dQ) + dq_off;
     float* dk_ptr = reinterpret_cast<float*>(dK) + dk_off;
@@ -344,7 +344,7 @@ void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, in
 void TPUBackend::flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
                                                void* O, int64_t o_off, void* dO, int64_t do_off,
                                                void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off,
-                                               int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+                                               int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     throw std::runtime_error("[litetorch Error] TPUBackend::flash_attention_backward_half not implemented (FP32-only backend)");
 }
 

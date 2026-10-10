@@ -311,7 +311,8 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("fused_linear_cross_entropy", &Ops::fused_linear_cross_entropy, py::arg("x"), py::arg("weight"), py::arg("target"), py::arg("bias") = nullptr);
     ops.def("clip_grad_norm_", &Ops::clip_grad_norm_, py::arg("params"), py::arg("max_norm"), py::arg("norm_type") = 2.0f);
     ops.def("rope", &Ops::rope);
-    ops.def("flash_attention", &Ops::flash_attention);
+    ops.def("flash_attention", &Ops::flash_attention, py::arg("q"), py::arg("k"), py::arg("v"), py::arg("causal") = false);
+    ops.def("flash_attention_qkv", &Ops::flash_attention_qkv, py::arg("qkv"), py::arg("num_heads"), py::arg("causal") = false);
     ops.def("paged_attention", &Ops::paged_attention);
     ops.def("scaled_matmul", &Ops::scaled_matmul, py::arg("a"), py::arg("b"), py::arg("a_scale"), py::arg("b_scale"), py::arg("bias") = nullptr, py::arg("out_dtype") = DataType::FP32);
     ops.def("w8a8_matmul", &Ops::w8a8_matmul, py::arg("x"), py::arg("w"), py::arg("x_scale"), py::arg("w_scale"));

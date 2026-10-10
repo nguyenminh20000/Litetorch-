@@ -31,7 +31,8 @@ struct StorageUseGuard {
 
 class FlashAttentionNode : public Node {
 public:
-    FlashAttentionNode() : Node("FlashAttention") {}
+    bool causal = false;
+    FlashAttentionNode(bool c = false) : Node("FlashAttention"), causal(c) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
@@ -79,14 +80,14 @@ public:
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
                         saved_p->gpu_data(), saved_p->offset,
-                        B, H, H_kv, Tq, Tk, D, scale
+                        B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 } else {
                     BackendDispatcher::get().get_backend()->flash_attention_backward_half(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                        B, H, H_kv, Tq, Tk, D, scale
+                        B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 }
             } else {
@@ -96,14 +97,14 @@ public:
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
                         saved_p->gpu_data(), saved_p->offset,
-                        B, H, H_kv, Tq, Tk, D, scale
+                        B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 } else {
                     BackendDispatcher::get().get_backend()->flash_attention_backward(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                        B, H, H_kv, Tq, Tk, D, scale
+                        B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 }
             }
@@ -213,7 +214,7 @@ public:
 
 namespace Ops {
 
-std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_ptr<Tensor> k, std::shared_ptr<Tensor> v) {
+std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_ptr<Tensor> k, std::shared_ptr<Tensor> v, bool causal) {
     if (q->shape.size() != 4 || k->shape.size() != 4 || v->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] flash_attention inputs must be 4D tensors of shape (B, H, T, D)");
     }
@@ -265,15 +266,15 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
             run_gpu = true;
             if (q_c->dtype == DataType::FP16) {
                 if (attn_p) {
-                    p_saved = native->flash_attention_half_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale);
+                    p_saved = native->flash_attention_half_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 } else {
-                    native->flash_attention_half(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale);
+                    native->flash_attention_half(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 }
             } else {
                 if (attn_p) {
-                    p_saved = native->flash_attention_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale);
+                    p_saved = native->flash_attention_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 } else {
-                    native->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale);
+                    native->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 }
             }
         } else {
@@ -312,7 +313,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu && tpu->is_available()) {
             run_gpu = true;
-            tpu->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale);
+            tpu->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
         }
     }
     if (!run_gpu) {
@@ -321,7 +322,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
             auto q_fp32 = q_c->dtype == DataType::FP32 ? q_c : q_c->cast(DataType::FP32);
             auto k_fp32 = k_c->dtype == DataType::FP32 ? k_c : k_c->cast(DataType::FP32);
             auto v_fp32 = v_c->dtype == DataType::FP32 ? v_c : v_c->cast(DataType::FP32);
-            auto out_fp32 = flash_attention(q_fp32, k_fp32, v_fp32);
+            auto out_fp32 = flash_attention(q_fp32, k_fp32, v_fp32, causal);
             auto out_fp16 = out_fp32->cast(q_c->dtype);
             out->copy_(out_fp16);
         } else {
@@ -353,6 +354,10 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
                     std::fill(acc.begin(), acc.begin() + D, 0.0f);
 
                     for (int64_t j = 0; j < Tk; ++j) {
+                        if (causal && j > i) {
+                            S[j] = -std::numeric_limits<float>::infinity();
+                            continue;
+                        }
                         float dot = 0.0f;
                         for (int k_idx = 0; k_idx < D; ++k_idx) {
                             dot += q_ptr[q_offset + i * D + k_idx] * k_ptr[k_offset + j * D + k_idx];
@@ -382,7 +387,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
     }
 
     if (Autograd::is_grad_enabled() && (q->requires_grad || k->requires_grad || v->requires_grad)) {
-        auto node = std::make_shared<FlashAttentionNode>();
+        auto node = std::make_shared<FlashAttentionNode>(causal);
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
         node->saved_tensors = { q_c, k_c, v_c, out };
@@ -579,26 +584,45 @@ void qkv_do_split(std::shared_ptr<Tensor> qkv_c, std::shared_ptr<Tensor> q,
     }
     if (!done) {
         StorageUseGuard guard({qkv_c->storage, q->storage, k->storage, v->storage});
-        float* qkv_ptr = qkv_c->data_ptr();
-        float* q_ptr = q->data_ptr();
-        float* k_ptr = k->data_ptr();
-        float* v_ptr = v->data_ptr();
         int64_t C = H * D;
-        ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t idx) {
-            int64_t d = idx % D;
-            int64_t t = (idx / D) % T;
-            int64_t h = (idx / (D * T)) % H;
-            int64_t b = idx / (D * T * H);
-            int64_t c = h * D + d;
-            int64_t base = (b * T + t) * 3 * C + c;
-            q_ptr[idx] = qkv_ptr[base];
-            k_ptr[idx] = qkv_ptr[base + C];
-            v_ptr[idx] = qkv_ptr[base + 2 * C];
-        });
+        size_t elem_sz = qkv_c->dtype == DataType::FP16 ? sizeof(uint16_t) : sizeof(float);
+        if (qkv_c->dtype == DataType::FP16) {
+            uint16_t* qkv_ptr = reinterpret_cast<uint16_t*>(qkv_c->data_ptr());
+            uint16_t* q_ptr = reinterpret_cast<uint16_t*>(q->data_ptr());
+            uint16_t* k_ptr = reinterpret_cast<uint16_t*>(k->data_ptr());
+            uint16_t* v_ptr = reinterpret_cast<uint16_t*>(v->data_ptr());
+            ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t idx) {
+                int64_t d = idx % D;
+                int64_t t = (idx / D) % T;
+                int64_t h = (idx / (D * T)) % H;
+                int64_t b = idx / (D * T * H);
+                int64_t c = h * D + d;
+                int64_t base = (b * T + t) * 3 * C + c;
+                q_ptr[idx] = qkv_ptr[base];
+                k_ptr[idx] = qkv_ptr[base + C];
+                v_ptr[idx] = qkv_ptr[base + 2 * C];
+            });
+        } else {
+            float* qkv_ptr = qkv_c->data_ptr();
+            float* q_ptr = q->data_ptr();
+            float* k_ptr = k->data_ptr();
+            float* v_ptr = v->data_ptr();
+            ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t idx) {
+                int64_t d = idx % D;
+                int64_t t = (idx / D) % T;
+                int64_t h = (idx / (D * T)) % H;
+                int64_t b = idx / (D * T * H);
+                int64_t c = h * D + d;
+                int64_t base = (b * T + t) * 3 * C + c;
+                q_ptr[idx] = qkv_ptr[base];
+                k_ptr[idx] = qkv_ptr[base + C];
+                v_ptr[idx] = qkv_ptr[base + 2 * C];
+            });
+        }
         if (q->device.type == DeviceType::GPU) {
-            CLBackend::get().write(q->gpu_data(), q->numel() * sizeof(float), q_ptr);
-            CLBackend::get().write(k->gpu_data(), k->numel() * sizeof(float), k_ptr);
-            CLBackend::get().write(v->gpu_data(), v->numel() * sizeof(float), v_ptr);
+            CLBackend::get().write(q->gpu_data(), q->numel() * elem_sz, q->data_ptr());
+            CLBackend::get().write(k->gpu_data(), k->numel() * elem_sz, k->data_ptr());
+            CLBackend::get().write(v->gpu_data(), v->numel() * elem_sz, v->data_ptr());
         }
     }
 }
@@ -619,24 +643,43 @@ void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::s
     }
     if (!done) {
         StorageUseGuard guard({gq->storage, gk->storage, gv->storage, gqkv->storage});
-        float* gq_ptr = gq->data_ptr();
-        float* gk_ptr = gk->data_ptr();
-        float* gv_ptr = gv->data_ptr();
-        float* gqkv_ptr = gqkv->data_ptr();
         int64_t C = H * D;
-        ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t idx) {
-            int64_t c3 = idx % (3 * C);
-            int64_t s = c3 / C;
-            int64_t c = c3 % C;
-            int64_t t = (idx / (3 * C)) % T;
-            int64_t b = idx / (3 * C * T);
-            int64_t h = c / D;
-            int64_t d = c % D;
-            int64_t src = ((b * H + h) * T + t) * D + d;
-            gqkv_ptr[idx] = (s == 0) ? gq_ptr[src] : ((s == 1) ? gk_ptr[src] : gv_ptr[src]);
-        });
+        size_t elem_sz = gq->dtype == DataType::FP16 ? sizeof(uint16_t) : sizeof(float);
+        if (gq->dtype == DataType::FP16) {
+            uint16_t* gq_ptr = reinterpret_cast<uint16_t*>(gq->data_ptr());
+            uint16_t* gk_ptr = reinterpret_cast<uint16_t*>(gk->data_ptr());
+            uint16_t* gv_ptr = reinterpret_cast<uint16_t*>(gv->data_ptr());
+            uint16_t* gqkv_ptr = reinterpret_cast<uint16_t*>(gqkv->data_ptr());
+            ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t idx) {
+                int64_t c3 = idx % (3 * C);
+                int64_t s = c3 / C;
+                int64_t c = c3 % C;
+                int64_t t = (idx / (3 * C)) % T;
+                int64_t b = idx / (3 * C * T);
+                int64_t h = c / D;
+                int64_t d = c % D;
+                int64_t src = ((b * H + h) * T + t) * D + d;
+                gqkv_ptr[idx] = (s == 0) ? gq_ptr[src] : ((s == 1) ? gk_ptr[src] : gv_ptr[src]);
+            });
+        } else {
+            float* gq_ptr = gq->data_ptr();
+            float* gk_ptr = gk->data_ptr();
+            float* gv_ptr = gv->data_ptr();
+            float* gqkv_ptr = gqkv->data_ptr();
+            ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t idx) {
+                int64_t c3 = idx % (3 * C);
+                int64_t s = c3 / C;
+                int64_t c = c3 % C;
+                int64_t t = (idx / (3 * C)) % T;
+                int64_t b = idx / (3 * C * T);
+                int64_t h = c / D;
+                int64_t d = c % D;
+                int64_t src = ((b * H + h) * T + t) * D + d;
+                gqkv_ptr[idx] = (s == 0) ? gq_ptr[src] : ((s == 1) ? gk_ptr[src] : gv_ptr[src]);
+            });
+        }
         if (gqkv->device.type == DeviceType::GPU) {
-            CLBackend::get().write(gqkv->gpu_data(), gqkv->numel() * sizeof(float), gqkv_ptr);
+            CLBackend::get().write(gqkv->gpu_data(), gqkv->numel() * elem_sz, gqkv->data_ptr());
         }
     }
 }
@@ -645,7 +688,8 @@ void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::s
 class FlashAttentionQKVNode : public Node {
 public:
     int64_t num_heads;
-    FlashAttentionQKVNode(int64_t nh) : Node("FlashAttentionQKV"), num_heads(nh) {}
+    bool causal = false;
+    FlashAttentionQKVNode(int64_t nh, bool c = false) : Node("FlashAttentionQKV"), num_heads(nh), causal(c) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
@@ -669,23 +713,38 @@ public:
         auto grad_k = Tensor::create(k->shape, k->device, false, k->dtype);
         auto grad_v = Tensor::create(v->shape, v->device, false, v->dtype);
         auto native = BackendDispatcher::get().get_backend();
-        if (q->device.type == DeviceType::GPU && native && native->is_available() && q->dtype == DataType::FP32) {
+        if (q->device.type == DeviceType::GPU && native && native->is_available() &&
+            (q->dtype == DataType::FP32 || q->dtype == DataType::FP16)) {
             std::vector<std::shared_ptr<StorageImpl>> storages = {q->storage, k->storage, v->storage,
                 out_c->storage, gout_c->storage, grad_q->storage, grad_k->storage, grad_v->storage};
             if (saved_p) storages.push_back(saved_p->storage);
             StorageUseGuard guard(storages);
-            if (saved_p) {
+            if (q->dtype == DataType::FP16) {
+                if (saved_p) {
+                    native->flash_attention_backward_half_with_p(
+                        grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
+                        out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
+                        q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
+                        saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale, causal);
+                } else {
+                    native->flash_attention_backward_half(
+                        grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
+                        out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
+                        q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
+                        B, H, H_kv, T, Tk, D, scale, causal);
+                }
+            } else if (saved_p) {
                 native->flash_attention_backward_with_p(
                     grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                     out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                     q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                    saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale);
+                    saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale, causal);
             } else {
                 native->flash_attention_backward(
                     grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                     out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                     q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                    B, H, H_kv, T, Tk, D, scale);
+                    B, H, H_kv, T, Tk, D, scale, causal);
             }
         } else {
             return { nullptr };
@@ -696,7 +755,7 @@ public:
     }
 };
 
-std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t num_heads) {
+std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t num_heads, bool causal) {
     if (qkv->shape.size() != 3) {
         throw std::runtime_error("[litetorch Error] flash_attention_qkv input must be 3D (B, T, 3*C)");
     }
@@ -708,8 +767,8 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
     }
     int64_t H = num_heads;
     int64_t D = C3 / (3 * H);
-    if (qkv->dtype != DataType::FP32) {
-        throw std::runtime_error("[litetorch Error] flash_attention_qkv: only FP32 supported");
+    if (qkv->dtype != DataType::FP32 && qkv->dtype != DataType::FP16) {
+        throw std::runtime_error("[litetorch Error] flash_attention_qkv: only FP32 and FP16 supported");
     }
     auto qkv_c = qkv->is_contiguous() ? qkv : qkv->contiguous();
     auto q = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
@@ -731,20 +790,29 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
         std::vector<std::shared_ptr<StorageImpl>> fwd_storages = {q->storage, k->storage, v->storage, out->storage};
         if (attn_p) fwd_storages.push_back(attn_p->storage);
         StorageUseGuard guard(fwd_storages);
-        if (attn_p) {
+        if (q->dtype == DataType::FP16) {
+            if (attn_p) {
+                p_saved = native->flash_attention_half_forward_save_p(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                    v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset,
+                    B, H, H, T, T, D, scale, causal);
+            } else {
+                native->flash_attention_half(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                    v->gpu_data(), v->offset, out->gpu_data(), out->offset, B, H, H, T, T, D, scale, causal);
+            }
+        } else if (attn_p) {
             p_saved = native->flash_attention_forward_save_p(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
                 v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset,
-                B, H, H, T, T, D, scale);
+                B, H, H, T, T, D, scale, causal);
         } else {
             native->flash_attention(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
-                v->gpu_data(), v->offset, out->gpu_data(), out->offset, B, H, H, T, T, D, scale);
+                v->gpu_data(), v->offset, out->gpu_data(), out->offset, B, H, H, T, T, D, scale, causal);
         }
     }
     if (!run_gpu) {
         throw std::runtime_error("[litetorch Error] flash_attention_qkv: GPU native backend required");
     }
     if (Autograd::is_grad_enabled() && (qkv->requires_grad)) {
-        auto node = std::make_shared<FlashAttentionQKVNode>(num_heads);
+        auto node = std::make_shared<FlashAttentionQKVNode>(num_heads, causal);
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
         node->saved_tensors = { qkv_c, q, k, v, out };

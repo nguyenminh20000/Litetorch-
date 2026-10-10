@@ -40,23 +40,23 @@ public:
     virtual void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) = 0;
     virtual void max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) = 0;
     virtual void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) = 0;
-    virtual void flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) = 0;
-    virtual void flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) = 0;
-    virtual void flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) = 0;
-    virtual void flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) = 0;
-    virtual bool flash_attention_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-        flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+    virtual void flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) = 0;
+    virtual void flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) = 0;
+    virtual void flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) = 0;
+    virtual void flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) = 0;
+    virtual bool flash_attention_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
+        flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal);
         return false;
     }
-    virtual bool flash_attention_half_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-        flash_attention_half(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale);
+    virtual bool flash_attention_half_forward_save_p(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
+        flash_attention_half(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal);
         return false;
     }
-    virtual void flash_attention_backward_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-        flash_attention_backward(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+    virtual void flash_attention_backward_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
+        flash_attention_backward(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal);
     }
-    virtual void flash_attention_backward_half_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
-        flash_attention_backward_half(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale);
+    virtual void flash_attention_backward_half_with_p(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* P, int64_t p_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
+        flash_attention_backward_half(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal);
     }
     
     virtual void cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) = 0;
