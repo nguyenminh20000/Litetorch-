@@ -39,7 +39,7 @@ def t_reshape_view():
     c = b.view([12])
     if list(c.shape) != [12]:
         return False, f"view shape {c.shape}"
-    loss = lt.Ops.sum(c * c)
+    loss = lt.Ops.sum(lt.Ops.mul(c, c))
     loss.backward()
     if a.grad is None:
         return False, "a.grad None"
@@ -54,7 +54,7 @@ def t_transpose():
     b = a.transpose(0, 1)
     if list(b.shape) != [3, 2]:
         return False, f"transpose shape {b.shape}"
-    loss = lt.Ops.sum(b * b)
+    loss = lt.Ops.sum(lt.Ops.mul(b, b))
     loss.backward()
     if a.grad is None:
         return False, "a.grad None"
@@ -154,7 +154,7 @@ def ag_checkpoint():
 
 def ag_create_graph():
     x = lt.Tensor.from_vector([2.0, 3.0], [2], DEV, True)
-    y = lt.Ops.sum(x * x)
+    y = lt.Ops.sum(lt.Ops.mul(x, x))
     y.backward(None, True)
     if x.grad is None:
         return False, "first-order grad None"

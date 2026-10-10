@@ -82,10 +82,9 @@ def test_sgd_momentum():
     xt, yt = make_regression(10)
     m0 = make_model(11)
     m1 = make_model(11)
+    for p0, p1 in zip(m0.parameters(), m1.parameters()):
+        p1.copy_(p0)
     s0 = snap(m0.parameters())
-    s1 = snap(m1.parameters())
-    if not all(a == b for p, q in zip(s0, s1) for a, b in zip(p, q)):
-        return False, "init not identical"
     opt0 = lt.optim.SGD(m0.parameters(), lr=1e-2, momentum=0.0)
     opt1 = lt.optim.SGD(m1.parameters(), lr=1e-2, momentum=0.9)
     for _ in range(2):

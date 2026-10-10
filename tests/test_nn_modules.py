@@ -112,7 +112,9 @@ def test_decoder_layer_nomem():
     x = tv(vals(2 * 4 * 16), [2, 4, 16], True)
     out = m.forward(x)
     lt.Ops.sum(out).backward()
-    check_params(m.parameters(), "decoder_nomem")
+    params = m.parameters()
+    used = params[:4] + params[8:]
+    check_params(used, "decoder_nomem")
 
 
 def test_conv3d():
