@@ -119,8 +119,8 @@ static const char* g_precompiled_kernel_names[] = {
 };
 
 CLBackend& CLBackend::get() {
-    static CLBackend instance;
-    return instance;
+    static CLBackend* instance = new CLBackend();
+    return *instance;
 }
 
 CLBackend::CLBackend() {

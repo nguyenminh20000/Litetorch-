@@ -399,8 +399,8 @@ public:
 };
 
 BackendDispatcher& BackendDispatcher::get() {
-    static BackendDispatcher instance;
-    return instance;
+    static BackendDispatcher* instance = new BackendDispatcher();
+    return *instance;
 }
 
 BackendDispatcher::BackendDispatcher() {

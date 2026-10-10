@@ -58,12 +58,19 @@ CachingAllocator::CachingAllocator()
       cached_gpu_bytes_(0) {}
 
 CachingAllocator& CachingAllocator::get() {
-    static CachingAllocator instance;
-    return instance;
+    static CachingAllocator* instance = new CachingAllocator();
+    return *instance;
 }
 
 CachingAllocator::~CachingAllocator() {
-    empty_cache();
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& pair : free_cpu_blocks_) {
+        free_cpu_raw(pair.second);
+    }
+    free_cpu_blocks_.clear();
+    cached_cpu_bytes_ = 0;
+    free_gpu_blocks_.clear();
+    cached_gpu_bytes_ = 0;
 }
 
 void CachingAllocator::set_max_cpu_cache_size(size_t bytes) {

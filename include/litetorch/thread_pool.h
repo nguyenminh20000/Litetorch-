@@ -15,8 +15,8 @@ namespace litetorch {
 class ThreadPool {
 public:
     static ThreadPool& get() {
-        static ThreadPool instance;
-        return instance;
+        static ThreadPool* instance = new ThreadPool();
+        return *instance;
     }
 
     template<class F, class... Args>

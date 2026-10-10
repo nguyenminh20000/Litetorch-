@@ -7,8 +7,8 @@ namespace litetorch {
 MemoryManager::MemoryManager() {}
 
 MemoryManager& MemoryManager::get() {
-    static MemoryManager instance;
-    return instance;
+    static MemoryManager* instance = new MemoryManager();
+    return *instance;
 }
 
 void MemoryManager::set_gpu_limit(size_t bytes) {
