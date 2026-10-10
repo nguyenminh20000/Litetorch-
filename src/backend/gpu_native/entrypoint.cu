@@ -366,7 +366,6 @@ static inline size_t gpu_pool_bucket(size_t size) {
 extern "C" void* gpu_allocate(size_t size) {
     if (size == 0) return nullptr;
     int dev = current_device();
-    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_allocate size=%zu dev=%d\n", size, dev);
     GPU_API(Stream_t) stream = dev_stream(dev);
     size_t bucket = gpu_pool_bucket(size);
     auto key = std::make_pair(bucket, dev);
@@ -389,7 +388,6 @@ extern "C" void* gpu_allocate(size_t size) {
     GPU_API(Malloc)(&ptr, bucket);
 #endif
     if (!ptr) {
-        if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_allocate FAILED size=%zu dev=%d err=%s\n", size, dev, GPU_API(GetErrorString)(GPU_API(GetLastError)()));
         std::vector<std::pair<void*, int>> drain;
         {
             std::lock_guard<std::mutex> lock(pool.mutex_);
@@ -496,7 +494,6 @@ extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) 
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
     int dev = ptr_device(ptr);
-    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_write ptr=%p size=%zu dev=%d\n", ptr, size, dev);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) s = dev_stream(dev);
     GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), s);
@@ -507,9 +504,7 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
     if (!src || !dst || size == 0) return;
     int sdev = ptr_device(src);
     int ddev = ptr_device(dst);
-    bool p2p = (sdev == ddev) || ensure_p2p(ddev, sdev);
-    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_copy sdev=%d ddev=%d p2p=%d size=%zu\n", sdev, ddev, (int)p2p, size);
-    if (p2p) {
+    if (sdev == ddev || ensure_p2p(ddev, sdev)) {
         GPU_API(SetDevice)(ddev);
         GPU_API(Stream_t) s = dev_stream(ddev);
         GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), s);
@@ -555,7 +550,6 @@ extern "C" void gpu_finish() {
 
 extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
     int dev = launch_device(args, arg_count);
-    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_launch dev=%d\n", dev);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) stream = dev_stream(dev);
     dim3 block(256, 1, 1);
