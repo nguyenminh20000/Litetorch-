@@ -61,6 +61,7 @@ typedef void* (*gpu_get_comm_stream_t)();
 typedef void* (*gpu_get_compute_stream_t)();
 typedef void (*gpu_sync_stream_t)(void*);
 typedef void (*gpu_set_device_t)(int);
+typedef int (*gpu_get_device_t)();
 typedef void (*gpu_set_tf32_enabled_t)(bool);
 typedef bool (*gpu_is_tf32_enabled_t)();
 
@@ -69,6 +70,7 @@ public:
     void* handle = nullptr;
     gpu_init_t gpu_init_fn = nullptr;
     gpu_set_device_t gpu_set_device_fn = nullptr;
+    gpu_get_device_t gpu_get_device_fn = nullptr;
     gpu_allocate_t gpu_allocate_fn = nullptr;
     gpu_free_t gpu_free_fn = nullptr;
     gpu_empty_cache_t gpu_empty_cache_fn = nullptr;
@@ -177,6 +179,7 @@ public:
 
         gpu_init_fn = (gpu_init_t)dlsym(handle, "gpu_init");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
+        gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
         gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
         gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
         gpu_empty_cache_fn = (gpu_empty_cache_t)dlsym(handle, "gpu_empty_cache");
@@ -227,6 +230,7 @@ public:
         gpu_get_compute_stream_fn = (gpu_get_compute_stream_t)dlsym(handle, "gpu_get_compute_stream");
         gpu_sync_stream_fn = (gpu_sync_stream_t)dlsym(handle, "gpu_sync_stream");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
+        gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
         gpu_set_tf32_enabled_fn = (gpu_set_tf32_enabled_t)dlsym(handle, "gpu_set_tf32_enabled");
         gpu_is_tf32_enabled_fn = (gpu_is_tf32_enabled_t)dlsym(handle, "gpu_is_tf32_enabled");
 
@@ -358,6 +362,7 @@ public:
             cached_device = device_id;
         }
     }
+    int get_device() override { return gpu_get_device_fn ? gpu_get_device_fn() : 0; }
     void set_tf32_enabled(bool enabled) override { if (gpu_set_tf32_enabled_fn) gpu_set_tf32_enabled_fn(enabled); }
     bool is_tf32_enabled() const override { return gpu_is_tf32_enabled_fn ? gpu_is_tf32_enabled_fn() : false; }
     void* get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name) override {

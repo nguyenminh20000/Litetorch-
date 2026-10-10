@@ -36,8 +36,8 @@ private:
     void free_cpu_raw(void* ptr);
 
     size_t cached_gpu_bytes_;
-    std::multimap<size_t, void*> free_gpu_blocks_;
-    std::map<void*, size_t> allocated_gpu_blocks_;
+    std::map<std::pair<int, size_t>, std::vector<void*>> free_gpu_blocks_;
+    std::map<void*, std::pair<size_t, int>> allocated_gpu_blocks_;
 };
 
 }

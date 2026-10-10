@@ -149,15 +149,23 @@ void CachingAllocator::free_cpu(void* ptr) {
     }
 }
 
+static int current_gpu_device() {
+    auto backend = BackendDispatcher::get().get_backend();
+    if (backend && backend->is_available()) return backend->get_device();
+    return 0;
+}
+
 void* CachingAllocator::allocate_gpu(size_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = free_gpu_blocks_.lower_bound(size);
-    if (it != free_gpu_blocks_.end() && it->first <= size * 2) {
-        void* ptr = it->second;
-        size_t actual_size = it->first;
+    int dev = current_gpu_device();
+    auto it = free_gpu_blocks_.lower_bound({dev, size});
+    if (it != free_gpu_blocks_.end() && it->first.first == dev && it->first.second <= size * 2 && !it->second.empty()) {
+        void* ptr = it->second.back();
+        it->second.pop_back();
+        size_t actual_size = it->first.second;
         cached_gpu_bytes_ -= actual_size;
-        free_gpu_blocks_.erase(it);
-        allocated_gpu_blocks_[ptr] = actual_size;
+        if (it->second.empty()) free_gpu_blocks_.erase(it);
+        allocated_gpu_blocks_[ptr] = {actual_size, dev};
         return ptr;
     }
     auto backend = BackendDispatcher::get().get_backend();
@@ -166,7 +174,7 @@ void* CachingAllocator::allocate_gpu(size_t size) {
         ptr = backend->allocate(size);
     }
     if (ptr) {
-        allocated_gpu_blocks_[ptr] = size;
+        allocated_gpu_blocks_[ptr] = {size, dev};
     }
     return ptr;
 }
@@ -176,10 +184,11 @@ void CachingAllocator::free_gpu(void* ptr) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = allocated_gpu_blocks_.find(ptr);
     if (it != allocated_gpu_blocks_.end()) {
-        size_t size = it->second;
+        size_t size = it->second.first;
+        int dev = it->second.second;
         allocated_gpu_blocks_.erase(it);
         if (cached_gpu_bytes_ + size <= 512 * 1024 * 1024) {
-            free_gpu_blocks_.insert({size, ptr});
+            free_gpu_blocks_[{dev, size}].push_back(ptr);
             cached_gpu_bytes_ += size;
         } else {
             auto backend = BackendDispatcher::get().get_backend();
@@ -206,7 +215,7 @@ void CachingAllocator::empty_cache() {
     auto backend = BackendDispatcher::get().get_backend();
     if (backend && backend->is_available()) {
         for (auto& pair : free_gpu_blocks_) {
-            backend->free(pair.second);
+            for (void* p : pair.second) backend->free(p);
         }
     }
     free_gpu_blocks_.clear();

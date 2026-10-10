@@ -257,6 +257,10 @@ extern "C" void gpu_set_device(int device_id) {
     GPU_API(SetDevice)(device_id);
 }
 
+extern "C" int gpu_get_device() {
+    return current_device();
+}
+
 extern "C" void* gpu_start_recording() {
 #ifndef __HIP_PLATFORM_AMD__
     cudaStreamBeginCapture(dev_stream(current_device()), cudaStreamCaptureModeGlobal);
@@ -385,6 +389,7 @@ extern "C" void* gpu_allocate(size_t size) {
     GPU_API(Malloc)(&ptr, bucket);
 #endif
     if (!ptr) {
+        if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_allocate FAILED size=%zu dev=%d err=%s\n", size, dev, GPU_API(GetErrorString)(GPU_API(GetLastError)()));
         std::vector<std::pair<void*, int>> drain;
         {
             std::lock_guard<std::mutex> lock(pool.mutex_);
@@ -502,7 +507,9 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
     if (!src || !dst || size == 0) return;
     int sdev = ptr_device(src);
     int ddev = ptr_device(dst);
-    if (sdev == ddev || ensure_p2p(ddev, sdev)) {
+    bool p2p = (sdev == ddev) || ensure_p2p(ddev, sdev);
+    if (getenv("LT_DEBUG_DEV")) printf("[lt-dbg] gpu_copy sdev=%d ddev=%d p2p=%d size=%zu\n", sdev, ddev, (int)p2p, size);
+    if (p2p) {
         GPU_API(SetDevice)(ddev);
         GPU_API(Stream_t) s = dev_stream(ddev);
         GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), s);

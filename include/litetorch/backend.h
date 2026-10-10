@@ -75,6 +75,7 @@ public:
     virtual void* create_stream() { return nullptr; }
     virtual void sync_stream(void* stream) = 0;
     virtual void set_device(int device_id) = 0;
+    virtual int get_device() { return 0; }
 
     virtual void* create_event() { return nullptr; }
     virtual void record_event(void* event, void* stream) {}
