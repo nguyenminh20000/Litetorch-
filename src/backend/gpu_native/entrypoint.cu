@@ -21,6 +21,8 @@
 
 GPU_API(Stream_t) g_compute_stream = nullptr;
 GPU_API(Stream_t) g_comm_stream = nullptr;
+GPU_API(Stream_t) g_h2d_stream = nullptr;
+GPU_API(Stream_t) g_d2h_stream = nullptr;
 
 #ifndef __HIP_PLATFORM_AMD__
 static bool g_tf32_enabled = true;
@@ -99,6 +101,8 @@ extern "C" bool gpu_init() {
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+    if (!g_h2d_stream) GPU_API(StreamCreate)(&g_h2d_stream);
+    if (!g_d2h_stream) GPU_API(StreamCreate)(&g_d2h_stream);
 #ifndef __HIP_PLATFORM_AMD__
     if (cudnn_dyn_init())
         printf("[litetorch] cuDNN runtime: available v%zu (dynamic load)\n", g_cudnn.GetVersion());
@@ -120,6 +124,8 @@ extern "C" bool gpu_init_device(int device_id) {
     if (err != GPU_API(Success)) return false;
     GPU_API(StreamCreate)(&g_compute_stream);
     GPU_API(StreamCreate)(&g_comm_stream);
+    if (!g_h2d_stream) GPU_API(StreamCreate)(&g_h2d_stream);
+    if (!g_d2h_stream) GPU_API(StreamCreate)(&g_d2h_stream);
 #ifndef __HIP_PLATFORM_AMD__
     cudnn_dyn_init();
 #endif
@@ -350,13 +356,15 @@ extern "C" void gpu_free(void* ptr) {
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
-    GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), g_compute_stream);
-    GPU_API(StreamSynchronize)(g_compute_stream);
+    GPU_API(Stream_t) s = g_d2h_stream ? g_d2h_stream : g_compute_stream;
+    GPU_API(MemcpyAsync)(host_ptr, (char*)ptr + offset, size, GPU_API(MemcpyDeviceToHost), s);
+    GPU_API(StreamSynchronize)(s);
 }
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
-    GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), g_compute_stream);
-    GPU_API(StreamSynchronize)(g_compute_stream);
+    GPU_API(Stream_t) s = g_h2d_stream ? g_h2d_stream : g_compute_stream;
+    GPU_API(MemcpyAsync)((char*)ptr + offset, host_ptr, size, GPU_API(MemcpyHostToDevice), s);
+    GPU_API(StreamSynchronize)(s);
 }
 
 extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {

@@ -17,25 +17,39 @@ bool PjrtBuffer::from_host(const void* data, size_t bytes, const std::vector<int
     args.type = static_cast<PJRT_Buffer_Type>(element_type);
     args.dims = dims.data();
     args.num_dims = dims.size();
-    args.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableZeroCopy;
+    args.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableOnlyDuringCall;
     args.device = pc.default_device();
     if (!pc.check(api->PJRT_Client_BufferFromHostBuffer(&args), "BufferFromHostBuffer")) return false;
     buf_ = args.buffer;
+    if (args.done_with_host_buffer) {
+        PJRT_Event_Await_Args wargs{};
+        wargs.struct_size = PJRT_Event_Await_Args_STRUCT_SIZE;
+        wargs.event = args.done_with_host_buffer;
+        pc.check(api->PJRT_Event_Await(&wargs), "Event_Await");
+        PJRT_Event_Destroy_Args dargs{};
+        dargs.struct_size = PJRT_Event_Destroy_Args_STRUCT_SIZE;
+        dargs.event = args.done_with_host_buffer;
+        api->PJRT_Event_Destroy(&dargs);
+    }
     (void)bytes;
     return true;
 }
 
-bool PjrtBuffer::to_host(void* out, size_t bytes) {
+bool PjrtBuffer::to_host_buffer(PJRT_Buffer* buf, void* out, size_t bytes) {
     auto& pc = PjrtClient::instance();
-    if (!pc.is_available() || !buf_) return false;
+    if (!pc.is_available() || !buf) return false;
     const PJRT_Api* api = pc.api();
     PJRT_Buffer_ToHostBuffer_Args args{};
     args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
-    args.src = buf_;
+    args.src = buf;
     args.dst = out;
     args.dst_size = bytes;
     if (!pc.check(api->PJRT_Buffer_ToHostBuffer(&args), "ToHostBuffer")) return false;
     return true;
+}
+
+bool PjrtBuffer::to_host(void* out, size_t bytes) {
+    return to_host_buffer(buf_, out, bytes);
 }
 
 bool PjrtBuffer::await_ready() {
@@ -72,15 +86,19 @@ size_t PjrtBuffer::on_device_bytes() {
 }
 
 void PjrtBuffer::destroy() {
+    destroy_buffer(buf_);
+    buf_ = nullptr;
+}
+
+void PjrtBuffer::destroy_buffer(PJRT_Buffer* buf) {
     auto& pc = PjrtClient::instance();
-    if (buf_ && pc.api()) {
+    if (buf && pc.api()) {
         PJRT_Buffer_Destroy_Args args{};
         args.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
-        args.buffer = buf_;
+        args.buffer = buf;
         PJRT_Error* err = pc.api()->PJRT_Buffer_Destroy(&args);
         if (err) pc.check(err, "Buffer_Destroy");
     }
-    buf_ = nullptr;
 }
 
 }

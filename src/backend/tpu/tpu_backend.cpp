@@ -36,14 +36,48 @@ void* TPUBackend::allocate(size_t size) {
 }
 
 void TPUBackend::free(void* ptr) {
+    if (use_pjrt && tpu_pjrt::TpuPjrtBackend::instance().owns(ptr)) {
+        tpu_pjrt::TpuPjrtBackend::instance().free_buffer(ptr);
+        return;
+    }
     tpu_internal::tpu_hbm_free(ptr);
 }
 
 void TPUBackend::read(void* ptr, size_t size, void* host_ptr, size_t offset) {
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        size_t total = pjrt.buffer_bytes(ptr);
+        if (total > 0 && offset + size <= total && host_ptr) {
+            std::vector<char> tmp(total);
+            if (pjrt.read_buffer(ptr, tmp.data(), total)) {
+                std::memcpy(host_ptr, tmp.data() + offset, size);
+                return;
+            }
+        } else if (total > 0) {
+            return;
+        }
+    }
     tpu_internal::tpu_hbm_read(ptr, size, host_ptr, offset);
 }
 
 void TPUBackend::write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        size_t total = pjrt.buffer_bytes(ptr);
+        if (total > 0 && offset + size <= total && host_ptr) {
+            if (offset == 0 && size == total) {
+                if (pjrt.write_buffer(ptr, host_ptr, size)) return;
+            } else {
+                std::vector<char> tmp(total);
+                if (pjrt.read_buffer(ptr, tmp.data(), total)) {
+                    std::memcpy(tmp.data() + offset, host_ptr, size);
+                    if (pjrt.write_buffer(ptr, tmp.data(), total)) return;
+                }
+            }
+        } else if (total > 0) {
+            return;
+        }
+    }
     tpu_internal::tpu_hbm_write(ptr, size, host_ptr, offset);
 }
 
@@ -56,10 +90,27 @@ void TPUBackend::write_async(void* ptr, size_t size, const void* host_ptr, size_
 }
 
 void TPUBackend::copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        size_t stotal = pjrt.buffer_bytes(src);
+        size_t dtotal = pjrt.buffer_bytes(dst);
+        if (stotal > 0 && dtotal > 0) {
+            if (src_offset + size <= stotal && dst_offset + size <= dtotal) {
+                std::vector<char> sbuf(stotal), dbuf(dtotal);
+                if (pjrt.read_buffer(src, sbuf.data(), stotal) &&
+                    pjrt.read_buffer(dst, dbuf.data(), dtotal)) {
+                    std::memcpy(dbuf.data() + dst_offset, sbuf.data() + src_offset, size);
+                    if (pjrt.write_buffer(dst, dbuf.data(), dtotal)) return;
+                }
+            }
+            return;
+        }
+    }
     tpu_internal::tpu_hbm_copy(src, dst, size, src_offset, dst_offset);
 }
 
 void TPUBackend::finish() {
+    if (use_pjrt) tpu_pjrt::TpuPjrtBackend::instance().finish();
 }
 
 void* TPUBackend::get_kernel(const std::string&, const std::string&, const std::string&) {
@@ -75,10 +126,36 @@ void TPUBackend::launch(void*, const std::vector<size_t>&, const std::vector<siz
 
 void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        bool owna = pjrt.owns(A), ownb = pjrt.owns(B), ownc = pjrt.owns(C);
+        if (owna || ownb || ownc) {
+            if (owna && ownb && ownc && M > 0 && N > 0 && K > 0) {
+                size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
+                size_t an = ab / sizeof(float), bn = bb / sizeof(float), cn = cb / sizeof(float);
+                size_t need_a = (size_t)a_off + (size_t)M * (size_t)K;
+                size_t need_b = (size_t)b_off + (size_t)K * (size_t)N;
+                size_t need_c = (size_t)c_off + (size_t)M * (size_t)N;
+                if (need_a <= an && need_b <= bn && need_c <= cn) {
+                    std::vector<float> ha(an), hb(bn), hc(cn), out((size_t)M * (size_t)N);
+                    if (pjrt.read_buffer(A, ha.data(), ab) &&
+                        pjrt.read_buffer(B, hb.data(), bb) &&
+                        pjrt.read_buffer(C, hc.data(), cb)) {
+                        const float* ap = ha.data() + a_off;
+                        const float* bp = hb.data() + b_off;
+                        if (!pjrt.matmul(ap, bp, out.data(), M, N, K))
+                            tpu_internal::tpu_systolic_matmul(ap, bp, out.data(), M, N, K);
+                        std::memcpy(hc.data() + c_off, out.data(), (size_t)M * (size_t)N * sizeof(float));
+                        pjrt.write_buffer(C, hc.data(), cb);
+                    }
+                }
+            }
+            return;
+        }
+    }
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
     float* c_ptr = reinterpret_cast<float*>(C) + c_off;
-    if (use_pjrt && tpu_pjrt::TpuPjrtBackend::instance().matmul(a_ptr, b_ptr, c_ptr, M, N, K)) return;
     tpu_internal::tpu_systolic_matmul(a_ptr, b_ptr, c_ptr, M, N, K);
 }
 
@@ -86,6 +163,24 @@ void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                            void* B, int64_t b_off, bool trans_b, int64_t ldb,
                            void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {
+            size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
+            if (ab && bb && cb) {
+                std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
+                if (pjrt.read_buffer(A, ha.data(), ab) &&
+                    pjrt.read_buffer(B, hb.data(), bb) &&
+                    pjrt.read_buffer(C, hc.data(), cb)) {
+                    tpu_internal::tpu_systolic_matmul_ex(ha.data() + a_off, trans_a, lda,
+                                                         hb.data() + b_off, trans_b, ldb,
+                                                         hc.data() + c_off, M, N, K);
+                    pjrt.write_buffer(C, hc.data(), cb);
+                }
+            }
+            return;
+        }
+    }
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
     float* c_ptr = reinterpret_cast<float*>(C) + c_off;
@@ -94,6 +189,23 @@ void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
 
 void TPUBackend::bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
     if (!A || !B || !C) return;
+    if (use_pjrt) {
+        auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
+        if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {
+            size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
+            if (ab && bb && cb) {
+                std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
+                if (pjrt.read_buffer(A, ha.data(), ab) &&
+                    pjrt.read_buffer(B, hb.data(), bb) &&
+                    pjrt.read_buffer(C, hc.data(), cb)) {
+                    tpu_internal::tpu_systolic_bmm(ha.data() + a_off, hb.data() + b_off,
+                                                  hc.data() + c_off, B_batch, M, N, K);
+                    pjrt.write_buffer(C, hc.data(), cb);
+                }
+            }
+            return;
+        }
+    }
     const float* a_ptr = reinterpret_cast<const float*>(A) + a_off;
     const float* b_ptr = reinterpret_cast<const float*>(B) + b_off;
     float* c_ptr = reinterpret_cast<float*>(C) + c_off;

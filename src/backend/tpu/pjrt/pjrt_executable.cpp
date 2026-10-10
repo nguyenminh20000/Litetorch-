@@ -32,9 +32,9 @@ bool PjrtExecutable::execute(const std::vector<PJRT_Buffer*>& inputs, std::vecto
     PJRT_Device* device = pc.default_device();
     PJRT_Buffer* const* arg_list = inputs.data();
     PJRT_Buffer* const* const* arg_lists = &arg_list;
-    size_t num_outputs = 1;
-    PJRT_Buffer*** output_lists = nullptr;
-    PJRT_Event** events = nullptr;
+    PJRT_Buffer*** output_lists = new PJRT_Buffer**[1];
+    output_lists[0] = new PJRT_Buffer*[1]();
+    PJRT_Event** events = new PJRT_Event*[1]();
     PJRT_LoadedExecutable_Execute_Args args{};
     args.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
     args.executable = exe_;
@@ -44,10 +44,16 @@ bool PjrtExecutable::execute(const std::vector<PJRT_Buffer*>& inputs, std::vecto
     args.output_lists = output_lists;
     args.device_complete_events = events;
     args.execute_device = device;
-    if (!pc.check(api->PJRT_LoadedExecutable_Execute(&args), "Execute")) return false;
-    (void)num_outputs;
-    outputs.clear();
-    return true;
+    bool ok = pc.check(api->PJRT_LoadedExecutable_Execute(&args), "Execute");
+    if (ok) {
+        if (events[0]) execute_event_ = events[0];
+        if (output_lists[0][0]) outputs.push_back(output_lists[0][0]);
+        else ok = false;
+    }
+    delete[] output_lists[0];
+    delete[] output_lists;
+    delete[] events;
+    return ok;
 }
 
 bool PjrtExecutable::await() {

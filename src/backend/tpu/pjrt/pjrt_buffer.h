@@ -28,6 +28,8 @@ public:
     bool valid() const { return buf_ != nullptr; }
     PJRT_Buffer* get() const { return buf_; }
     size_t on_device_bytes();
+    static bool to_host_buffer(PJRT_Buffer* buf, void* out, size_t bytes);
+    static void destroy_buffer(PJRT_Buffer* buf);
 
 private:
     void move_from(PjrtBuffer& o) { buf_ = o.buf_; o.buf_ = nullptr; }

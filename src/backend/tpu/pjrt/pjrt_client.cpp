@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <cstring>
 #include <cstdlib>
+#include <glob.h>
+#include <unistd.h>
 
 namespace litetorch {
 namespace tpu_pjrt {
@@ -46,6 +48,36 @@ std::string PjrtClient::find_libtpu() {
     for (int i = 0; candidates[i]; ++i) {
         void* h = dlopen(candidates[i], RTLD_NOW | RTLD_NOLOAD);
         if (h) { dlclose(h); return std::string(candidates[i]); }
+    }
+    const char* home = std::getenv("HOME");
+    std::string home_pat = home ? std::string(home) + "/.local/lib/python3.*/site-packages/libtpu/libtpu.so*" : "";
+    const char* patterns[] = {
+        "/usr/local/lib/python3.*/dist-packages/libtpu/libtpu.so*",
+        "/usr/local/lib/python3.*/site-packages/libtpu/libtpu.so*",
+        "/usr/lib/python3.*/dist-packages/libtpu/libtpu.so*",
+        "/opt/conda/lib/python3.*/site-packages/libtpu/libtpu.so*",
+        nullptr
+    };
+    for (int i = 0; patterns[i]; ++i) {
+        glob_t g{};
+        if (glob(patterns[i], GLOB_NOSORT, nullptr, &g) != 0) continue;
+        std::string hit;
+        for (size_t j = 0; j < g.gl_pathc; ++j) {
+            if (access(g.gl_pathv[j], R_OK) == 0) { hit = g.gl_pathv[j]; break; }
+        }
+        globfree(&g);
+        if (!hit.empty()) return hit;
+    }
+    if (!home_pat.empty()) {
+        glob_t g{};
+        if (glob(home_pat.c_str(), GLOB_NOSORT, nullptr, &g) == 0) {
+            std::string hit;
+            for (size_t j = 0; j < g.gl_pathc; ++j) {
+                if (access(g.gl_pathv[j], R_OK) == 0) { hit = g.gl_pathv[j]; break; }
+            }
+            globfree(&g);
+            if (!hit.empty()) return hit;
+        }
     }
     return "";
 }

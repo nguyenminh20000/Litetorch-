@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <mutex>
 #include <map>
+#include <unordered_set>
 
 namespace litetorch {
 
@@ -31,6 +32,8 @@ private:
     size_t cached_cpu_bytes_;
     std::multimap<size_t, void*> free_cpu_blocks_;
     std::map<void*, size_t> allocated_cpu_blocks_;
+    std::unordered_set<void*> pinned_cpu_blocks_;
+    void free_cpu_raw(void* ptr);
 
     size_t cached_gpu_bytes_;
     std::multimap<size_t, void*> free_gpu_blocks_;

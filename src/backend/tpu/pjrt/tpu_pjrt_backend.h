@@ -1,6 +1,7 @@
 #ifndef LITETORCH_TPU_PJRT_BACKEND_H
 #define LITETORCH_TPU_PJRT_BACKEND_H
 
+#include "pjrt_buffer.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -23,6 +24,8 @@ public:
 
     void* allocate(size_t bytes);
     void free_buffer(void* ptr);
+    bool owns(void* ptr);
+    size_t buffer_bytes(void* ptr);
     bool write_buffer(void* ptr, const void* host, size_t bytes);
     bool read_buffer(void* ptr, void* host, size_t bytes);
     void finish();
@@ -38,17 +41,15 @@ private:
     TpuPjrtBackend& operator=(const TpuPjrtBackend&) = delete;
 
     struct BufferEntry {
-        void* pjrt_buf = nullptr;
+        PjrtBuffer pjrt_buf;
         size_t bytes = 0;
     };
-    bool ensure_scratch(size_t bytes);
-    void* to_pjrt_ptr(void* ptr);
 
     bool available_ = false;
     std::string last_error_;
     std::unordered_map<void*, BufferEntry> buffers_;
     std::mutex mutex_;
-    std::vector<float> host_scratch_;
+    uint64_t next_handle_ = 1;
 };
 
 }

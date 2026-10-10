@@ -217,15 +217,15 @@ extern "C" void gpu_adam_foreach(
 {
     if (n_tensors <= 0) return;
     ensure_adam_foreach_buffers(n_tensors);
-    GPU_API(Memcpy)(g_adam_P_list, h_P_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_p_offs, h_p_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_G_list, h_G_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_g_offs, h_g_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_M_list, h_M_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_m_offs, h_m_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_V_list, h_V_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_v_offs, h_v_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
-    GPU_API(Memcpy)(g_adam_sizes, h_sizes, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice));
+    GPU_API(MemcpyAsync)(g_adam_P_list, h_P_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_p_offs, h_p_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_G_list, h_G_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_g_offs, h_g_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_M_list, h_M_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_m_offs, h_m_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_V_list, h_V_list, n_tensors * sizeof(float*), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_v_offs, h_v_offs, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice), g_compute_stream);
+    GPU_API(MemcpyAsync)(g_adam_sizes, h_sizes, n_tensors * sizeof(int), GPU_API(MemcpyHostToDevice), g_compute_stream);
     dim3 block(256, 1, 1);
     dim3 grid((max_size + 255) / 256, n_tensors, 1);
 #ifndef __HIP_PLATFORM_AMD__

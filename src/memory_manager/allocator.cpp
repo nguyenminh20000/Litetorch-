@@ -2,8 +2,55 @@
 #include "litetorch/backend.h"
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 
 namespace litetorch {
+namespace {
+
+struct PinnedHostFns {
+    void* handle = nullptr;
+    int (*host_alloc)(void**, size_t, unsigned int) = nullptr;
+    int (*host_free)(void*) = nullptr;
+    bool tried = false;
+};
+
+PinnedHostFns& pinned_host_fns() {
+    static PinnedHostFns f;
+    return f;
+}
+
+bool pinned_host_available() {
+    PinnedHostFns& f = pinned_host_fns();
+    if (f.tried) return f.host_alloc != nullptr;
+    f.tried = true;
+    struct LibEntry { const char* lib; const char* alloc_sym; const char* free_sym; };
+    static const LibEntry entries[] = {
+        {"libcudart.so", "cudaHostAlloc", "cudaFreeHost"},
+        {"libcudart.so.1", "cudaHostAlloc", "cudaFreeHost"},
+        {"libcudart.so.12", "cudaHostAlloc", "cudaFreeHost"},
+        {"libcudart.so.13", "cudaHostAlloc", "cudaFreeHost"},
+        {"libamdhip64.so", "hipHostMalloc", "hipHostFree"},
+        {"libamdhip64.so.5", "hipHostMalloc", "hipHostFree"},
+        {"libamdhip64.so.6", "hipHostMalloc", "hipHostFree"},
+        {nullptr, nullptr, nullptr},
+    };
+    for (int i = 0; entries[i].lib; ++i) {
+        f.handle = dlopen(entries[i].lib, RTLD_NOW | RTLD_NOLOAD);
+        if (!f.handle) f.handle = dlopen(entries[i].lib, RTLD_NOW);
+        if (!f.handle) continue;
+        f.host_alloc = reinterpret_cast<int(*)(void**, size_t, unsigned int)>(dlsym(f.handle, entries[i].alloc_sym));
+        f.host_free = reinterpret_cast<int(*)(void*)>(dlsym(f.handle, entries[i].free_sym));
+        if (f.host_alloc && f.host_free) return true;
+        f.host_alloc = nullptr;
+        f.host_free = nullptr;
+    }
+    return false;
+}
+
+constexpr size_t kPinnedHostThreshold = 64 * 1024;
+constexpr unsigned int kHostAllocPortable = 0x01;
+
+}
 
 CachingAllocator::CachingAllocator()
     : max_cached_cpu_bytes_(128 * 1024 * 1024),
@@ -24,7 +71,7 @@ void CachingAllocator::set_max_cpu_cache_size(size_t bytes) {
     max_cached_cpu_bytes_ = bytes;
     while (cached_cpu_bytes_ > max_cached_cpu_bytes_ && !free_cpu_blocks_.empty()) {
         auto it = free_cpu_blocks_.begin();
-        std::free(it->second);
+        free_cpu_raw(it->second);
         cached_cpu_bytes_ -= it->first;
         free_cpu_blocks_.erase(it);
     }
@@ -52,11 +99,33 @@ void* CachingAllocator::allocate_cpu(size_t size) {
         std::memset(ptr, 0, size);
         return ptr;
     }
+    if (size >= kPinnedHostThreshold && pinned_host_available()) {
+        PinnedHostFns& f = pinned_host_fns();
+        void* ptr = nullptr;
+        if (f.host_alloc(&ptr, size, kHostAllocPortable) == 0 && ptr) {
+            std::memset(ptr, 0, size);
+            allocated_cpu_blocks_[ptr] = size;
+            pinned_cpu_blocks_.insert(ptr);
+            return ptr;
+        }
+    }
     void* ptr = std::calloc(size, 1);
     if (ptr) {
         allocated_cpu_blocks_[ptr] = size;
     }
     return ptr;
+}
+
+void CachingAllocator::free_cpu_raw(void* ptr) {
+    auto pit = pinned_cpu_blocks_.find(ptr);
+    if (pit != pinned_cpu_blocks_.end()) {
+        pinned_cpu_blocks_.erase(pit);
+        PinnedHostFns& f = pinned_host_fns();
+        if (f.host_free) f.host_free(ptr);
+        else std::free(ptr);
+    } else {
+        std::free(ptr);
+    }
 }
 
 void CachingAllocator::free_cpu(void* ptr) {
@@ -70,16 +139,13 @@ void CachingAllocator::free_cpu(void* ptr) {
             free_cpu_blocks_.insert({size, ptr});
             cached_cpu_bytes_ += size;
         } else {
-            std::free(ptr);
+            free_cpu_raw(ptr);
         }
     } else {
-        // Not a live allocation: either a double-free or a foreign pointer.
-        // Check the free-list before calling std::free to avoid freeing a
-        // cached block that may be handed out again (use-after-free).
         for (auto f = free_cpu_blocks_.begin(); f != free_cpu_blocks_.end(); ++f) {
-            if (f->second == ptr) return; // already freed / cached: ignore
+            if (f->second == ptr) return;
         }
-        std::free(ptr);
+        free_cpu_raw(ptr);
     }
 }
 
@@ -132,7 +198,7 @@ void CachingAllocator::free_gpu(void* ptr) {
 void CachingAllocator::empty_cache() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& pair : free_cpu_blocks_) {
-        std::free(pair.second);
+        free_cpu_raw(pair.second);
     }
     free_cpu_blocks_.clear();
     cached_cpu_bytes_ = 0;
