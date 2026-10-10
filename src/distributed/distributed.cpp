@@ -815,6 +815,7 @@ void NCCLBridge::init(int rank, int world_size) {
     comm_destroy_fn = dlsym(lib_handle_, "ncclCommDestroy");
     group_start_fn = dlsym(lib_handle_, "ncclGroupStart");
     group_end_fn = dlsym(lib_handle_, "ncclGroupEnd");
+    comm_get_async_error_fn = dlsym(lib_handle_, "ncclCommGetAsyncError");
 
     if (!get_unique_id_fn || !comm_init_rank_fn || !all_reduce_fn || 
         !broadcast_fn || !all_gather_fn || !reduce_scatter_fn || !comm_destroy_fn) {
@@ -905,6 +906,7 @@ void NCCLBridge::init(int rank, int world_size) {
     
     if (BackendDispatcher::get().get_backend() && BackendDispatcher::get().get_backend()->is_available()) {
         comm_stream_ = BackendDispatcher::get().get_backend()->get_comm_stream();
+        plain_event_ = BackendDispatcher::get().get_backend()->create_event();
     }
 #endif
 }
@@ -940,6 +942,20 @@ void NCCLBridge::init_groups(int rank, int world_size, int tp_size, int pp_size)
 #endif
 }
 
+void NCCLBridge::nccl_check(int res, const char* op) {
+    if (res != 0) {
+        throw std::runtime_error(std::string("nccl ") + op + " failed");
+    }
+}
+
+void NCCLBridge::order_for_stream(void* stream) {
+    auto backend = BackendDispatcher::get().get_backend();
+    if (backend && backend->is_available() && plain_event_) {
+        backend->record_event(plain_event_, backend->get_compute_stream());
+        backend->stream_wait_event(stream ? stream : comm_stream_, plain_event_);
+    }
+}
+
 bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
     if (available_ && comm_ && tensor->device.type == DeviceType::GPU) {
         size_t count = tensor->numel();
@@ -949,8 +965,9 @@ bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
         void* gpu_ptr = get_gpu_raw_ptr(tensor);
         if (!gpu_ptr) return false;
 
+        order_for_stream(comm_stream_);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
-        ((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, comm_, comm_stream_);
+        nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, comm_, comm_stream_), "all_reduce");
         return true;
     }
     return false;
@@ -965,8 +982,9 @@ bool NCCLBridge::tp_all_reduce(std::shared_ptr<Tensor> tensor) {
         if (datatype < 0) return false;
         void* gpu_ptr = get_gpu_raw_ptr(tensor);
         if (!gpu_ptr) return false;
+        order_for_stream(s);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
-        ((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, c, s);
+        nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, c, s), "tp_all_reduce");
         return true;
     }
     return false;
@@ -982,8 +1000,9 @@ bool NCCLBridge::tp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
         void* shard_ptr = get_gpu_raw_ptr(shard);
         void* full_ptr = get_gpu_raw_ptr(full);
         if (!shard_ptr || !full_ptr) return false;
+        order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
-        ((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s);
+        nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "tp_all_gather");
         return true;
     }
     return false;
@@ -999,8 +1018,9 @@ bool NCCLBridge::dp_reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_pt
         void* shard_ptr = get_gpu_raw_ptr(shard);
         void* full_ptr = get_gpu_raw_ptr(full);
         if (!shard_ptr || !full_ptr) return false;
+        order_for_stream(s);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
-        ((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, c, s);
+        nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, c, s), "dp_reduce_scatter");
         return true;
     }
     return false;
@@ -1016,8 +1036,9 @@ bool NCCLBridge::dp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
         void* shard_ptr = get_gpu_raw_ptr(shard);
         void* full_ptr = get_gpu_raw_ptr(full);
         if (!shard_ptr || !full_ptr) return false;
+        order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
-        ((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s);
+        nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "dp_all_gather");
         return true;
     }
     return false;
@@ -1032,8 +1053,9 @@ bool NCCLBridge::broadcast(std::shared_ptr<Tensor> tensor, int src) {
         void* gpu_ptr = get_gpu_raw_ptr(tensor);
         if (!gpu_ptr) return false;
 
+        order_for_stream(comm_stream_);
         typedef int (*broadcast_t)(const void*, void*, size_t, int, int, void*, void*);
-        ((broadcast_t)broadcast_fn)(gpu_ptr, gpu_ptr, count, datatype, src, comm_, comm_stream_);
+        nccl_check(((broadcast_t)broadcast_fn)(gpu_ptr, gpu_ptr, count, datatype, src, comm_, comm_stream_), "broadcast");
         return true;
     }
     return false;
@@ -1049,8 +1071,9 @@ bool NCCLBridge::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tenso
         void* full_ptr = get_gpu_raw_ptr(full);
         if (!shard_ptr || !full_ptr) return false;
 
+        order_for_stream(comm_stream_);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
-        ((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, comm_, comm_stream_);
+        nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, comm_, comm_stream_), "all_gather");
         return true;
     }
     return false;
@@ -1066,8 +1089,9 @@ bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<T
         void* full_ptr = get_gpu_raw_ptr(full);
         if (!shard_ptr || !full_ptr) return false;
 
+        order_for_stream(comm_stream_);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
-        ((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, comm_, comm_stream_);
+        nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, comm_, comm_stream_), "reduce_scatter");
         return true;
     }
     return false;
@@ -1092,10 +1116,21 @@ void NCCLBridge::sync_comm() {
         if (BackendDispatcher::get().get_backend() && BackendDispatcher::get().get_backend()->is_available()) {
             BackendDispatcher::get().get_backend()->sync_stream(comm_stream_);
         }
+        if (comm_get_async_error_fn && comm_) {
+            typedef int (*async_err_t)(void*, int*);
+            int async_err = 0;
+            ((async_err_t)comm_get_async_error_fn)(comm_, &async_err);
+            if (async_err != 0) throw std::runtime_error("nccl async error detected");
+        }
     }
 }
 
 void NCCLBridge::shutdown() {
+    if (plain_event_) {
+        auto backend = BackendDispatcher::get().get_backend();
+        if (backend && backend->is_available()) backend->destroy_event(plain_event_);
+        plain_event_ = nullptr;
+    }
     if (comm_ && comm_destroy_fn) {
         typedef int (*destroy_t)(void*);
         ((destroy_t)comm_destroy_fn)(comm_);

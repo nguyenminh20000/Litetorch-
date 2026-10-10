@@ -291,12 +291,15 @@ private:
 
     int map_dtype(DataType dtype);
     void* get_gpu_raw_ptr(std::shared_ptr<Tensor> t);
+    void order_for_stream(void* stream);
+    static void nccl_check(int res, const char* op);
 
     bool initialized_ = false;
     bool available_ = false;
     void* lib_handle_ = nullptr;
     void* comm_ = nullptr;
     void* comm_stream_ = nullptr;
+    void* plain_event_ = nullptr;
 
     void* tp_comm_ = nullptr;
     void* dp_comm_ = nullptr;
@@ -315,6 +318,7 @@ private:
     void* comm_destroy_fn = nullptr;
     void* group_start_fn = nullptr;
     void* group_end_fn = nullptr;
+    void* comm_get_async_error_fn = nullptr;
 };
 
 class OverlappedAllReducer {

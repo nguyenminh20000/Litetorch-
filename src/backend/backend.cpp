@@ -58,6 +58,7 @@ typedef void (*gpu_stream_wait_event_t)(void*, void*);
 typedef void (*gpu_destroy_event_t)(void*);
 
 typedef void* (*gpu_get_comm_stream_t)();
+typedef void* (*gpu_get_compute_stream_t)();
 typedef void (*gpu_sync_stream_t)(void*);
 typedef void (*gpu_set_device_t)(int);
 typedef void (*gpu_set_tf32_enabled_t)(bool);
@@ -115,6 +116,7 @@ public:
     gpu_stream_wait_event_t gpu_stream_wait_event_fn = nullptr;
     gpu_destroy_event_t gpu_destroy_event_fn = nullptr;
     gpu_get_comm_stream_t gpu_get_comm_stream_fn = nullptr;
+    gpu_get_compute_stream_t gpu_get_compute_stream_fn = nullptr;
     gpu_sync_stream_t gpu_sync_stream_fn = nullptr;
     gpu_set_tf32_enabled_t gpu_set_tf32_enabled_fn = nullptr;
     gpu_is_tf32_enabled_t gpu_is_tf32_enabled_fn = nullptr;
@@ -222,6 +224,7 @@ public:
         gpu_stream_wait_event_fn = (gpu_stream_wait_event_t)dlsym(handle, "gpu_stream_wait_event");
         gpu_destroy_event_fn = (gpu_destroy_event_t)dlsym(handle, "gpu_destroy_event");
         gpu_get_comm_stream_fn = (gpu_get_comm_stream_t)dlsym(handle, "gpu_get_comm_stream");
+        gpu_get_compute_stream_fn = (gpu_get_compute_stream_t)dlsym(handle, "gpu_get_compute_stream");
         gpu_sync_stream_fn = (gpu_sync_stream_t)dlsym(handle, "gpu_sync_stream");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
         gpu_set_tf32_enabled_fn = (gpu_set_tf32_enabled_t)dlsym(handle, "gpu_set_tf32_enabled");
@@ -345,6 +348,7 @@ public:
     void destroy_event(void* event) override { if (gpu_destroy_event_fn && event) gpu_destroy_event_fn(event); }
 
     void* get_comm_stream() override { return gpu_get_comm_stream_fn ? gpu_get_comm_stream_fn() : nullptr; }
+    void* get_compute_stream() override { return gpu_get_compute_stream_fn ? gpu_get_compute_stream_fn() : nullptr; }
     void sync_stream(void* stream) override { if (gpu_sync_stream_fn && stream) gpu_sync_stream_fn(stream); }
     void set_device(int device_id) override {
         thread_local int cached_device = -1;

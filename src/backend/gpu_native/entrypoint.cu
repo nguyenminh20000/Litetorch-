@@ -145,6 +145,10 @@ extern "C" void* gpu_get_comm_stream() {
     return (void*)g_comm_stream;
 }
 
+extern "C" void* gpu_get_compute_stream() {
+    return (void*)g_compute_stream;
+}
+
 extern "C" void gpu_sync_stream(void* stream) {
     if (stream) {
         GPU_API(StreamSynchronize)((GPU_API(Stream_t))stream);
