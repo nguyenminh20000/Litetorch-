@@ -9,22 +9,6 @@
 #include <map>
 #include <unordered_map>
 #include <vector>
-#include "math/gemm.cu"
-#include "math/reduction.cu"
-#include "elementwise/elementwise_ops.cu"
-#include "optim/optimizers.cu"
-#include "nn/conv_kernels.cu"
-#include "nn/pool_kernels.cu"
-#include "nn/softmax_kernels.cu"
-#include "nn/norm_kernels.cu"
-#include "nn/misc_kernels.cu"
-#include "nn/flash_attention.cu"
-
-GPU_API(Stream_t) g_compute_stream = nullptr;
-GPU_API(Stream_t) g_comm_stream = nullptr;
-GPU_API(Stream_t) g_h2d_stream = nullptr;
-GPU_API(Stream_t) g_d2h_stream = nullptr;
-
 static std::mutex g_dev_stream_mutex;
 static std::vector<GPU_API(Stream_t)> g_dev_streams;
 
@@ -83,6 +67,22 @@ static inline int launch_device(void** args, int arg_count) {
     return current_device();
 }
 
+#include "math/gemm.cu"
+#include "math/reduction.cu"
+#include "elementwise/elementwise_ops.cu"
+#include "optim/optimizers.cu"
+#include "nn/conv_kernels.cu"
+#include "nn/pool_kernels.cu"
+#include "nn/softmax_kernels.cu"
+#include "nn/norm_kernels.cu"
+#include "nn/misc_kernels.cu"
+#include "nn/flash_attention.cu"
+
+GPU_API(Stream_t) g_compute_stream = nullptr;
+GPU_API(Stream_t) g_comm_stream = nullptr;
+GPU_API(Stream_t) g_h2d_stream = nullptr;
+GPU_API(Stream_t) g_d2h_stream = nullptr;
+
 #ifndef __HIP_PLATFORM_AMD__
 static bool g_tf32_enabled = true;
 
@@ -99,7 +99,7 @@ extern "C" bool gpu_is_tf32_enabled() {
     return g_tf32_enabled;
 }
 
-cublasHandle_t get_cublas_handle(const void* ref = nullptr) {
+cublasHandle_t get_cublas_handle(const void* ref) {
     thread_local std::unordered_map<int, cublasHandle_t> handles;
     auto_set_device(ref);
     int dev = current_device();
@@ -120,7 +120,7 @@ cublasLtHandle_t get_cublaslt_handle() {
     }
     return handle;
 }
-lt_cudnnHandle_t get_cudnn_handle(const void* ref = nullptr) {
+lt_cudnnHandle_t get_cudnn_handle(const void* ref) {
     thread_local std::unordered_map<int, lt_cudnnHandle_t> handles;
     if (!g_cudnn_available) return nullptr;
     auto_set_device(ref);
@@ -134,7 +134,7 @@ lt_cudnnHandle_t get_cudnn_handle(const void* ref = nullptr) {
     return handle;
 }
 #else
-rocblas_handle get_rocblas_handle(const void* ref = nullptr) {
+rocblas_handle get_rocblas_handle(const void* ref) {
     thread_local std::unordered_map<int, rocblas_handle> handles;
     auto_set_device(ref);
     int dev = current_device();
@@ -147,7 +147,7 @@ rocblas_handle get_rocblas_handle(const void* ref = nullptr) {
     return handle;
 }
 #ifdef USE_MIOPEN
-miopenHandle_t get_miopen_handle(const void* ref = nullptr) {
+miopenHandle_t get_miopen_handle(const void* ref) {
     thread_local std::unordered_map<int, miopenHandle_t> handles;
     auto_set_device(ref);
     int dev = current_device();

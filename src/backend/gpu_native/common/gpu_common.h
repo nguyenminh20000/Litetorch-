@@ -38,13 +38,13 @@ extern fa3_bwd_t g_fa3_bwd_fn;
 extern GPU_API(Stream_t) g_compute_stream;
 
 #ifndef __HIP_PLATFORM_AMD__
-cublasHandle_t get_cublas_handle();
+cublasHandle_t get_cublas_handle(const void* ref = nullptr);
 cublasLtHandle_t get_cublaslt_handle();
-lt_cudnnHandle_t get_cudnn_handle();
+lt_cudnnHandle_t get_cudnn_handle(const void* ref = nullptr);
 #else
-rocblas_handle get_rocblas_handle();
+rocblas_handle get_rocblas_handle(const void* ref = nullptr);
 #ifdef USE_MIOPEN
-miopenHandle_t get_miopen_handle();
+miopenHandle_t get_miopen_handle(const void* ref = nullptr);
 #endif
 #endif
 
