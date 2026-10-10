@@ -226,7 +226,6 @@ Tensor::Tensor(const std::vector<int64_t>& shape, const Device& device, bool req
     creator.parent = this;
     numel_ = 1;
     for (auto dim : shape) numel_ *= dim;
-    if (shape.empty()) numel_ = 0;
     contiguous_ = true;
     storage = std::make_shared<StorageImpl>(numel_, device, dtype);
     this->device = storage->device;
@@ -237,7 +236,6 @@ Tensor::Tensor(std::shared_ptr<StorageImpl> storage, const std::vector<int64_t>&
     creator.parent = this;
     numel_ = 1;
     for (auto dim : shape) numel_ *= dim;
-    if (shape.empty()) numel_ = 0;
     contiguous_ = (strides == default_strides(shape));
     if (storage) {
         dtype = storage->dtype;
