@@ -7,6 +7,7 @@
 namespace litetorch {
 
 typedef bool (*gpu_init_t)();
+typedef void (*gpu_shutdown_t)();
 typedef void* (*gpu_allocate_t)(size_t);
 typedef void (*gpu_free_t)(void*);
 typedef void (*gpu_empty_cache_t)();
@@ -16,6 +17,8 @@ typedef void (*gpu_copy_t)(void*, void*, size_t, size_t, size_t);
 typedef void (*gpu_read_async_t)(void*, size_t, void*, size_t);
 typedef void (*gpu_write_async_t)(void*, size_t, const void*, size_t);
 typedef void (*gpu_copy_async_t)(void*, void*, size_t, size_t, size_t);
+typedef void (*gpu_copy_peer_t)(void*, int, void*, int, size_t, size_t, size_t);
+typedef void (*gpu_copy_peer_async_t)(void*, int, void*, int, size_t, size_t, size_t);
 typedef void (*gpu_finish_t)();
 typedef void* (*gpu_get_kernel_t)(const char*);
 typedef void (*gpu_launch_t)(void*, int, int, int, void**, int);
@@ -68,6 +71,7 @@ class NativeGPUBackend : public DeviceBackend {
 public:
     void* handle = nullptr;
     gpu_init_t gpu_init_fn = nullptr;
+    gpu_shutdown_t gpu_shutdown_fn = nullptr;
     gpu_set_device_t gpu_set_device_fn = nullptr;
     gpu_allocate_t gpu_allocate_fn = nullptr;
     gpu_free_t gpu_free_fn = nullptr;
@@ -78,6 +82,8 @@ public:
     gpu_read_async_t gpu_read_async_fn = nullptr;
     gpu_write_async_t gpu_write_async_fn = nullptr;
     gpu_copy_async_t gpu_copy_async_fn = nullptr;
+    gpu_copy_peer_t gpu_copy_peer_fn = nullptr;
+    gpu_copy_peer_async_t gpu_copy_peer_async_fn = nullptr;
     gpu_finish_t gpu_finish_fn = nullptr;
     gpu_get_kernel_t gpu_get_kernel_fn = nullptr;
     gpu_launch_t gpu_launch_fn = nullptr;
@@ -176,6 +182,7 @@ public:
         if (!handle) return;
 
         gpu_init_fn = (gpu_init_t)dlsym(handle, "gpu_init");
+        gpu_shutdown_fn = (gpu_shutdown_t)dlsym(handle, "gpu_shutdown");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
         gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
         gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
@@ -186,6 +193,8 @@ public:
         gpu_read_async_fn = (gpu_read_async_t)dlsym(handle, "gpu_read_async");
         gpu_write_async_fn = (gpu_write_async_t)dlsym(handle, "gpu_write_async");
         gpu_copy_async_fn = (gpu_copy_async_t)dlsym(handle, "gpu_copy_async");
+        gpu_copy_peer_fn = (gpu_copy_peer_t)dlsym(handle, "gpu_copy_peer");
+        gpu_copy_peer_async_fn = (gpu_copy_peer_async_t)dlsym(handle, "gpu_copy_peer_async");
         gpu_finish_fn = (gpu_finish_t)dlsym(handle, "gpu_finish");
         gpu_get_kernel_fn = (gpu_get_kernel_t)dlsym(handle, "gpu_get_kernel");
         gpu_launch_fn = (gpu_launch_t)dlsym(handle, "gpu_launch");
@@ -238,6 +247,7 @@ public:
 
     ~NativeGPUBackend() {
         if (handle) {
+            if (gpu_shutdown_fn) gpu_shutdown_fn();
             dlclose(handle);
         }
     }
@@ -251,6 +261,10 @@ public:
     void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) override { if (gpu_read_async_fn) gpu_read_async_fn(ptr, size, host_ptr, offset); else gpu_read_fn(ptr, size, host_ptr, offset); }
     void write_async(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) override { if (gpu_write_async_fn) gpu_write_async_fn(ptr, size, host_ptr, offset); else gpu_write_fn(ptr, size, host_ptr, offset); }
     void copy(void* src, void* dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0) override { gpu_copy_fn(src, dst, size, src_offset, dst_offset); }
+    void copy_peer(void* src, int src_dev, void* dst, int dst_dev, size_t size, size_t src_offset = 0, size_t dst_offset = 0) override {
+        if (gpu_copy_peer_fn) gpu_copy_peer_fn(src, src_dev, dst, dst_dev, size, src_offset, dst_offset);
+        else DeviceBackend::copy_peer(src, src_dev, dst, dst_dev, size, src_offset, dst_offset);
+    }
     void finish() override { gpu_finish_fn(); }
     void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_sum_fn) gpu_sum_fn(A, a_off, B, b_off, size); }
     void max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_max_fn) gpu_max_fn(A, a_off, B, b_off, size); }
