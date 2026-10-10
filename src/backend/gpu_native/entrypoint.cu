@@ -545,7 +545,10 @@ extern "C" void gpu_copy_async(void* src, void* dst, size_t size, size_t src_off
 }
 
 extern "C" void gpu_finish() {
-    GPU_API(StreamSynchronize)(dev_stream(current_device()));
+    std::lock_guard<std::mutex> lock(g_dev_stream_mutex);
+    for (auto s : g_dev_streams) {
+        if (s) GPU_API(StreamSynchronize)(s);
+    }
 }
 
 extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
