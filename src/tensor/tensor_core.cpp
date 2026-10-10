@@ -462,7 +462,13 @@ std::shared_ptr<Tensor> Tensor::to(const Device& target_device) {
     } else if (device.type == DeviceType::GPU && final_device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
-            native->copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
+            size_t bytes = storage->size * elem_sz;
+            void* tmp = malloc(bytes);
+            if (tmp) {
+                native->read(storage->get_gpu_ptr(), bytes, tmp, 0);
+                native->write(new_storage->get_gpu_ptr(), bytes, tmp, 0);
+                free(tmp);
+            }
         } else if (storage->get_gpu_ptr() && new_storage->get_gpu_ptr()) {
             CLBackend::get().copy(storage->get_gpu_ptr(), new_storage->get_gpu_ptr(), storage->size * elem_sz);
         }
