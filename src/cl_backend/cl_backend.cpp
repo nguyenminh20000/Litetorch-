@@ -555,6 +555,12 @@ void CLBackend::copy(cl_mem src, cl_mem dst, size_t size, size_t src_offset, siz
     }
 }
 
+const char* CLBackend::kernel_name(KernelID id) {
+    size_t i = static_cast<size_t>(id);
+    size_t n = sizeof(g_precompiled_kernel_names) / sizeof(g_precompiled_kernel_names[0]);
+    return i < n ? g_precompiled_kernel_names[i] : nullptr;
+}
+
 cl_kernel CLBackend::get_kernel(KernelID id) {
     auto native = BackendDispatcher::get().get_backend();
     if (native && native->is_available()) {

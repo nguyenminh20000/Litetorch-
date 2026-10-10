@@ -181,6 +181,7 @@ public:
 
     cl_kernel get_kernel(KernelID id);
     cl_kernel get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name);
+    static const char* kernel_name(KernelID id);
     void launch(cl_kernel kernel, const std::vector<size_t>& global_work_size, const std::vector<size_t>& local_work_size, const std::vector<void*>& args, const std::vector<size_t>& arg_sizes);
     std::shared_ptr<std::mutex> get_kernel_mutex(cl_kernel kernel);
     void finish();

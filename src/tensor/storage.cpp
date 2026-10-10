@@ -3,6 +3,7 @@
 #include "litetorch/cl_backend.h"
 #include "litetorch/allocator.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <cstring>
 
 namespace litetorch {
@@ -12,17 +13,16 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
         return;
     }
     if (device.type == DeviceType::GPU) {
-        auto native = BackendDispatcher::get().get_backend();
-        bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+        bool has_gpu = has_native_gpu() || CLBackend::get().is_available();
         if (has_gpu) {
-            if (native && native->is_available()) {
+            if (auto native = native_gpu_backend()) {
                 native->set_device(device.index);
             }
             {
                 std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
                 MemoryManager::get().register_gpu_impl(this);
             }
-            gpu_data = CLBackend::get().allocate(size * element_size());
+            gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
             if (!gpu_data) {
                 std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
                 MemoryManager::get().unregister_gpu_impl(this);
@@ -63,7 +63,7 @@ StorageImpl::~StorageImpl() {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->free(gpu_data);
         } else {
-            CLBackend::get().free(gpu_data);
+            rt_gpu_free((void*)gpu_data);
         }
         gpu_data = nullptr;
     }
@@ -84,7 +84,7 @@ float* StorageImpl::get_cpu_ptr() {
     if (device.type == DeviceType::GPU && gpu_data) {
         if (!cpu_data) {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
-            CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
+            rt_gpu_read(gpu_data, size * element_size(), cpu_data);
         }
     } else if (device.type == DeviceType::TPU && gpu_data) {
         if (!cpu_data) {
@@ -121,7 +121,7 @@ cl_mem StorageImpl::get_gpu_ptr() {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(gpu_data, size * element_size(), cpu_data);
         } else if (device.type == DeviceType::GPU && gpu_data) {
-            CLBackend::get().write(gpu_data, size * element_size(), cpu_data);
+            rt_gpu_write(gpu_data, size * element_size(), cpu_data);
         }
         CachingAllocator::get().free_cpu(cpu_data);
         cpu_data = nullptr;
@@ -135,35 +135,34 @@ void StorageImpl::to(const Device& new_device) {
     if (device == new_device) return;
 
     if (new_device.type == DeviceType::GPU) {
-        auto native = BackendDispatcher::get().get_backend();
-        bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+        bool has_gpu = has_native_gpu() || CLBackend::get().is_available();
         if (!has_gpu) return;
-        
-        if (native && native->is_available()) {
+
+        if (auto native = native_gpu_backend()) {
             native->set_device(new_device.index);
         }
         MemoryManager::get().register_gpu_impl(this);
-        cl_mem new_gpu_data = CLBackend::get().allocate(size * element_size());
+        cl_mem new_gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
         if (!new_gpu_data) {
             MemoryManager::get().unregister_gpu_impl(this);
             return;
         }
 
         if (cpu_data) {
-            CLBackend::get().write(new_gpu_data, size * element_size(), cpu_data);
+            rt_gpu_write(new_gpu_data, size * element_size(), cpu_data);
             CachingAllocator::get().free_cpu(cpu_data);
             cpu_data = nullptr;
         } else if (gpu_data && device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             float* tmp = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
             if (tpu) tpu->read(gpu_data, size * element_size(), tmp);
-            CLBackend::get().write(new_gpu_data, size * element_size(), tmp);
+            rt_gpu_write(new_gpu_data, size * element_size(), tmp);
             if (tpu) tpu->free(gpu_data);
             CachingAllocator::get().free_cpu(tmp);
         } else if (gpu_data) {
             // GPU -> GPU (different index): device-to-device copy, then free old buffer
-            CLBackend::get().copy(gpu_data, new_gpu_data, size * element_size());
-            CLBackend::get().free(gpu_data);
+            rt_gpu_copy(gpu_data, new_gpu_data, size * element_size());
+            rt_gpu_free((void*)gpu_data);
         }
         gpu_data = new_gpu_data;
         device = new_device;
@@ -181,9 +180,9 @@ void StorageImpl::to(const Device& new_device) {
             cpu_data = nullptr;
         } else if (gpu_data && device.type == DeviceType::GPU) {
             float* tmp = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
-            CLBackend::get().read(gpu_data, size * element_size(), tmp);
+            rt_gpu_read(gpu_data, size * element_size(), tmp);
             tpu->write(new_tpu_data, size * element_size(), tmp);
-            CLBackend::get().free(gpu_data);
+            rt_gpu_free((void*)gpu_data);
             MemoryManager::get().unregister_gpu_impl(this);
             CachingAllocator::get().free_cpu(tmp);
         } else if (gpu_data) {
@@ -210,8 +209,8 @@ void StorageImpl::to(const Device& new_device) {
                 if (tpu) tpu->read(gpu_data, size * element_size(), cpu_data);
                 if (tpu) tpu->free(gpu_data);
             } else {
-                CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
-                CLBackend::get().free(gpu_data);
+                rt_gpu_read(gpu_data, size * element_size(), cpu_data);
+                rt_gpu_free((void*)gpu_data);
                 MemoryManager::get().unregister_gpu_impl(this);
             }
             gpu_data = nullptr;
@@ -226,8 +225,8 @@ void StorageImpl::evict_impl() {
     if (!cpu_data) {
         cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
     }
-    CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
-    CLBackend::get().free(gpu_data);
+    rt_gpu_read(gpu_data, size * element_size(), cpu_data);
+    rt_gpu_free((void*)gpu_data);
     gpu_data = nullptr;
     is_swapped = true;
 
@@ -242,7 +241,7 @@ void StorageImpl::evict() {
 
 void StorageImpl::discard_gpu_impl() {
     if (is_swapped || !gpu_data) return;
-    CLBackend::get().free(gpu_data);
+    rt_gpu_free((void*)gpu_data);
     gpu_data = nullptr;
     is_swapped = true;
     MemoryManager::get().unregister_gpu_impl(this);
@@ -257,24 +256,24 @@ void StorageImpl::discard_gpu() {
 void StorageImpl::swap_in_impl() {
     if (!is_swapped || gpu_data) return;
 
-    auto native = BackendDispatcher::get().get_backend();
-    bool has_gpu = (native && native->is_available()) || CLBackend::get().is_available();
+    auto native = native_gpu_backend();
+    bool has_gpu = (native != nullptr) || CLBackend::get().is_available();
     if (!has_gpu) {
         is_swapped = false;
         device = Device(DeviceType::CPU, 0);
         return;
     }
-    if (native && native->is_available()) {
+    if (native) {
         native->set_device(device.index);
     }
     MemoryManager::get().register_gpu_impl(this);
-    gpu_data = CLBackend::get().allocate(size * element_size());
+    gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
     if (!gpu_data) {
         MemoryManager::get().unregister_gpu_impl(this);
         throw std::runtime_error("[litetorch Error] GPU out of memory: failed to swap in " + std::to_string(size * element_size()) + " bytes");
     }
 
-    CLBackend::get().write(gpu_data, size * element_size(), cpu_data);
+    rt_gpu_write(gpu_data, size * element_size(), cpu_data);
     CachingAllocator::get().free_cpu(cpu_data);
     cpu_data = nullptr;
     is_swapped = false;
@@ -295,7 +294,7 @@ void StorageImpl::ensure_cpu() {
         if (!cpu_data) {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
         }
-        CLBackend::get().read(gpu_data, size * element_size(), cpu_data);
+        rt_gpu_read(gpu_data, size * element_size(), cpu_data);
     } else if (device.type == DeviceType::TPU && gpu_data) {
         if (!cpu_data) {
             cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
