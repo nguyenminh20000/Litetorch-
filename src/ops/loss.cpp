@@ -31,6 +31,8 @@ class MseLossNode : public Node {
 public:
     MseLossNode() : Node("MSELoss") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
@@ -65,6 +67,8 @@ class CrossEntropyLossNode : public Node {
 public:
     CrossEntropyLossNode() : Node("CrossEntropyLoss") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
@@ -131,6 +135,8 @@ class L1LossNode : public Node {
 public:
     L1LossNode() : Node("L1Loss") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
@@ -170,6 +176,8 @@ class BceLossNode : public Node {
 public:
     BceLossNode() : Node("BCELoss") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();

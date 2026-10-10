@@ -192,6 +192,8 @@ public:
     ) : Node("JITNode"), expr_(expr), input_vars_(input_vars), saved_inputs_(saved_inputs), inputs_need_grad_(inputs_need_grad) {}
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         std::vector<std::shared_ptr<Tensor>> grads;
         grads.reserve(saved_inputs_.size());
 

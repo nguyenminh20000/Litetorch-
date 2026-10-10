@@ -33,6 +33,8 @@ class FlashAttentionNode : public Node {
 public:
     FlashAttentionNode() : Node("FlashAttention") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto q = saved_tensors[0]->is_contiguous() ? saved_tensors[0] : saved_tensors[0]->contiguous();
         auto k = saved_tensors[1]->is_contiguous() ? saved_tensors[1] : saved_tensors[1]->contiguous();
         auto v = saved_tensors[2]->is_contiguous() ? saved_tensors[2] : saved_tensors[2]->contiguous();
@@ -645,6 +647,8 @@ public:
     int64_t num_heads;
     FlashAttentionQKVNode(int64_t nh) : Node("FlashAttentionQKV"), num_heads(nh) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto qkv_c = saved_tensors[0];
         auto q = saved_tensors[1];
         auto k = saved_tensors[2];
@@ -758,6 +762,8 @@ public:
     int64_t index;
     QKVExtractNode(int64_t nh, int64_t idx) : Node("QKVExtract"), num_heads(nh), index(idx) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto qkv_c = saved_tensors[0];
         int64_t B = qkv_c->shape[0];
         int64_t T = qkv_c->shape[1];

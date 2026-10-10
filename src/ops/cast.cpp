@@ -17,6 +17,8 @@ public:
     CastNode(DataType src_dtype) : Node("Cast"), src_dtype(src_dtype) {}
     
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { Ops::cast(grad_output, src_dtype) };
     }
 };

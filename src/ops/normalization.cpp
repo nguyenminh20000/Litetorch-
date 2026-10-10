@@ -40,6 +40,8 @@ public:
         : Node("LayerNorm"), normalized_shape(normalized_shape), eps(eps) {}
         
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
         auto bias = saved_tensors[2];
@@ -254,6 +256,8 @@ public:
         : Node("FusedAddLayerNorm"), normalized_shape(normalized_shape), eps(eps) {}
         
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto residual = saved_tensors[1];
         auto weight = saved_tensors[2];
@@ -275,6 +279,8 @@ public:
     BatchNorm2dNode(float eps) : Node("BatchNorm2d"), eps(eps) {}
     float eps;
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
         auto mean = saved_tensors[2];
