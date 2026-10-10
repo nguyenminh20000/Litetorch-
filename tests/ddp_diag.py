@@ -28,10 +28,10 @@ def diag_rank(rank, world_size, port):
     params = m.parameters()
     if rank == 0:
         v0 = np.array(params[0].to(lt.Device("cpu")).to_vector())
-        print(f"[diag] rank0 param0 mean={v0.mean():.6f} std={v0.std():.6f}", flush=True)
+        print(f"[diag] rank0 param0 mean={v0.mean():.6f} std={v0.std():.6f} requires_grad={params[0].requires_grad}", flush=True)
     if rank == 1:
         v1 = np.array(params[0].to(lt.Device("cpu")).to_vector())
-        print(f"[diag] rank1 param0 mean={v1.mean():.6f} std={v1.std():.6f}", flush=True)
+        print(f"[diag] rank1 param0 mean={v1.mean():.6f} std={v1.std():.6f} requires_grad={params[0].requires_grad}", flush=True)
 
     xt = lt.Tensor.from_vector([0.1, 0.2, 0.3, 0.4] * 8, [8, 4], dev)
     yt = lt.Tensor.from_vector([float(i % 2) for i in range(8)], [8], dev)
@@ -40,7 +40,9 @@ def diag_rank(rank, world_size, port):
 
     opt.zero_grad()
     out = m.forward(xt)
+    print(f"[diag] rank{rank}: out.requires_grad={out.requires_grad}", flush=True)
     loss = lt.Ops.cross_entropy_loss(out, yt)
+    print(f"[diag] rank{rank}: loss.requires_grad={loss.requires_grad}", flush=True)
     loss.backward()
     lt.cuda_synchronize()
 
