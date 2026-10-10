@@ -550,45 +550,49 @@ __global__ void moe_expert_backward_kernel(
 }
 
 extern "C" void gpu_moe_gate(void* logits, int l_off, void* probs, int p_off, void* indices, int idx_off, int N, int E, int top_k) {
+    auto_set_device(logits);
     if (N <= 0) return;
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_gate_kernel<<<blocks, threads, 0, g_compute_stream>>>((const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
+    moe_gate_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
 #else
-    hipLaunchKernelGGL(moe_gate_kernel, dim3(blocks), dim3(threads), 0, g_compute_stream, (const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
+    hipLaunchKernelGGL(moe_gate_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
 #endif
 }
 
 extern "C" void gpu_moe_gate_backward(void* grad_output, int gout_off, void* input, int in_off, void* gate_weight, int gw_off, void* probs, int p_off, void* indices, int idx_off, void* grad_input, int gin_off, void* grad_gate_weight, int ggw_off, int N, int D, int E, int top_k) {
+    auto_set_device(grad_output);
     if (N <= 0) return;
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_gate_backward_kernel<<<blocks, threads, 0, g_compute_stream>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
+    moe_gate_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
 #else
-    hipLaunchKernelGGL(moe_gate_backward_kernel, dim3(blocks), dim3(threads), 0, g_compute_stream, (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
+    hipLaunchKernelGGL(moe_gate_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
 #endif
 }
 
 extern "C" void gpu_moe_expert_forward(void* input, int in_off, void* expert_weight, int ew_off, void* expert_bias, int eb_off, void* probs, int p_off, void* indices, int idx_off, void* output, int out_off, int N, int D, int out_features, int expert_idx, int top_k) {
+    auto_set_device(input);
     if (N <= 0) return;
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_expert_forward_kernel<<<blocks, threads, 0, g_compute_stream>>>((const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
+    moe_expert_forward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
 #else
-    hipLaunchKernelGGL(moe_expert_forward_kernel, dim3(blocks), dim3(threads), 0, g_compute_stream, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
+    hipLaunchKernelGGL(moe_expert_forward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
 #endif
 }
 
 extern "C" void gpu_moe_expert_backward(void* grad_output, int gout_off, void* input, int in_off, void* expert_weight, int ew_off, void* expert_bias, int eb_off, void* probs, int p_off, void* indices, int idx_off, void* grad_input, int gin_off, void* grad_expert, int ge_off, void* grad_bias, int gb_off, void* grad_probs, int gp_off, int N, int D, int out_features, int expert_idx, int top_k) {
+    auto_set_device(grad_output);
     if (N <= 0) return;
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_expert_backward_kernel<<<blocks, threads, 0, g_compute_stream>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
+    moe_expert_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
 #else
-    hipLaunchKernelGGL(moe_expert_backward_kernel, dim3(blocks), dim3(threads), 0, g_compute_stream, (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
+    hipLaunchKernelGGL(moe_expert_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
 #endif
 }

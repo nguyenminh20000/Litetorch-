@@ -6,8 +6,9 @@ extern "C" void* gpu_allocate(size_t size);
 extern "C" bool gpu_is_tf32_enabled();
 
 extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     float alpha = 1.0f;
     float beta = 0.0f;
     const float* a_ptr = (const float*)A + a_off;
@@ -28,8 +29,9 @@ extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void*
 extern "C" void gpu_matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                              void* B, int64_t b_off, bool trans_b, int64_t ldb,
                              void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     float alpha = 1.0f;
     float beta = 0.0f;
     const float* a_ptr = (const float*)A + a_off;
@@ -52,8 +54,9 @@ extern "C" void gpu_matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
 }
 
 extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     float alpha = 1.0f;
     float beta = 0.0f;
     const float* a_ptr = (const float*)A + a_off;
@@ -78,8 +81,9 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
 }
 
 extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     const __half alpha = __float2half(1.0f);
     const __half beta = __float2half(0.0f);
     const __half* a_ptr = (const __half*)A + a_off;
@@ -100,8 +104,9 @@ extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, 
 }
 
 extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     const __half alpha = __float2half(1.0f);
     const __half beta = __float2half(0.0f);
     const __half* a_ptr = (const __half*)A + a_off;
@@ -125,6 +130,7 @@ extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, voi
 }
 
 extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float a_scale, float b_scale, float d_scale) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
 #if defined(CUDA_VERSION) && CUDA_VERSION >= 11080
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
@@ -145,7 +151,7 @@ extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, v
     const void* b_ptr = (const char*)B + b_off;
     void* c_ptr = (char*)C + c_off * sizeof(__half);
     
-    cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, g_compute_stream);
+    cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, dev_stream(current_device()));
     
     cublasLtMatrixLayoutDestroy(Adesc);
     cublasLtMatrixLayoutDestroy(Bdesc);
@@ -160,9 +166,10 @@ extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, v
 }
 
 extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
 #if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(C);
     float alpha = 1.0f;
     float beta = 0.0f;
     const void* a_ptr = (const char*)A + a_off * sizeof(unsigned short);
@@ -232,8 +239,12 @@ static std::mutex lt_plan_cache_mutex;
 static const size_t LT_WS_BYTES = 32ULL * 1024ULL * 1024ULL;
 
 static void* lt_workspace() {
-    thread_local void* ws = nullptr;
-    if (!ws) ws = gpu_allocate(LT_WS_BYTES);
+    thread_local std::unordered_map<int, void*> workspaces;
+    int dev = current_device();
+    auto it = workspaces.find(dev);
+    if (it != workspaces.end()) return it->second;
+    void* ws = gpu_allocate(LT_WS_BYTES);
+    workspaces[dev] = ws;
     return ws;
 }
 
@@ -269,7 +280,7 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
     if (!heur_ok) return false;
     float alpha = 1.0f, beta = 0.0f;
     cudaStreamCaptureStatus capStatus = cudaStreamCaptureStatusNone;
-    cudaStreamIsCapturing(g_compute_stream, &capStatus);
+    cudaStreamIsCapturing(dev_stream(current_device()), &capStatus);
     cudaEvent_t start = nullptr, stop = nullptr;
     bool timed = capStatus == cudaStreamCaptureStatusNone &&
                  cudaEventCreate(&start) == cudaSuccess &&
@@ -285,20 +296,20 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
         }
         if (cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
                            c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
-                           ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
+                           ws, LT_WS_BYTES, dev_stream(current_device())) != CUBLAS_STATUS_SUCCESS) {
             continue;
         }
         float total = 0.0f;
         bool ok = true;
         for (int r = 0; r < 5; ++r) {
-            cudaEventRecord(start, g_compute_stream);
+            cudaEventRecord(start, dev_stream(current_device()));
             if (cublasLtMatmul(lt_handle, desc, &alpha, a_ptr, Adesc, b_ptr, Bdesc, &beta,
                                c_ptr, Cdesc, c_ptr, Cdesc, &heuristics[i].algo,
-                               ws, LT_WS_BYTES, g_compute_stream) != CUBLAS_STATUS_SUCCESS) {
+                               ws, LT_WS_BYTES, dev_stream(current_device())) != CUBLAS_STATUS_SUCCESS) {
                 ok = false;
                 break;
             }
-            cudaEventRecord(stop, g_compute_stream);
+            cudaEventRecord(stop, dev_stream(current_device()));
             if (cudaEventSynchronize(stop) != cudaSuccess) {
                 ok = false;
                 break;
@@ -329,6 +340,7 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
 extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t lda,
                                  void* B, int64_t b_off, bool trans_b, int64_t ldb,
                                  void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
     if (M <= 0 || N <= 0 || K <= 0) {
         gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
@@ -383,7 +395,7 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
         float alpha = 1.0f, beta = 0.0f;
         if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, b_ptr, plan->Adesc, a_ptr, plan->Bdesc, &beta,
                                 c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
-                                ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
+                                ws, LT_WS_BYTES, dev_stream(current_device())) == CUBLAS_STATUS_SUCCESS) {
             return;
         }
     }
@@ -406,6 +418,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
                                       void* B, int64_t b_off, bool trans_b, int64_t ldb,
                                       void* BIAS, int64_t bias_off,
                                       void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
     if (M <= 0 || N <= 0 || K <= 0) return;
     const float* a_ptr = (const float*)A + a_off;
@@ -458,7 +471,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
                 int64_t total = M * N;
                 int threads = 256;
                 int64_t blocks = (total + threads - 1) / threads;
-                matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
+                matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, dev_stream(current_device())>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
                 return;
             }
             it = lt_plan_cache.emplace(key, p).first;
@@ -471,7 +484,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
         float alpha = 1.0f, beta = 0.0f;
         if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, a_ptr, plan->Adesc, b_ptr, plan->Bdesc, &beta,
                                 c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
-                                ws, LT_WS_BYTES, g_compute_stream) == CUBLAS_STATUS_SUCCESS) {
+                                ws, LT_WS_BYTES, dev_stream(current_device())) == CUBLAS_STATUS_SUCCESS) {
             return;
         }
     }
@@ -479,7 +492,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     int64_t total = M * N;
     int threads = 256;
     int64_t blocks = (total + threads - 1) / threads;
-    matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, g_compute_stream>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
+    matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, dev_stream(current_device())>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
 #else
     gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
 #endif

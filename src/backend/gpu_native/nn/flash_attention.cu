@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
 #ifndef __HIP_PLATFORM_AMD__
@@ -281,90 +282,105 @@ __global__ void softmax_bwd_warp_half_kernel(const __half* dP, const __half* P, 
     }
 }
 
+struct AttnScratch {
+    float* s = nullptr;
+    float* p = nullptr;
+    float* dp = nullptr;
+    float* ds = nullptr;
+    size_t elements = 0;
+};
+static std::unordered_map<int, AttnScratch> g_attn_scratch_map;
 static float* g_attn_scratch_s = nullptr;
 static float* g_attn_scratch_p = nullptr;
 static float* g_attn_scratch_dp = nullptr;
 static float* g_attn_scratch_ds = nullptr;
-static size_t g_attn_scratch_elements = 0;
 
 static void ensure_attn_scratch(size_t elements) {
-    if (elements > g_attn_scratch_elements) {
-        GPU_API(StreamSynchronize)(g_compute_stream);
-        if (g_attn_scratch_s) GPU_API(Free)(g_attn_scratch_s);
-        if (g_attn_scratch_p) GPU_API(Free)(g_attn_scratch_p);
-        if (g_attn_scratch_dp) GPU_API(Free)(g_attn_scratch_dp);
-        if (g_attn_scratch_ds) GPU_API(Free)(g_attn_scratch_ds);
-
-        GPU_API(Malloc)((void**)&g_attn_scratch_s, elements * sizeof(float));
-        GPU_API(Malloc)((void**)&g_attn_scratch_p, elements * sizeof(float));
-        GPU_API(Malloc)((void**)&g_attn_scratch_dp, elements * sizeof(float));
-        GPU_API(Malloc)((void**)&g_attn_scratch_ds, elements * sizeof(float));
-        g_attn_scratch_elements = elements;
+    int dev = current_device();
+    AttnScratch& sc = g_attn_scratch_map[dev];
+    if (elements > sc.elements) {
+        GPU_API(StreamSynchronize)(dev_stream(dev));
+        int cur = current_device();
+        if (cur != dev) GPU_API(SetDevice)(dev);
+        if (sc.s) GPU_API(Free)(sc.s);
+        if (sc.p) GPU_API(Free)(sc.p);
+        if (sc.dp) GPU_API(Free)(sc.dp);
+        if (sc.ds) GPU_API(Free)(sc.ds);
+        GPU_API(Malloc)((void**)&sc.s, elements * sizeof(float));
+        GPU_API(Malloc)((void**)&sc.p, elements * sizeof(float));
+        GPU_API(Malloc)((void**)&sc.dp, elements * sizeof(float));
+        GPU_API(Malloc)((void**)&sc.ds, elements * sizeof(float));
+        sc.elements = elements;
+        if (cur != dev) GPU_API(SetDevice)(cur);
     }
+    g_attn_scratch_s = sc.s;
+    g_attn_scratch_p = sc.p;
+    g_attn_scratch_dp = sc.dp;
+    g_attn_scratch_ds = sc.ds;
 }
 
 static void launch_softmax_fwd(const float* S, float* P, int total_rows, int Tk) {
     if (Tk <= 32) {
-        softmax_fwd_warp_kernel<<<total_rows, 32, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+        softmax_fwd_warp_kernel<<<total_rows, 32, 0, dev_stream(current_device())>>>(S, P, total_rows, Tk);
     } else {
-        fused_softmax_fwd_kernel<<<total_rows, 256, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+        fused_softmax_fwd_kernel<<<total_rows, 256, 0, dev_stream(current_device())>>>(S, P, total_rows, Tk);
     }
 }
 
 static void launch_softmax_bwd(const float* dP, const float* P, float* dS, int total_rows, int Tk, float scale) {
     if (Tk <= 32) {
-        softmax_bwd_warp_kernel<<<total_rows, 32, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+        softmax_bwd_warp_kernel<<<total_rows, 32, 0, dev_stream(current_device())>>>(dP, P, dS, total_rows, Tk, scale);
     } else {
-        fused_softmax_bwd_kernel<<<total_rows, 256, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+        fused_softmax_bwd_kernel<<<total_rows, 256, 0, dev_stream(current_device())>>>(dP, P, dS, total_rows, Tk, scale);
     }
 }
 
 static void launch_softmax_fwd_half(const __half* S, __half* P, int total_rows, int Tk) {
     if (Tk <= 32) {
-        softmax_fwd_warp_half_kernel<<<total_rows, 32, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+        softmax_fwd_warp_half_kernel<<<total_rows, 32, 0, dev_stream(current_device())>>>(S, P, total_rows, Tk);
     } else {
-        fused_softmax_fwd_half_kernel<<<total_rows, 256, 0, g_compute_stream>>>(S, P, total_rows, Tk);
+        fused_softmax_fwd_half_kernel<<<total_rows, 256, 0, dev_stream(current_device())>>>(S, P, total_rows, Tk);
     }
 }
 
 static void launch_softmax_bwd_half(const __half* dP, const __half* P, __half* dS, int total_rows, int Tk, float scale) {
     if (Tk <= 32) {
-        softmax_bwd_warp_half_kernel<<<total_rows, 32, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+        softmax_bwd_warp_half_kernel<<<total_rows, 32, 0, dev_stream(current_device())>>>(dP, P, dS, total_rows, Tk, scale);
     } else {
-        fused_softmax_bwd_half_kernel<<<total_rows, 256, 0, g_compute_stream>>>(dP, P, dS, total_rows, Tk, scale);
+        fused_softmax_bwd_half_kernel<<<total_rows, 256, 0, dev_stream(current_device())>>>(dP, P, dS, total_rows, Tk, scale);
     }
 }
 
 #ifdef __HIP_PLATFORM_AMD__
 static void launch_softmax_fwd_hip(const float* S, float* P, int total_rows, int Tk) {
     if (Tk <= 32) {
-        hipLaunchKernelGGL(softmax_fwd_warp_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, S, P, total_rows, Tk);
+        hipLaunchKernelGGL(softmax_fwd_warp_kernel, dim3(total_rows), dim3(32), 0, dev_stream(current_device()), S, P, total_rows, Tk);
     } else {
-        hipLaunchKernelGGL(fused_softmax_fwd_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, S, P, total_rows, Tk);
+        hipLaunchKernelGGL(fused_softmax_fwd_kernel, dim3(total_rows), dim3(256), 0, dev_stream(current_device()), S, P, total_rows, Tk);
     }
 }
 
 static void launch_softmax_bwd_hip(const float* dP, const float* P, float* dS, int total_rows, int Tk, float scale) {
     if (Tk <= 32) {
-        hipLaunchKernelGGL(softmax_bwd_warp_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+        hipLaunchKernelGGL(softmax_bwd_warp_kernel, dim3(total_rows), dim3(32), 0, dev_stream(current_device()), dP, P, dS, total_rows, Tk, scale);
     } else {
-        hipLaunchKernelGGL(fused_softmax_bwd_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+        hipLaunchKernelGGL(fused_softmax_bwd_kernel, dim3(total_rows), dim3(256), 0, dev_stream(current_device()), dP, P, dS, total_rows, Tk, scale);
     }
 }
 
 static void launch_softmax_fwd_half_hip(const __half* S, __half* P, int total_rows, int Tk) {
     if (Tk <= 32) {
-        hipLaunchKernelGGL(softmax_fwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, S, P, total_rows, Tk);
+        hipLaunchKernelGGL(softmax_fwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, dev_stream(current_device()), S, P, total_rows, Tk);
     } else {
-        hipLaunchKernelGGL(fused_softmax_fwd_half_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, S, P, total_rows, Tk);
+        hipLaunchKernelGGL(fused_softmax_fwd_half_kernel, dim3(total_rows), dim3(256), 0, dev_stream(current_device()), S, P, total_rows, Tk);
     }
 }
 
 static void launch_softmax_bwd_half_hip(const __half* dP, const __half* P, __half* dS, int total_rows, int Tk, float scale) {
     if (Tk <= 32) {
-        hipLaunchKernelGGL(softmax_bwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+        hipLaunchKernelGGL(softmax_bwd_warp_half_kernel, dim3(total_rows), dim3(32), 0, dev_stream(current_device()), dP, P, dS, total_rows, Tk, scale);
     } else {
-        hipLaunchKernelGGL(fused_softmax_bwd_half_kernel, dim3(total_rows), dim3(256), 0, g_compute_stream, dP, P, dS, total_rows, Tk, scale);
+        hipLaunchKernelGGL(fused_softmax_bwd_half_kernel, dim3(total_rows), dim3(256), 0, dev_stream(current_device()), dP, P, dS, total_rows, Tk, scale);
     }
 }
 #endif
@@ -373,10 +389,11 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
                                     void *V, int64_t v_off, void *O, int64_t o_off,
                                     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
                                     int64_t D, float scale) {
+    auto_set_device(Q);
     if (g_fa3_fwd_fn) {
         g_fa3_fwd_fn((const char*)Q + q_off * sizeof(float), (const char*)K + k_off * sizeof(float),
                      (const char*)V + v_off * sizeof(float), (char*)O + o_off * sizeof(float),
-                     B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), 0);
         return;
     }
 
@@ -389,7 +406,7 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
     float* o_ptr = (float*)O + o_off;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(o_ptr);
     float alpha = scale;
     float beta = 0.0f;
     long long strideK = Tk * D;
@@ -469,7 +486,7 @@ extern "C" int gpu_flash_attention_forward_save_p(void *Q, int64_t q_off, void *
     size_t total_elements = (size_t)B * H * Tq * Tk;
     float* p_out = (float*)P + p_off;
     GPU_API(MemcpyAsync)(p_out, g_attn_scratch_p, total_elements * sizeof(float),
-                         GPU_API(MemcpyDeviceToDevice), g_compute_stream);
+                         GPU_API(MemcpyDeviceToDevice), dev_stream(current_device()));
     return 1;
 }
 
@@ -477,10 +494,11 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
                                          void *V, int64_t v_off, void *O, int64_t o_off,
                                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
                                          int64_t D, float scale) {
+    auto_set_device(Q);
     if (g_fa3_fwd_fn) {
         g_fa3_fwd_fn((const char*)Q + q_off * sizeof(__half), (const char*)K + k_off * sizeof(__half),
                      (const char*)V + v_off * sizeof(__half), (char*)O + o_off * sizeof(__half),
-                     B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), 0);
         return;
     }
 
@@ -495,7 +513,7 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
     __half* p_half = (__half*)g_attn_scratch_p;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(o_ptr);
     const __half alpha = __float2half(scale);
     const __half beta = __float2half(0.0f);
     long long strideK = Tk * D;
@@ -576,7 +594,7 @@ extern "C" int gpu_flash_attention_half_forward_save_p(void *Q, int64_t q_off, v
     __half* p_out = (__half*)P + p_off;
     __half* p_scratch = (__half*)g_attn_scratch_p;
     GPU_API(MemcpyAsync)(p_out, p_scratch, total_elements * sizeof(__half),
-                         GPU_API(MemcpyDeviceToDevice), g_compute_stream);
+                         GPU_API(MemcpyDeviceToDevice), dev_stream(current_device()));
     return 1;
 }
 
@@ -585,12 +603,13 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
                                              int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
                                              void *V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq,
                                              int64_t Tk, int64_t D, float scale) {
+    auto_set_device(dQ);
     if (g_fa3_bwd_fn) {
         g_fa3_bwd_fn((char*)dQ + dq_off * sizeof(float), (char*)dK + dk_off * sizeof(float),
                      (char*)dV + dv_off * sizeof(float), (const char*)O + o_off * sizeof(float),
                      (const char*)dO + do_off * sizeof(float), (const char*)Q + q_off * sizeof(float),
                      (const char*)K + k_off * sizeof(float), (const char*)V + v_off * sizeof(float),
-                     B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), 0);
         return;
     }
 
@@ -606,7 +625,7 @@ extern "C" void gpu_flash_attention_backward(void *dQ, int64_t dq_off, void *dK,
     const float* v_ptr = (const float*)V + v_off;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(dq_ptr);
     float alpha = scale;
     float beta = 0.0f;
     long long strideK = Tk * D;
@@ -738,6 +757,7 @@ extern "C" void gpu_flash_attention_backward_with_p(void *dQ, int64_t dq_off, vo
                                              void *V, int64_t v_off, void *P, int64_t p_off,
                                              int64_t B, int64_t H, int64_t H_kv, int64_t Tq,
                                              int64_t Tk, int64_t D, float scale) {
+    auto_set_device(dQ);
     size_t total_elements = (size_t)B * H * Tq * Tk;
     ensure_attn_scratch(total_elements);
 
@@ -751,7 +771,7 @@ extern "C" void gpu_flash_attention_backward_with_p(void *dQ, int64_t dq_off, vo
     const float* p_ptr = (const float*)P + p_off;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(dq_ptr);
     long long strideK = Tk * D;
     long long strideQ = Tq * D;
     long long strideS = Tq * Tk;
@@ -858,12 +878,13 @@ extern "C" void gpu_flash_attention_backward_half(
     int64_t o_off, void *dO, int64_t do_off, void *Q, int64_t q_off, void *K, int64_t k_off,
     void *V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
     float scale) {
+    auto_set_device(dQ);
     if (g_fa3_bwd_fn) {
         g_fa3_bwd_fn((char*)dQ + dq_off * sizeof(__half), (char*)dK + dk_off * sizeof(__half),
                      (char*)dV + dv_off * sizeof(__half), (const char*)O + o_off * sizeof(__half),
                      (const char*)dO + do_off * sizeof(__half), (const char*)Q + q_off * sizeof(__half),
                      (const char*)K + k_off * sizeof(__half), (const char*)V + v_off * sizeof(__half),
-                     B, H, H_kv, Tq, Tk, D, scale, (void*)g_compute_stream, 0);
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), 0);
         return;
     }
 
@@ -883,7 +904,7 @@ extern "C" void gpu_flash_attention_backward_half(
     __half* ds_half = (__half*)g_attn_scratch_ds;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(dq_ptr);
     const __half alpha = __float2half(scale);
     const __half beta = __float2half(0.0f);
     long long strideK = Tk * D;
@@ -1015,6 +1036,7 @@ extern "C" void gpu_flash_attention_backward_half_with_p(
     void *V, int64_t v_off, void *P, int64_t p_off,
     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
     float scale) {
+    auto_set_device(dQ);
     size_t total_elements = (size_t)B * H * Tq * Tk;
     ensure_attn_scratch(total_elements);
 
@@ -1030,7 +1052,7 @@ extern "C" void gpu_flash_attention_backward_half_with_p(
     __half* ds_half = (__half*)g_attn_scratch_ds;
 
 #ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle();
+    cublasHandle_t handle = get_cublas_handle(dq_ptr);
     long long strideK = Tk * D;
     long long strideQ = Tq * D;
     long long strideS = Tq * Tk;
@@ -1169,6 +1191,7 @@ __global__ void qkv_split_transpose_backward_kernel(const float* gq, const float
 extern "C" void gpu_qkv_split_transpose(void* QKV, int64_t qkv_off, void* Q, int64_t q_off,
                                         void* K, int64_t k_off, void* V, int64_t v_off,
                                         int64_t B, int64_t T, int64_t H, int64_t D) {
+    auto_set_device(QKV);
     const float* qkv_ptr = (const float*)QKV + qkv_off;
     float* q_ptr = (float*)Q + q_off;
     float* k_ptr = (float*)K + k_off;
@@ -1176,13 +1199,14 @@ extern "C" void gpu_qkv_split_transpose(void* QKV, int64_t qkv_off, void* Q, int
     int total = (int)(B * T * H * D);
     int block = 256;
     int grid = (total + block - 1) / block;
-    qkv_split_transpose_kernel<<<grid, block, 0, g_compute_stream>>>(qkv_ptr, q_ptr, k_ptr, v_ptr,
+    qkv_split_transpose_kernel<<<grid, block, 0, dev_stream(current_device())>>>(qkv_ptr, q_ptr, k_ptr, v_ptr,
                                                                      (int)B, (int)T, (int)H, (int)D);
 }
 
 extern "C" void gpu_qkv_split_transpose_backward(void* GQ, int64_t gq_off, void* GK, int64_t gk_off,
                                                  void* GV, int64_t gv_off, void* GQKV, int64_t gqkv_off,
                                                  int64_t B, int64_t T, int64_t H, int64_t D) {
+    auto_set_device(GQ);
     const float* gq_ptr = (const float*)GQ + gq_off;
     const float* gk_ptr = (const float*)GK + gk_off;
     const float* gv_ptr = (const float*)GV + gv_off;
@@ -1190,7 +1214,7 @@ extern "C" void gpu_qkv_split_transpose_backward(void* GQ, int64_t gq_off, void*
     int total = (int)(B * T * 3 * H * D);
     int block = 256;
     int grid = (total + block - 1) / block;
-    qkv_split_transpose_backward_kernel<<<grid, block, 0, g_compute_stream>>>(gq_ptr, gk_ptr, gv_ptr, gqkv_ptr,
+    qkv_split_transpose_backward_kernel<<<grid, block, 0, dev_stream(current_device())>>>(gq_ptr, gk_ptr, gv_ptr, gqkv_ptr,
                                                                               (int)B, (int)T, (int)H, (int)D);
 }
 
@@ -1229,22 +1253,24 @@ __global__ void qkv_extract_backward_kernel(const float* gout, float* gqkv,
 
 extern "C" void gpu_qkv_extract(void* QKV, int64_t qkv_off, void* OUT, int64_t out_off,
                                 int64_t B, int64_t T, int64_t H, int64_t D, int64_t idx) {
+    auto_set_device(QKV);
     const float* qkv_ptr = (const float*)QKV + qkv_off;
     float* out_ptr = (float*)OUT + out_off;
     int total = (int)(B * T * H * D);
     int block = 256;
     int grid = (total + block - 1) / block;
-    qkv_extract_kernel<<<grid, block, 0, g_compute_stream>>>(qkv_ptr, out_ptr,
+    qkv_extract_kernel<<<grid, block, 0, dev_stream(current_device())>>>(qkv_ptr, out_ptr,
                                                              (int)B, (int)T, (int)H, (int)D, (int)idx);
 }
 
 extern "C" void gpu_qkv_extract_backward(void* GOUT, int64_t gout_off, void* GQKV, int64_t gqkv_off,
                                           int64_t B, int64_t T, int64_t H, int64_t D, int64_t idx) {
+    auto_set_device(GOUT);
     const float* gout_ptr = (const float*)GOUT + gout_off;
     float* gqkv_ptr = (float*)GQKV + gqkv_off;
     int total = (int)(B * T * 3 * H * D);
     int block = 256;
     int grid = (total + block - 1) / block;
-    qkv_extract_backward_kernel<<<grid, block, 0, g_compute_stream>>>(gout_ptr, gqkv_ptr,
+    qkv_extract_backward_kernel<<<grid, block, 0, dev_stream(current_device())>>>(gout_ptr, gqkv_ptr,
                                                                       (int)B, (int)T, (int)H, (int)D, (int)idx);
 }

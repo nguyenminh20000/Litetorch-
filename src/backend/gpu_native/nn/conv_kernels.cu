@@ -113,13 +113,15 @@ struct CudnnWorkspace {
 };
 
 static void* cudnn_workspace(size_t need) {
-    thread_local CudnnWorkspace ws;
+    thread_local std::unordered_map<int, CudnnWorkspace> workspaces;
     if (need == 0) return nullptr;
+    int dev = current_device();
+    CudnnWorkspace& ws = workspaces[dev];
     if (need > ws.bytes) {
-        if (ws.ptr) cudaFreeAsync(ws.ptr, g_compute_stream);
+        if (ws.ptr) cudaFreeAsync(ws.ptr, dev_stream(dev));
         ws.ptr = nullptr;
         ws.bytes = 0;
-        if (cudaMallocAsync(&ws.ptr, need, g_compute_stream) != cudaSuccess) return nullptr;
+        if (cudaMallocAsync(&ws.ptr, need, dev_stream(dev)) != cudaSuccess) return nullptr;
         ws.bytes = need;
     }
     return ws.ptr;
@@ -167,7 +169,8 @@ extern "C" void gpu_conv2d_cudnn(
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding, int apply_relu) {
-    lt_cudnnHandle_t handle = get_cudnn_handle();
+    auto_set_device(input);
+    lt_cudnnHandle_t handle = get_cudnn_handle(output);
     if (!handle) return;
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
@@ -257,7 +260,8 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding) {
-    lt_cudnnHandle_t handle = get_cudnn_handle();
+    auto_set_device(gout);
+    lt_cudnnHandle_t handle = get_cudnn_handle(gdx);
     if (!handle) return;
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
@@ -279,7 +283,8 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding) {
-    lt_cudnnHandle_t handle = get_cudnn_handle();
+    auto_set_device(gout);
+    lt_cudnnHandle_t handle = get_cudnn_handle(gw);
     if (!handle) return;
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
@@ -351,6 +356,7 @@ extern "C" void gpu_conv2d_miopen(
     int N, int C_in, int H_in, int W_in,
     int C_out, int H_out, int W_out,
     int kh, int kw, int stride, int padding) {
+    auto_set_device(input);
     miopenHandle_t handle = get_miopen_handle();
     MiopenConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     MiopenConvDescs& d = get_miopen_conv_descs(key);

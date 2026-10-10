@@ -2,7 +2,8 @@
 
 #ifndef __HIP_PLATFORM_AMD__
 extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
-    lt_cudnnHandle_t handle = get_cudnn_handle();
+    auto_set_device(input);
+    lt_cudnnHandle_t handle = get_cudnn_handle(output);
     if (!handle) return;
     lt_cudnnTensorDescriptor_t srcDesc, dstDesc;
     g_cudnn.CreateTensorDescriptor(&srcDesc);
@@ -18,6 +19,7 @@ extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output,
 
 #ifdef USE_MIOPEN
 extern "C" void gpu_softmax_miopen(const float* input, int in_off, float* output, int out_off, int N, int C, int H, int W) {
+    auto_set_device(input);
     miopenHandle_t handle = get_miopen_handle();
     miopenTensorDescriptor_t srcDesc, dstDesc;
     miopenCreateTensorDescriptor(&srcDesc);
