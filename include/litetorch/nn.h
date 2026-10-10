@@ -4,6 +4,7 @@
 #include "litetorch/tensor.h"
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 namespace litetorch {
 namespace nn {
@@ -348,6 +349,59 @@ public:
     std::vector<std::shared_ptr<Module>> children() override {
         return {self_attn, multihead_attn, linear1, linear2, norm1, norm2, norm3};
     }
+};
+
+class RMSNorm : public Module {
+public:
+    std::vector<int64_t> normalized_shape;
+    float eps;
+    std::shared_ptr<Tensor> weight;
+
+    RMSNorm(const std::vector<int64_t>& normalized_shape, float eps = 1e-5f);
+
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class GPTBlock : public Module {
+public:
+    int d_model;
+    int n_q_heads;
+    int n_kv_heads;
+    int d_ff;
+    int head_dim;
+    float rope_theta;
+
+    std::shared_ptr<Linear> q_proj;
+    std::shared_ptr<Linear> k_proj;
+    std::shared_ptr<Linear> v_proj;
+    std::shared_ptr<Linear> o_proj;
+    std::shared_ptr<RMSNorm> q_norm;
+    std::shared_ptr<RMSNorm> k_norm;
+    std::shared_ptr<Linear> gate_proj;
+    std::shared_ptr<Linear> up_proj;
+    std::shared_ptr<Linear> down_proj;
+    std::shared_ptr<RMSNorm> attn_norm;
+    std::shared_ptr<RMSNorm> ffn_norm;
+
+    GPTBlock(int d_model = 2560, int n_q_heads = 20, int n_kv_heads = 5, int d_ff = 6912, float rope_theta = 500000.0f);
+
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    std::vector<std::shared_ptr<Module>> children() override {
+        return {q_proj, k_proj, v_proj, o_proj, q_norm, k_norm, gate_proj, up_proj, down_proj, attn_norm, ffn_norm};
+    }
+
+private:
+    std::unordered_map<int64_t, std::shared_ptr<Tensor>> mask_cache_;
+    std::shared_ptr<Tensor> rope_cos_cache_;
+    std::shared_ptr<Tensor> rope_sin_cache_;
+    Device rope_cache_device_;
+    bool rope_cache_valid_ = false;
+    std::shared_ptr<Tensor> causal_mask(int64_t T, const Device& device);
+    void ensure_rope_cache(int64_t T, int64_t D, const Device& device);
 };
 
 }

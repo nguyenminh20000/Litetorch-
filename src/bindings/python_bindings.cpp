@@ -508,6 +508,28 @@ PYBIND11_MODULE(litetorch, m) {
         .def("parameters", &nn::TransformerDecoderLayer::parameters)
         .def("to", &nn::TransformerDecoderLayer::to);
 
+    py::class_<nn::RMSNorm, nn::Module, std::shared_ptr<nn::RMSNorm>>(nn_mod, "RMSNorm")
+        .def(py::init<const std::vector<int64_t>&, float>(), py::arg("normalized_shape"), py::arg("eps") = 1e-5f)
+        .def("forward", &nn::RMSNorm::forward)
+        .def("parameters", &nn::RMSNorm::parameters)
+        .def("to", &nn::RMSNorm::to)
+        .def_readwrite("weight", &nn::RMSNorm::weight)
+        .def_readwrite("eps", &nn::RMSNorm::eps)
+        .def_readwrite("normalized_shape", &nn::RMSNorm::normalized_shape);
+
+    py::class_<nn::GPTBlock, nn::Module, std::shared_ptr<nn::GPTBlock>>(nn_mod, "GPTBlock")
+        .def(py::init<int, int, int, int, float>(), py::arg("d_model") = 2560, py::arg("n_q_heads") = 20,
+             py::arg("n_kv_heads") = 5, py::arg("d_ff") = 6912, py::arg("rope_theta") = 500000.0f)
+        .def("forward", &nn::GPTBlock::forward)
+        .def("parameters", &nn::GPTBlock::parameters)
+        .def("to", &nn::GPTBlock::to)
+        .def_readwrite("d_model", &nn::GPTBlock::d_model)
+        .def_readwrite("n_q_heads", &nn::GPTBlock::n_q_heads)
+        .def_readwrite("n_kv_heads", &nn::GPTBlock::n_kv_heads)
+        .def_readwrite("d_ff", &nn::GPTBlock::d_ff)
+        .def_readwrite("head_dim", &nn::GPTBlock::head_dim)
+        .def_readwrite("rope_theta", &nn::GPTBlock::rope_theta);
+
     py::class_<nn::Sequential, nn::Module, std::shared_ptr<nn::Sequential>>(nn_mod, "Sequential")
         .def(py::init<>())
         .def(py::init<const std::vector<std::shared_ptr<nn::Module>>&>(), py::arg("modules"))
