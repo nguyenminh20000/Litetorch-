@@ -164,6 +164,8 @@ public:
     std::vector<int64_t> orig_shape;
     ViewNode(const std::vector<int64_t>& orig_shape) : Node("View"), orig_shape(orig_shape) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output->contiguous()->view(orig_shape) };
     }
 };
@@ -174,6 +176,8 @@ public:
     int64_t dim1;
     TransposeNode(int64_t dim0, int64_t dim1) : Node("Transpose"), dim0(dim0), dim1(dim1) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output->transpose(dim0, dim1) };
     }
 };
@@ -182,6 +186,8 @@ class ContiguousNode : public Node {
 public:
     ContiguousNode() : Node("Contiguous") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output };
     }
 };
@@ -190,6 +196,8 @@ class ToNode : public Node {
 public:
     ToNode() : Node("To") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output };
     }
 };
@@ -198,6 +206,8 @@ class CloneNode : public Node {
 public:
     CloneNode() : Node("Clone") {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         return { grad_output->clone() };
     }
 };
