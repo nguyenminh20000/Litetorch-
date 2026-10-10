@@ -562,12 +562,7 @@ cl_kernel CLBackend::get_kernel(KernelID id) {
         if (!name) return nullptr;
         return (cl_kernel)native->get_kernel("", "", name);
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    cl_kernel k = precompiled_kernels_[static_cast<size_t>(id)];
-    if (k && kernel_mutexes_.find(k) == kernel_mutexes_.end()) {
-        kernel_mutexes_[k] = std::make_shared<std::mutex>();
-    }
-    return k;
+    return precompiled_kernels_[static_cast<size_t>(id)];
 }
 
 cl_kernel CLBackend::get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name) {
@@ -638,10 +633,17 @@ void CLBackend::launch(cl_kernel kernel, const std::vector<size_t>& global_work_
 
     std::shared_ptr<std::mutex> k_mutex;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = kernel_mutexes_.find(kernel);
-        if (it != kernel_mutexes_.end()) {
-            k_mutex = it->second;
+        thread_local std::unordered_map<cl_kernel, std::shared_ptr<std::mutex>> tl_cache;
+        auto tl_it = tl_cache.find(kernel);
+        if (tl_it != tl_cache.end()) {
+            k_mutex = tl_it->second;
+        } else {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = kernel_mutexes_.find(kernel);
+            if (it != kernel_mutexes_.end()) {
+                k_mutex = it->second;
+            }
+            tl_cache[kernel] = k_mutex;
         }
     }
 
@@ -681,9 +683,9 @@ void CLBackend::finish() {
         native->finish();
         return;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!available_ || !queue_) return;
-    p_clFinish(queue_);
+    cl_command_queue q = queue_;
+    if (!available_ || !q) return;
+    p_clFinish(q);
 }
 
 }
