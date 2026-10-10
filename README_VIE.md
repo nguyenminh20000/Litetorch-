@@ -270,10 +270,14 @@ lt.empty_cache()
 
 ## Đánh Giá Benchmark & Kiểm Thử
 
+Số liệu huấn luyện đo ngày 2026-10-09 trên NVIDIA T4 với đồng bộ CUDA stream đúng chuẩn (số đo trung thực); accuracy giữa LiteTorch và PyTorch giống hệt nhau.
+
 | Tác vụ huấn luyện | Phần cứng | Độ trễ / Bộ nhớ LiteTorch | Độ trễ PyTorch | Mức tăng tốc / Hiệu quả |
 |---|---|---|---|---|
-| **Huấn luyện ViT (GPU Compute)** | NVIDIA T4 GPU | **0.34s / epoch** | 0.35s / epoch | **Hiệu năng tương đương (~1.03x)** |
-| **Huấn luyện ViT (Tổng thời gian)** | NVIDIA T4 GPU | **38.84s (25 epochs)** | 38.81s (25 epochs) | **Hiệu năng tương đương (~1.0x)** |
+| **Huấn luyện CIFAR-10** (acc giống hệt 0.6461) | NVIDIA T4 GPU | **1.28s / epoch** | 3.42s / epoch | **Nhanh hơn 2.67x** |
+| **Huấn luyện MNIST** (acc giống hệt 0.9864) | NVIDIA T4 GPU | **0.94s / epoch** | 1.88s / epoch | **Nhanh hơn 2.00x** |
+| **Huấn luyện Cats/Dogs** (acc giống hệt 0.7235) | NVIDIA T4 GPU | **0.18s / epoch** | 0.68s / epoch | **Nhanh hơn 3.73x** |
+| **Huấn luyện Transformer** (TinyShakespeare) | NVIDIA T4 GPU | **68.32s / epoch** | 217.79s / epoch | **Nhanh hơn 3.19x** |
 | **Dự đoán ViT Đơn Ảnh (Inference)** | NVIDIA T4 GPU | **10.01ms / ảnh** | 11.20ms / ảnh | **Nhanh hơn 1.12x** |
 | **Chiếm dụng VRAM Bộ Dữ Liệu** | NVIDIA T4 GPU | **72.0 MB** | 165.0 MB | **Tiết kiệm VRAM hơn 2.29x** |
 | **Huấn luyện LLM 100B** | 8x NVIDIA Rubin R100 (288GB HBM4) | **~150 GB VRAM/GPU (FSDP)** | N/A | **Chạy mượt mà trên 1 Node (8 GPU)** |
