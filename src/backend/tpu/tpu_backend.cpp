@@ -2,7 +2,28 @@
 #include "common/tpu_common.h"
 #include "litetorch/tpu.h"
 #include "litetorch/thread_pool.h"
+#ifdef LITETORCH_TPU_PJRT
 #include "pjrt/tpu_pjrt_backend.h"
+#else
+namespace tpu_pjrt {
+class TpuPjrtBackend {
+public:
+    static TpuPjrtBackend& instance() { static TpuPjrtBackend b; return b; }
+    bool initialize() { return false; }
+    void shutdown() {}
+    void* allocate(size_t) { return nullptr; }
+    bool owns(void*) { return false; }
+    void free_buffer(void*) {}
+    size_t buffer_bytes(void*) { return 0; }
+    bool read_buffer(void*, void*, size_t) { return false; }
+    bool write_buffer(void*, const void*, size_t) { return false; }
+    void finish() {}
+    bool matmul(const float*, const float*, float*, int64_t, int64_t, int64_t) { return false; }
+    bool relu(const float*, float*, int64_t) { return false; }
+    bool add(const float*, const float*, float*, int64_t) { return false; }
+};
+}
+#endif
 #include <iostream>
 #include <cstring>
 #include <stdexcept>

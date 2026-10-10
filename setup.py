@@ -131,6 +131,8 @@ def find_cudnn():
     return None
 
 cpp_sources = sorted(glob.glob(os.path.join(SCRIPT_DIR, "src", "**", "*.cpp"), recursive=True))
+if os.environ.get("LITETORCH_TPU_PJRT") != "1":
+    cpp_sources = [s for s in cpp_sources if "tpu/pjrt" not in s.replace(os.sep, "/")]
 
 inc_dirs = [
     pybind11.get_include(),
@@ -147,6 +149,8 @@ class BuildExt(build_ext):
                 ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
             else:
                 ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
+                if os.environ.get("LITETORCH_TPU_PJRT") == "1":
+                    ext.extra_compile_args.append("-DLITETORCH_TPU_PJRT")
                 if sys.platform.startswith("win"):
                     ext.extra_link_args = ["-static-libgcc", "-static-libstdc++"]
         try:
