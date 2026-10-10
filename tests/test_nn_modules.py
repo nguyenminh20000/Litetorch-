@@ -174,7 +174,7 @@ def test_sequential_to_device():
     m = lt.nn.Sequential([lt.nn.Linear(4, 4)])
     m.to(DEV)
     for p in m.parameters():
-        assert "cuda" in p.device.to_string() or "gpu" in p.device.to_string() or DEV.to_string() == "cpu", \
+        assert "cuda" in p.device.to_string() or "gpu" in p.device.to_string() or "cpu" in DEV.to_string(), \
             f"param not on device: {p.device.to_string()}"
 
 

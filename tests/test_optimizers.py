@@ -137,6 +137,8 @@ def test_adamw_weight_decay():
     xt, yt = make_regression(40)
     m0 = make_model(41)
     m1 = make_model(41)
+    for p0, p1 in zip(m0.parameters(), m1.parameters()):
+        p1.copy_(p0)
     opt0 = lt.optim.Adam(m0.parameters(), lr=1e-3, weight_decay=0.0)
     opt1 = lt.optim.AdamW(m1.parameters(), lr=1e-3, weight_decay=0.1)
     for _ in range(5):
