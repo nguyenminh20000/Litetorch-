@@ -82,7 +82,7 @@ def train_rank(rank, world_size, port, data):
 def main():
     data = get_data()
     world_size = 2
-    port = 29517
+    port = 29518
     mp.spawn(train_rank, args=(world_size, port, data), nprocs=world_size, join=True)
 
 
