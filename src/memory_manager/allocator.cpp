@@ -95,6 +95,7 @@ size_t CachingAllocator::get_cached_gpu_bytes() const {
 }
 
 void* CachingAllocator::allocate_cpu(size_t size) {
+    if (size == 0) size = 1;
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = free_cpu_blocks_.lower_bound(size);
     if (it != free_cpu_blocks_.end() && it->first <= size * 2) {
@@ -163,6 +164,7 @@ static int current_gpu_device() {
 }
 
 void* CachingAllocator::allocate_gpu(size_t size) {
+    if (size == 0) size = 1;
     std::lock_guard<std::mutex> lock(mutex_);
     int dev = current_gpu_device();
     auto it = free_gpu_blocks_.lower_bound({dev, size});

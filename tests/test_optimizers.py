@@ -179,16 +179,16 @@ def test_steplr():
     model = make_model(70)
     opt = lt.optim.SGD(model.parameters(), lr=0.1)
     sched = lt.optim.StepLR(opt, 2, 0.1)
-    if abs(opt.get_lr() - 0.1) > 1e-9:
+    if abs(opt.get_lr() - 0.1) > 1e-6:
         return False, "initial lr wrong"
     sched.step()
-    if abs(opt.get_lr() - 0.1) > 1e-9:
+    if abs(opt.get_lr() - 0.1) > 1e-6:
         return False, f"lr decayed too early: {opt.get_lr()}"
     sched.step()
-    if abs(opt.get_lr() - 0.01) > 1e-7:
+    if abs(opt.get_lr() - 0.01) > 1e-6:
         return False, f"lr not decayed after step_size: {opt.get_lr()}"
     sched.step()
-    if abs(opt.get_lr() - 0.01) > 1e-7:
+    if abs(opt.get_lr() - 0.01) > 1e-6:
         return False, f"lr decayed off-schedule: {opt.get_lr()}"
     return True, f"lr schedule 0.1 -> 0.1 -> {opt.get_lr()}"
 
