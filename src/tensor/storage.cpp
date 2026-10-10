@@ -103,9 +103,6 @@ cl_mem StorageImpl::get_gpu_ptr() {
     if (device.type == DeviceType::CPU) {
         return nullptr;
     }
-    if (!is_swapped && !cpu_data) {
-        return gpu_data;
-    }
     if (is_swapped) {
         std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
         std::lock_guard<std::mutex> storage_lock(storage_mutex_);
