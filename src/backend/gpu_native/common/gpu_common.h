@@ -209,4 +209,34 @@ __device__ inline float dev_fp8_e5m2_to_float(unsigned char val) {
     return (sign_bit ? -1.0f : 1.0f) * powf(2.0f, static_cast<float>(exp_bits) - 15.0f) * (1.0f + static_cast<float>(mant_bits) / 4.0f);
 }
 
+#define LT_CUDA_CHECK(call) do { \
+    GPU_API(Error_t) _lt_e = (call); \
+    if (_lt_e != GPU_API(Success)) { \
+        throw std::runtime_error(std::string("[litetorch CUDA Error] ") + GPU_API(GetErrorString)(_lt_e) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
+    } \
+} while (0)
+
+#ifndef __HIP_PLATFORM_AMD__
+#define LT_CUBLAS_CHECK(call) do { \
+    cublasStatus_t _lt_s = (call); \
+    if (_lt_s != CUBLAS_STATUS_SUCCESS) { \
+        throw std::runtime_error(std::string("[litetorch cuBLAS Error] status=") + std::to_string((int)_lt_s) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
+    } \
+} while (0)
+#define LT_CUDNN_DYN_CHECK(call) do { \
+    int _lt_c = (call); \
+    if (_lt_c != 0) { \
+        throw std::runtime_error(std::string("[litetorch cuDNN Error] code=") + std::to_string(_lt_c) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
+    } \
+} while (0)
+#else
+#define LT_CUBLAS_CHECK(call) do { \
+    rocblas_status _lt_s = (call); \
+    if (_lt_s != rocblas_status_success) { \
+        throw std::runtime_error(std::string("[litetorch rocBLAS Error] status=") + std::to_string((int)_lt_s) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); \
+    } \
+} while (0)
+#define LT_CUDNN_DYN_CHECK(call) do { (void)(call); } while (0)
+#endif
+
 #endif

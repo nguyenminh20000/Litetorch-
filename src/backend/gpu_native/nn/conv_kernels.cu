@@ -75,11 +75,11 @@ static CudnnConvDescs& get_cudnn_conv_descs(const CudnnConvKey& key) {
     auto it = cudnn_conv_cache.find(key);
     if (it != cudnn_conv_cache.end()) return it->second;
     CudnnConvDescs d;
-    g_cudnn.CreateTensorDescriptor(&d.xDesc);
-    g_cudnn.CreateTensorDescriptor(&d.yDesc);
-    g_cudnn.CreateTensorDescriptor(&d.bDesc);
-    g_cudnn.CreateFilterDescriptor(&d.wDesc);
-    g_cudnn.CreateConvolutionDescriptor(&d.convDesc);
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.xDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.yDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.bDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateFilterDescriptor(&d.wDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateConvolutionDescriptor(&d.convDesc));
     g_cudnn.SetTensor4dDescriptor(d.xDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, key.N, key.C_in, key.H_in, key.W_in);
     g_cudnn.SetFilter4dDescriptor(d.wDesc, LT_CUDNN_DATA_FLOAT, LT_CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
     g_cudnn.SetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, LT_CUDNN_CROSS_CORRELATION, LT_CUDNN_DATA_FLOAT);
@@ -102,7 +102,7 @@ static lt_cudnnActivationDescriptor_t get_relu_act_desc() {
             g_cudnn.SetActivationDescriptor(d, LT_CUDNN_ACTIVATION_RELU, LT_CUDNN_NOT_PROPAGATE_NAN, 0.0) == 0) {
             relu_act_desc = d;
         } else if (d && g_cudnn.DestroyActivationDescriptor) {
-            g_cudnn.DestroyActivationDescriptor(d);
+            LT_CUDNN_DYN_CHECK(g_cudnn.DestroyActivationDescriptor(d));
         }
     }
     return relu_act_desc;
@@ -192,10 +192,9 @@ extern "C" void gpu_conv2d_cudnn(
         if (st == 0) return;
     }
 
-    g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, d.yDesc, output + out_off);
-
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, d.yDesc, output + out_off));
     if (has_bias && bias) {
-        g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off);
+        LT_CUDNN_DYN_CHECK(g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off));
     }
 
     if (apply_relu) {
@@ -273,7 +272,7 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
         g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
-    g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off);
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
 }
 
 extern "C" void gpu_conv2d_backward_filter_cudnn(
@@ -296,7 +295,7 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
         g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
-    g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off);
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
 }
 #endif
 

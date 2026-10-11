@@ -6,14 +6,14 @@ extern "C" void gpu_softmax_cudnn(const float* input, int in_off, float* output,
     lt_cudnnHandle_t handle = get_cudnn_handle(output);
     if (!handle) return;
     lt_cudnnTensorDescriptor_t srcDesc, dstDesc;
-    g_cudnn.CreateTensorDescriptor(&srcDesc);
-    g_cudnn.CreateTensorDescriptor(&dstDesc);
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&srcDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&dstDesc));
     g_cudnn.SetTensor4dDescriptor(srcDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, N, C, H, W);
     g_cudnn.SetTensor4dDescriptor(dstDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_FLOAT, N, C, H, W);
     float alpha = 1.0f, beta = 0.0f;
-    g_cudnn.SoftmaxForward(handle, LT_CUDNN_SOFTMAX_ACCURATE, LT_CUDNN_SOFTMAX_MODE_CHANNEL, &alpha, srcDesc, input + in_off, &beta, dstDesc, output + out_off);
-    g_cudnn.DestroyTensorDescriptor(srcDesc);
-    g_cudnn.DestroyTensorDescriptor(dstDesc);
+    LT_CUDNN_DYN_CHECK(g_cudnn.SoftmaxForward(handle, LT_CUDNN_SOFTMAX_ACCURATE, LT_CUDNN_SOFTMAX_MODE_CHANNEL, &alpha, srcDesc, input + in_off, &beta, dstDesc, output + out_off));
+    LT_CUDNN_DYN_CHECK(g_cudnn.DestroyTensorDescriptor(srcDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.DestroyTensorDescriptor(dstDesc));
 }
 #endif
 

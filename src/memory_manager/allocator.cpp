@@ -118,9 +118,10 @@ void* CachingAllocator::allocate_cpu(size_t size) {
         }
     }
     void* ptr = std::calloc(size, 1);
-    if (ptr) {
-        allocated_cpu_blocks_[ptr] = size;
+    if (!ptr) {
+        throw std::runtime_error("[litetorch Error] CPU out of memory: failed to allocate " + std::to_string(size) + " bytes");
     }
+    allocated_cpu_blocks_[ptr] = size;
     return ptr;
 }
 

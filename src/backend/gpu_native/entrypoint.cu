@@ -123,7 +123,7 @@ cublasHandle_t get_cublas_handle(const void* ref) {
     auto it = handles.find(dev);
     if (it != handles.end()) return it->second;
     cublasHandle_t handle = nullptr;
-    cublasCreate(&handle);
+    LT_CUBLAS_CHECK(cublasCreate(&handle));
     cublasSetStream(handle, dev_stream(dev));
     cublasSetMathMode(handle, current_math_mode());
     handles[dev] = handle;
@@ -132,7 +132,7 @@ cublasHandle_t get_cublas_handle(const void* ref) {
 cublasLtHandle_t get_cublaslt_handle() {
     thread_local cublasLtHandle_t handle = nullptr;
     if (!handle) {
-        cublasLtCreate(&handle);
+        LT_CUBLAS_CHECK(cublasLtCreate(&handle));
     }
     return handle;
 }
@@ -144,7 +144,7 @@ lt_cudnnHandle_t get_cudnn_handle(const void* ref) {
     auto it = handles.find(dev);
     if (it != handles.end()) return it->second;
     lt_cudnnHandle_t handle = nullptr;
-    g_cudnn.Create(&handle);
+    LT_CUDNN_DYN_CHECK(g_cudnn.Create(&handle));
     g_cudnn.SetStream(handle, dev_stream(dev));
     handles[dev] = handle;
     return handle;
@@ -399,7 +399,11 @@ extern "C" void* gpu_allocate(size_t size) {
     }
     void* ptr = nullptr;
 #ifndef __HIP_PLATFORM_AMD__
-    cudaMallocAsync(&ptr, bucket, stream);
+    cudaError_t alloc_err = cudaMallocAsync(&ptr, bucket, stream);
+    if (alloc_err != cudaSuccess) {
+        cudaGetLastError();
+        ptr = nullptr;
+    }
 #else
     GPU_API(Malloc)(&ptr, bucket);
 #endif
@@ -416,7 +420,11 @@ extern "C" void* gpu_allocate(size_t size) {
         for (auto& dp : drain) gpu_free_raw_on_device(dp.first, dp.second);
         ptr = nullptr;
 #ifndef __HIP_PLATFORM_AMD__
-        cudaMallocAsync(&ptr, bucket, stream);
+        cudaError_t retry_err = cudaMallocAsync(&ptr, bucket, stream);
+        if (retry_err != cudaSuccess) {
+            cudaGetLastError();
+            ptr = nullptr;
+        }
 #else
         GPU_API(Malloc)(&ptr, bucket);
 #endif
@@ -452,6 +460,11 @@ extern "C" void gpu_free(void* ptr) {
         std::lock_guard<std::mutex> lock(pool.mutex_);
         auto it = pool.live_.find(ptr);
         if (it == pool.live_.end()) {
+            for (auto& kv : pool.free_) {
+                for (void* p : kv.second) {
+                    if (p == ptr) return;
+                }
+            }
             int dev = device_of_ptr_strict(ptr);
             gpu_free_raw_on_device(ptr, dev >= 0 ? dev : current_device());
             return;
@@ -611,7 +624,7 @@ extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_
     }
     dim3 grid((global_x + block.x - 1) / block.x, (global_y + block.y - 1) / block.y, global_z);
 #ifndef __HIP_PLATFORM_AMD__
-    cudaLaunchKernel(kernel, grid, block, args, 0, stream);
+    LT_CUDA_CHECK(cudaLaunchKernel(kernel, grid, block, args, 0, stream));
 #else
     hipLaunchKernel(kernel, grid, block, args, 0, stream);
 #endif

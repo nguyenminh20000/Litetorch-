@@ -14,7 +14,7 @@ extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void*
     const float* a_ptr = (const float*)A + a_off;
     const float* b_ptr = (const float*)B + b_off;
     float* c_ptr = (float*)C + c_off;
-    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N);
+    LT_CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N));
 #else
     rocblas_handle handle = get_rocblas_handle();
     float alpha = 1.0f;
@@ -22,7 +22,7 @@ extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void*
     const float* a_ptr = (const float*)A + a_off;
     const float* b_ptr = (const float*)B + b_off;
     float* c_ptr = (float*)C + c_off;
-    rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N);
+    LT_CUBLAS_CHECK(rocblas_sgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N));
 #endif
 }
 
@@ -39,7 +39,7 @@ extern "C" void gpu_matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
     float* c_ptr = (float*)C + c_off;
     cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
     cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
-    cublasSgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
+    LT_CUBLAS_CHECK(cublasSgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N));
 #else
     rocblas_handle handle = get_rocblas_handle();
     float alpha = 1.0f;
@@ -49,7 +49,7 @@ extern "C" void gpu_matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
     float* c_ptr = (float*)C + c_off;
     rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
     rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
-    rocblas_sgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
+    LT_CUBLAS_CHECK(rocblas_sgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N));
 #endif
 }
 
@@ -65,7 +65,7 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
     long long strideA = M * K;
     long long strideB = K * N;
     long long strideC = M * N;
-    cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size);
+    LT_CUBLAS_CHECK(cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size));
 #else
     rocblas_handle handle = get_rocblas_handle();
     float alpha = 1.0f;
@@ -76,7 +76,7 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
     long long strideA = M * K;
     long long strideB = K * N;
     long long strideC = M * N;
-    rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size);
+    LT_CUBLAS_CHECK(rocblas_sgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size));
 #endif
 }
 
@@ -97,7 +97,7 @@ extern "C" void gpu_matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t
     __half* c_ptr = (__half*)C + c_off;
     cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
     cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
-    cublasHgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
+    LT_CUBLAS_CHECK(cublasHgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N));
 #else
     rocblas_handle handle = get_rocblas_handle();
     const __half alpha_h = __float2half(1.0f);
@@ -109,7 +109,7 @@ extern "C" void gpu_matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t
     rocblas_half* c_ptr = (rocblas_half*)C + c_off;
     rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
     rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
-    rocblas_hgemm(handle, opB, opA, N, M, K, alpha, b_ptr, ldb, a_ptr, lda, beta, c_ptr, N);
+    LT_CUBLAS_CHECK(rocblas_hgemm(handle, opB, opA, N, M, K, alpha, b_ptr, ldb, a_ptr, lda, beta, c_ptr, N));
 #endif
 }
 
@@ -125,7 +125,7 @@ extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, voi
     long long strideA = M * K;
     long long strideB = K * N;
     long long strideC = M * N;
-    cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size);
+    LT_CUBLAS_CHECK(cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, strideB, a_ptr, K, strideA, &beta, c_ptr, N, strideC, batch_size));
 #else
     rocblas_handle handle = get_rocblas_handle();
     const __half alpha_h = __float2half(1.0f);
@@ -135,7 +135,7 @@ extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, voi
     const rocblas_half* a_ptr = (const rocblas_half*)A + a_off;
     const rocblas_half* b_ptr = (const rocblas_half*)B + b_off;
     rocblas_half* c_ptr = (rocblas_half*)C + c_off;
-    rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, alpha, b_ptr, N, strideB, a_ptr, K, strideA, beta, c_ptr, N, strideC, batch_size);
+    LT_CUBLAS_CHECK(rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, alpha, b_ptr, N, strideB, a_ptr, K, strideA, beta, c_ptr, N, strideC, batch_size));
 #endif
 }
 
@@ -145,28 +145,24 @@ extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, v
 #if defined(CUDA_VERSION) && CUDA_VERSION >= 11080
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
     cublasLtMatmulDesc_t matmulDesc = nullptr;
-    cublasLtMatmulDescCreate(&matmulDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
-    
+    LT_CUBLAS_CHECK(cublasLtMatmulDescCreate(&matmulDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     cublasLtMatrixLayout_t Adesc = nullptr, Bdesc = nullptr, Cdesc = nullptr;
-    cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, K, M, K);
-    cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, N, K, N);
-    cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16F, N, M, N);
-    
-    cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(float));
-    cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(float));
-    
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&Adesc, CUDA_R_8F_E4M3, K, M, K));
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&Bdesc, CUDA_R_8F_E4M3, N, K, N));
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&Cdesc, CUDA_R_16F, N, M, N));
+    LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &a_scale, sizeof(float)));
+    LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &b_scale, sizeof(float)));
     float alpha = 1.0f / (d_scale > 0.0f ? d_scale : 1.0f);
     float beta = 0.0f;
     const void* a_ptr = (const char*)A + a_off;
     const void* b_ptr = (const char*)B + b_off;
     void* c_ptr = (char*)C + c_off * sizeof(__half);
     
-    cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, dev_stream(current_device()));
-    
-    cublasLtMatrixLayoutDestroy(Adesc);
-    cublasLtMatrixLayoutDestroy(Bdesc);
-    cublasLtMatrixLayoutDestroy(Cdesc);
-    cublasLtMatmulDescDestroy(matmulDesc);
+    LT_CUBLAS_CHECK(cublasLtMatmul(lt_handle, matmulDesc, &alpha, b_ptr, Bdesc, a_ptr, Adesc, &beta, c_ptr, Cdesc, c_ptr, Cdesc, nullptr, nullptr, 0, dev_stream(current_device())));
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutDestroy(Adesc));
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutDestroy(Bdesc));
+    LT_CUBLAS_CHECK(cublasLtMatrixLayoutDestroy(Cdesc));
+    LT_CUBLAS_CHECK(cublasLtMatmulDescDestroy(matmulDesc));
 #else
     gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
 #endif
@@ -185,7 +181,7 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
     const void* a_ptr = (const char*)A + a_off * sizeof(unsigned short);
     const void* b_ptr = (const char*)B + b_off * sizeof(unsigned short);
     void* c_ptr = (char*)C + c_off * sizeof(unsigned short);
-    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16BF, N, a_ptr, CUDA_R_16BF, K, &beta, c_ptr, CUDA_R_16BF, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+    LT_CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16BF, N, a_ptr, CUDA_R_16BF, K, &beta, c_ptr, CUDA_R_16BF, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT));
 #else
     gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
 #endif
@@ -286,7 +282,7 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
     if (pref_ok) {
         heur_ok = cublasLtMatmulAlgoGetHeuristic(lt_handle, desc, Adesc, Bdesc, Cdesc, Cdesc, pref, 8, heuristics, &retCount) == CUBLAS_STATUS_SUCCESS && retCount > 0;
     }
-    cublasLtMatmulPreferenceDestroy(pref);
+    LT_CUBLAS_CHECK(cublasLtMatmulPreferenceDestroy(pref));
     if (!heur_ok) return false;
     float alpha = 1.0f, beta = 0.0f;
     cudaStreamCaptureStatus capStatus = cudaStreamCaptureStatusNone;
@@ -489,7 +485,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
         plan = &it->second;
     }
     if (plan && plan->has_algo) {
-        cublasLtMatmulDescSetAttribute(plan->desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr));
+        LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)));
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
         if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, a_ptr, plan->Adesc, b_ptr, plan->Bdesc, &beta,
