@@ -81,6 +81,12 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
 }
 
 extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
+    gpu_matmul_half_ex(A, a_off, false, K, B, b_off, false, N, C, c_off, M, N, K);
+}
+
+extern "C" void gpu_matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                                   void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                                   void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     auto_set_device(A);
 #ifndef __HIP_PLATFORM_AMD__
     cublasHandle_t handle = get_cublas_handle(C);
@@ -89,7 +95,9 @@ extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, 
     const __half* a_ptr = (const __half*)A + a_off;
     const __half* b_ptr = (const __half*)B + b_off;
     __half* c_ptr = (__half*)C + c_off;
-    cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, N, a_ptr, K, &beta, c_ptr, N);
+    cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasHgemm(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, a_ptr, lda, &beta, c_ptr, N);
 #else
     rocblas_handle handle = get_rocblas_handle();
     const __half alpha_h = __float2half(1.0f);
@@ -99,7 +107,9 @@ extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, 
     const rocblas_half* a_ptr = (const rocblas_half*)A + a_off;
     const rocblas_half* b_ptr = (const rocblas_half*)B + b_off;
     rocblas_half* c_ptr = (rocblas_half*)C + c_off;
-    rocblas_hgemm(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, alpha, b_ptr, N, a_ptr, K, beta, c_ptr, N);
+    rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_hgemm(handle, opB, opA, N, M, K, alpha, b_ptr, ldb, a_ptr, lda, beta, c_ptr, N);
 #endif
 }
 

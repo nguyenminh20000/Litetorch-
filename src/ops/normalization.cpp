@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -791,8 +792,8 @@ public:
         auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, DataType::FP32);
         if (input_c->device.type == DeviceType::GPU) {
             StorageUseGuard guard({input_c->storage, weight_c->storage, gout_c->storage, inv_rms->storage, grad_input->storage, grad_weight->storage});
-            auto kdx = cached_kernel<KernelID::RmsNormBackwardDx>();
-            auto kdw = cached_kernel<KernelID::RmsNormBackwardDw>();
+            void* kdx = rt_gpu_get_kernel_by_id(KernelID::RmsNormBackwardDx);
+            void* kdw = rt_gpu_get_kernel_by_id(KernelID::RmsNormBackwardDw);
             cl_mem in_mem = input_c->gpu_data(); int in_off = (int)input_c->offset;
             cl_mem gout_mem = gout_c->gpu_data(); int gout_off = (int)gout_c->offset;
             cl_mem w_mem = weight_c->gpu_data(); int w_off = (int)weight_c->offset;
@@ -800,11 +801,11 @@ public:
             cl_mem gw_mem = grad_weight->gpu_data(); int gw_off = (int)grad_weight->offset;
             cl_mem sr_mem = inv_rms->gpu_data(); int sr_off = (int)inv_rms->offset;
             int n_val = (int)N; int m_val = (int)M;
-            CLBackend::get().launch(kdx, {(size_t)N}, {(size_t)256},
+            rt_gpu_launch(kdx, {(size_t)N}, {(size_t)256},
                 {&in_mem, &in_off, &gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &sr_mem, &sr_off, &n_val, &m_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
             size_t dw_blocks = (size_t)((M + 255) / 256);
-            CLBackend::get().launch(kdw, {dw_blocks * 256}, {(size_t)256},
+            rt_gpu_launch(kdw, {dw_blocks * 256}, {(size_t)256},
                 {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &sr_mem, &sr_off, &n_val, &m_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
         } else {
@@ -845,13 +846,14 @@ std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<T
     auto save_inv_rms = Tensor::create({N}, input_c->device, false, DataType::FP32);
     if (input_c->device.type == DeviceType::GPU) {
         StorageUseGuard guard({input_c->storage, weight_c->storage, out->storage, save_inv_rms->storage});
-        auto kernel = input_c->dtype == DataType::FP16 ? cached_kernel<KernelID::RmsNormForwardHalf>() : cached_kernel<KernelID::RmsNormForward>();
+        auto kid = input_c->dtype == DataType::FP16 ? KernelID::RmsNormForwardHalf : KernelID::RmsNormForward;
+        void* kernel = rt_gpu_get_kernel_by_id(kid);
         cl_mem in_mem = input_c->gpu_data(); int in_off = (int)input_c->offset;
         cl_mem w_mem = weight_c->gpu_data(); int w_off = (int)weight_c->offset;
         cl_mem out_mem = out->gpu_data(); int out_off = (int)out->offset;
         cl_mem sr_mem = save_inv_rms->gpu_data(); int sr_off = (int)save_inv_rms->offset;
         int n_val = (int)N; int m_val = (int)M; float eps_val = eps;
-        CLBackend::get().launch(kernel, {(size_t)N}, {(size_t)256},
+        rt_gpu_launch(kernel, {(size_t)N}, {(size_t)256},
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &sr_mem, &sr_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {

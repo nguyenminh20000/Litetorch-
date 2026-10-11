@@ -240,13 +240,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             int64_t lda = a_trans ? a->shape[0] : a_c->shape[1];
             int64_t ldb = b_trans ? b->shape[0] : b_c->shape[1];
             if (a->dtype == DataType::FP16) {
-                if (a_trans || b_trans) {
-                    auto a_cont = a->is_contiguous() ? a : a->contiguous();
-                    auto b_cont = b->is_contiguous() ? b : b->contiguous();
-                    native->matmul_half(a_cont->gpu_data(), a_cont->offset, b_cont->gpu_data(), b_cont->offset, out->gpu_data(), out->offset, M, N, K);
-                } else {
-                    native->matmul_half(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, M, N, K);
-                }
+                native->matmul_half_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
             } else {
                 typedef void (*MatmulExLtFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
                 MatmulExLtFn matmul_lt = reinterpret_cast<MatmulExLtFn>(cached_matmul_lt_kernel());
