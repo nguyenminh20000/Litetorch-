@@ -17,7 +17,7 @@ x = lt.randn([B, T, 2560], device, True)
 
 for _ in range(3):
     out = block.forward(x)
-    loss = lt.ops.sum(out)
+    loss = lt.Ops.sum(out)
     loss.backward()
     for p in params:
         p.zero_grad()
@@ -28,7 +28,7 @@ lt.cuda_synchronize()
 t0 = time.perf_counter()
 for _ in range(n_iters):
     out = block.forward(x)
-    loss = lt.ops.sum(out)
+    loss = lt.Ops.sum(out)
     loss.backward()
     for p in params:
         p.zero_grad()
