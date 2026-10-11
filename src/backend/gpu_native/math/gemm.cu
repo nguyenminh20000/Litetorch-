@@ -361,7 +361,8 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
     bool tf32 = gpu_is_tf32_enabled();
     LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, false};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
-    LtPlan* plan = nullptr;
+    LtPlan plan{};
+    bool have_plan = false;
     {
         std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
         auto it = lt_plan_cache.find(key);
@@ -397,13 +398,14 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
             }
             it = lt_plan_cache.emplace(key, p).first;
         }
-        plan = &it->second;
+        plan = it->second;
+        have_plan = plan.has_algo;
     }
-    if (plan && plan->has_algo) {
+    if (have_plan) {
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
-        if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, b_ptr, plan->Adesc, a_ptr, plan->Bdesc, &beta,
-                                c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
+        if (ws && cublasLtMatmul(lt_handle, plan.desc, &alpha, b_ptr, plan.Adesc, a_ptr, plan.Bdesc, &beta,
+                                c_ptr, plan.Cdesc, c_ptr, plan.Cdesc, &plan.algo,
                                 ws, LT_WS_BYTES, dev_stream(current_device())) == CUBLAS_STATUS_SUCCESS) {
             return;
         }
@@ -437,7 +439,8 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     bool tf32 = gpu_is_tf32_enabled();
     LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, true};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
-    LtPlan* plan = nullptr;
+    LtPlan plan{};
+    bool have_plan = false;
     {
         std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
         auto it = lt_plan_cache.find(key);
@@ -485,14 +488,15 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
             }
             it = lt_plan_cache.emplace(key, p).first;
         }
-        plan = &it->second;
+        plan = it->second;
+        have_plan = plan.has_algo;
     }
-    if (plan && plan->has_algo) {
-        LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)));
+    if (have_plan) {
+        LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(plan.desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)));
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;
-        if (ws && cublasLtMatmul(lt_handle, plan->desc, &alpha, a_ptr, plan->Adesc, b_ptr, plan->Bdesc, &beta,
-                                c_ptr, plan->Cdesc, c_ptr, plan->Cdesc, &plan->algo,
+        if (ws && cublasLtMatmul(lt_handle, plan.desc, &alpha, a_ptr, plan.Adesc, b_ptr, plan.Bdesc, &beta,
+                                c_ptr, plan.Cdesc, c_ptr, plan.Cdesc, &plan.algo,
                                 ws, LT_WS_BYTES, dev_stream(current_device())) == CUBLAS_STATUS_SUCCESS) {
             return;
         }

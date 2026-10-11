@@ -243,10 +243,15 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             if (a->dtype == DataType::FP16) {
                 native->matmul_half_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
             } else {
-                typedef void (*MatmulExLtFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
-                MatmulExLtFn matmul_lt = reinterpret_cast<MatmulExLtFn>(cached_matmul_lt_kernel());
-                if (matmul_lt) {
-                    matmul_lt(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                static const bool use_lt = std::getenv("LITETORCH_CUBLASLT_MATMUL") != nullptr;
+                if (use_lt && !cublaslt_disabled()) {
+                    typedef void (*MatmulExLtFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
+                    MatmulExLtFn matmul_lt = reinterpret_cast<MatmulExLtFn>(cached_matmul_lt_kernel());
+                    if (matmul_lt) {
+                        matmul_lt(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                    } else {
+                        native->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
+                    }
                 } else {
                     native->matmul_ex(a_c->gpu_data(), a_c->offset, a_trans, lda, b_c->gpu_data(), b_c->offset, b_trans, ldb, out->gpu_data(), out->offset, M, N, K);
                 }
