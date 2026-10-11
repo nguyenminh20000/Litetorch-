@@ -5,7 +5,7 @@ import time
 print("=== GPTBlock MFU Benchmark (Wave 2: fused QKV + fused gate/up) ===")
 
 device = lt.Device("cuda:0")
-B, T = 2, 2048
+B, T = 1, 512
 
 block = nn.GPTBlock(d_model=2560, n_q_heads=20, n_kv_heads=5, d_ff=6912)
 block.to(device)
