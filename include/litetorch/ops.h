@@ -50,6 +50,7 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim = -1);
 std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vector<int64_t>& normalized_shape, std::shared_ptr<Tensor> weight = nullptr, std::shared_ptr<Tensor> bias = nullptr, float eps = 1e-5f);
+std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, float eps = 1e-5f);
 std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> residual, const std::vector<int64_t>& normalized_shape, std::shared_ptr<Tensor> weight = nullptr, std::shared_ptr<Tensor> bias = nullptr, float eps = 1e-5f);
 std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int output_height, int output_width);
 std::shared_ptr<Tensor> cast(std::shared_ptr<Tensor> a, DataType target_dtype);

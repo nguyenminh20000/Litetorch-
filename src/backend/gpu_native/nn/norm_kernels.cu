@@ -363,3 +363,111 @@ extern "C" __global__ void batch_norm2d_backward_dx_kernel(
     float w = weight ? weight[w_off + c] : 1.0f;
     grad_input[gin_off + idx] = w * inv_std / M * (M * grad_output[gout_off + idx] - dscale_sum * x_hat - dshift_sum);
 }
+
+extern "C" __global__ void rmsnorm_forward_kernel(const float* input, int in_off,
+                                        const float* weight, int w_off,
+                                        float* output, int out_off,
+                                        float* save_inv_rms, int sr_off,
+                                        int N, int M, float eps) {
+    int r = blockIdx.x;
+    if (r >= N) return;
+    int tid = threadIdx.x;
+    const float* in_row = input + in_off + (int64_t)r * M;
+    float* out_row = output + out_off + (int64_t)r * M;
+    __shared__ float sdata[256];
+    float tsum = 0.0f;
+    for (int i = tid; i < M; i += 256) {
+        float v = in_row[i];
+        tsum += v * v;
+    }
+    sdata[tid] = tsum;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float inv_rms = 1.0f / sqrtf(sdata[0] / (float)M + eps);
+    if (tid == 0) save_inv_rms[sr_off + r] = inv_rms;
+    __syncthreads();
+    for (int i = tid; i < M; i += 256) {
+        out_row[i] = in_row[i] * inv_rms * weight[w_off + i];
+    }
+}
+
+extern "C" __global__ void rmsnorm_forward_half_kernel(const __half* input, int in_off,
+                                        const __half* weight, int w_off,
+                                        __half* output, int out_off,
+                                        float* save_inv_rms, int sr_off,
+                                        int N, int M, float eps) {
+    int r = blockIdx.x;
+    if (r >= N) return;
+    int tid = threadIdx.x;
+    const __half* in_row = input + in_off + (int64_t)r * M;
+    __half* out_row = output + out_off + (int64_t)r * M;
+    __shared__ float sdata[256];
+    float tsum = 0.0f;
+    for (int i = tid; i < M; i += 256) {
+        float v = __half2float(in_row[i]);
+        tsum += v * v;
+    }
+    sdata[tid] = tsum;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float inv_rms = 1.0f / sqrtf(sdata[0] / (float)M + eps);
+    if (tid == 0) save_inv_rms[sr_off + r] = inv_rms;
+    __syncthreads();
+    for (int i = tid; i < M; i += 256) {
+        float w = __half2float(weight[w_off + i]);
+        out_row[i] = __float2half(__half2float(in_row[i]) * inv_rms * w);
+    }
+}
+
+extern "C" __global__ void rmsnorm_backward_dx_kernel(const float* input, int in_off,
+                                            const float* grad_output, int gout_off,
+                                            const float* weight, int w_off,
+                                            float* grad_input, int gin_off,
+                                            const float* save_inv_rms, int sr_off,
+                                            int N, int M) {
+    int r = blockIdx.x;
+    if (r >= N) return;
+    int tid = threadIdx.x;
+    float inv_rms = save_inv_rms[sr_off + r];
+    const float* in_row = input + in_off + (int64_t)r * M;
+    const float* dy_row = grad_output + gout_off + (int64_t)r * M;
+    float* dx_row = grad_input + gin_off + (int64_t)r * M;
+    __shared__ float sdata[256];
+    float tdot = 0.0f;
+    for (int i = tid; i < M; i += 256) {
+        tdot += dy_row[i] * weight[w_off + i] * in_row[i];
+    }
+    sdata[tid] = tdot;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    float dot = sdata[0];
+    float c = inv_rms * inv_rms * inv_rms / (float)M * dot;
+    for (int i = tid; i < M; i += 256) {
+        float w = weight[w_off + i];
+        dx_row[i] = inv_rms * dy_row[i] * w - in_row[i] * c;
+    }
+}
+
+extern "C" __global__ void rmsnorm_backward_dw_kernel(const float* input, int in_off,
+                                            const float* grad_output, int gout_off,
+                                            float* grad_weight, int gw_off,
+                                            const float* save_inv_rms, int sr_off,
+                                            int N, int M) {
+    int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= M) return;
+    float sum = 0.0f;
+    for (int r = 0; r < N; ++r) {
+        float inv_rms = save_inv_rms[sr_off + r];
+        sum += grad_output[gout_off + (int64_t)r * M + c] * input[in_off + (int64_t)r * M + c] * inv_rms;
+    }
+    grad_weight[gw_off + c] = sum;
+}

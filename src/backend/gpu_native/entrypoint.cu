@@ -683,6 +683,10 @@ static const KernelMap& gpu_kernel_map() {
         m["layer_norm_backward_dw_kernel"] = (void*)&layer_norm_backward_dw_kernel;
         m["layer_norm_backward_db_kernel"] = (void*)&layer_norm_backward_db_kernel;
         m["layer_norm_backward_fused_kernel"] = (void*)&layer_norm_backward_fused_kernel;
+        m["rmsnorm_forward_kernel"] = (void*)&rmsnorm_forward_kernel;
+        m["rmsnorm_forward_half_kernel"] = (void*)&rmsnorm_forward_half_kernel;
+        m["rmsnorm_backward_dx_kernel"] = (void*)&rmsnorm_backward_dx_kernel;
+        m["rmsnorm_backward_dw_kernel"] = (void*)&rmsnorm_backward_dw_kernel;
         m["batch_norm2d_forward_stats_kernel"] = (void*)&batch_norm2d_forward_stats_kernel;
         m["batch_norm2d_forward_norm_kernel"] = (void*)&batch_norm2d_forward_norm_kernel;
         m["batch_norm2d_backward_stats_kernel"] = (void*)&batch_norm2d_backward_stats_kernel;

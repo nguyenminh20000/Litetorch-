@@ -17,21 +17,9 @@ RMSNorm::RMSNorm(const std::vector<int64_t>& normalized_shape, float eps)
 }
 
 std::shared_ptr<Tensor> RMSNorm::forward(std::shared_ptr<Tensor> x) {
-    int64_t C = normalized_shape.back();
-    int64_t N = x->numel() / C;
-    auto x_c = x->is_contiguous() ? x : x->contiguous();
-    auto x2 = Ops::pow(x_c, 2.0f);
-    auto x2_2d = x2->view({N, C});
-    std::vector<float> ones_data(static_cast<size_t>(C), 1.0f / static_cast<float>(C));
-    auto ones = Tensor::from_vector(ones_data, {C, 1}, x->device, false);
-    auto ms = Ops::matmul(x2_2d, ones);
-    auto eps_t = Tensor::from_vector({eps}, {1}, x->device, false);
-    auto rms = Ops::sqrt(Ops::add(ms, eps_t));
-    auto x_2d = x_c->view({N, C});
-    auto x_norm = Ops::div(x_2d, rms);
     auto w = weight->device == x->device ? weight : weight->to(x->device);
-    auto out_2d = Ops::mul(x_norm, w);
-    return out_2d->view(x->shape);
+    auto out = Ops::rmsnorm(x, w, eps);
+    return out->view(x->shape);
 }
 
 std::vector<std::shared_ptr<Tensor>> RMSNorm::parameters() {
@@ -101,7 +89,6 @@ void GPTBlock::ensure_rope_cache(int64_t T, int64_t D, const Device& device) {
 std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
     int64_t B = x->shape[0];
     int64_t T = x->shape[1];
-    int64_t n_rep = n_q_heads / n_kv_heads;
 
     auto h = attn_norm->forward(x);
 
@@ -128,35 +115,7 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
     q_4d = Ops::rope(q_4d_cc, rope_cos_cache_, rope_sin_cache_);
     k_4d = Ops::rope(k_4d_cc, rope_cos_cache_, rope_sin_cache_);
 
-    std::vector<std::shared_ptr<Tensor>> k_parts(static_cast<size_t>(n_rep), k_4d);
-    std::vector<std::shared_ptr<Tensor>> v_parts(static_cast<size_t>(n_rep), v_4d);
-    auto k_rep = Ops::cat(k_parts, 1);
-    auto v_rep = Ops::cat(v_parts, 1);
-
-    auto q_b = q_4d->is_contiguous() ? q_4d : q_4d->contiguous();
-    auto k_b = k_rep->is_contiguous() ? k_rep : k_rep->contiguous();
-    auto v_b = v_rep->is_contiguous() ? v_rep : v_rep->contiguous();
-    auto q_3d = q_b->view({B * n_q_heads, T, head_dim});
-    auto k_3d = k_b->view({B * n_q_heads, T, head_dim});
-    auto v_3d = v_b->view({B * n_q_heads, T, head_dim});
-
-    auto kt = k_3d->transpose(1, 2);
-    auto scores = Ops::bmm(q_3d, kt);
-
-    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
-    auto scale_t = Tensor::from_vector({scale}, {1}, scores->device, false);
-    scores = Ops::mul(scores, scale_t);
-
-    auto mask = causal_mask(T, scores->device);
-    auto scores_4d = scores->view({B, n_q_heads, T, T});
-    auto mask_4d = mask->view({1, 1, T, T});
-    scores_4d = Ops::add(scores_4d, mask_4d);
-    scores = scores_4d->view({B * n_q_heads, T, T});
-
-    auto probs = Ops::softmax(scores, -1);
-    auto attn = Ops::bmm(probs, v_3d);
-
-    auto attn_4d = attn->view({B, n_q_heads, T, head_dim});
+    auto attn_4d = Ops::flash_attention(q_4d, k_4d, v_4d, true);
     auto attn_t = attn_4d->transpose(1, 2);
     auto attn_tc = attn_t->is_contiguous() ? attn_t : attn_t->contiguous();
     auto attn_flat = attn_tc->view({B, T, d_model});

@@ -772,5 +772,112 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
     return out;
 }
 
+class RmsNormNode : public Node {
+public:
+    float eps;
+    RmsNormNode(float e) : Node("RmsNorm"), eps(e) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto weight = saved_tensors[1];
+        auto inv_rms = saved_tensors[2];
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        int64_t N = input_c->numel() / weight_c->numel();
+        int64_t M = weight_c->numel();
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, DataType::FP32);
+        if (input_c->device.type == DeviceType::GPU) {
+            StorageUseGuard guard({input_c->storage, weight_c->storage, gout_c->storage, inv_rms->storage, grad_input->storage, grad_weight->storage});
+            auto kdx = cached_kernel<KernelID::RmsNormBackwardDx>();
+            auto kdw = cached_kernel<KernelID::RmsNormBackwardDw>();
+            cl_mem in_mem = input_c->gpu_data(); int in_off = (int)input_c->offset;
+            cl_mem gout_mem = gout_c->gpu_data(); int gout_off = (int)gout_c->offset;
+            cl_mem w_mem = weight_c->gpu_data(); int w_off = (int)weight_c->offset;
+            cl_mem gin_mem = grad_input->gpu_data(); int gin_off = (int)grad_input->offset;
+            cl_mem gw_mem = grad_weight->gpu_data(); int gw_off = (int)grad_weight->offset;
+            cl_mem sr_mem = inv_rms->gpu_data(); int sr_off = (int)inv_rms->offset;
+            int n_val = (int)N; int m_val = (int)M;
+            CLBackend::get().launch(kdx, {(size_t)N}, {(size_t)256},
+                {&in_mem, &in_off, &gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &sr_mem, &sr_off, &n_val, &m_val},
+                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+            size_t dw_blocks = (size_t)((M + 255) / 256);
+            CLBackend::get().launch(kdw, {dw_blocks * 256}, {(size_t)256},
+                {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &sr_mem, &sr_off, &n_val, &m_val},
+                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+        } else {
+            float* in_ptr = input_c->data_ptr();
+            float* w_ptr = weight_c->data_ptr();
+            float* gout_ptr = gout_c->data_ptr();
+            float* sr_ptr = inv_rms->data_ptr();
+            float* gin_ptr = grad_input->data_ptr();
+            float* gw_ptr = grad_weight->data_ptr();
+            for (int64_t c = 0; c < M; ++c) gw_ptr[c] = 0.0f;
+            ThreadPool::get().parallel_for(0, N, [&](int64_t r) {
+                float inv_rms = sr_ptr[r];
+                float dot = 0.0f;
+                for (int64_t c = 0; c < M; ++c) dot += gout_ptr[r * M + c] * w_ptr[c] * in_ptr[r * M + c];
+                float c3 = inv_rms * inv_rms * inv_rms / (float)M * dot;
+                for (int64_t c = 0; c < M; ++c) {
+                    gin_ptr[r * M + c] = inv_rms * gout_ptr[r * M + c] * w_ptr[c] - in_ptr[r * M + c] * c3;
+                }
+            });
+            for (int64_t r = 0; r < N; ++r) {
+                float inv_rms = sr_ptr[r];
+                for (int64_t c = 0; c < M; ++c) gw_ptr[c] += gout_ptr[r * M + c] * in_ptr[r * M + c] * inv_rms;
+            }
+        }
+        std::vector<std::shared_ptr<Tensor>> ret;
+        ret.push_back(grad_input);
+        ret.push_back(grad_weight);
+        return ret;
+    }
+};
+
+std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, float eps) {
+    auto input_c = input->is_contiguous() ? input : input->contiguous();
+    auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
+    int64_t M = weight_c->numel();
+    int64_t N = input_c->numel() / M;
+    auto out = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+    auto save_inv_rms = Tensor::create({N}, input_c->device, false, DataType::FP32);
+    if (input_c->device.type == DeviceType::GPU) {
+        StorageUseGuard guard({input_c->storage, weight_c->storage, out->storage, save_inv_rms->storage});
+        auto kernel = input_c->dtype == DataType::FP16 ? cached_kernel<KernelID::RmsNormForwardHalf>() : cached_kernel<KernelID::RmsNormForward>();
+        cl_mem in_mem = input_c->gpu_data(); int in_off = (int)input_c->offset;
+        cl_mem w_mem = weight_c->gpu_data(); int w_off = (int)weight_c->offset;
+        cl_mem out_mem = out->gpu_data(); int out_off = (int)out->offset;
+        cl_mem sr_mem = save_inv_rms->gpu_data(); int sr_off = (int)save_inv_rms->offset;
+        int n_val = (int)N; int m_val = (int)M; float eps_val = eps;
+        CLBackend::get().launch(kernel, {(size_t)N}, {(size_t)256},
+            {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &sr_mem, &sr_off, &n_val, &m_val, &eps_val},
+            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
+    } else {
+        float* in_ptr = input_c->data_ptr();
+        float* w_ptr = weight_c->data_ptr();
+        float* out_ptr = out->data_ptr();
+        float* sr_ptr = save_inv_rms->data_ptr();
+        ThreadPool::get().parallel_for(0, N, [&](int64_t r) {
+            float sum = 0.0f;
+            for (int64_t c = 0; c < M; ++c) { float v = in_ptr[r * M + c]; sum += v * v; }
+            float inv_rms = 1.0f / std::sqrt(sum / (float)M + eps);
+            sr_ptr[r] = inv_rms;
+            for (int64_t c = 0; c < M; ++c) out_ptr[r * M + c] = in_ptr[r * M + c] * inv_rms * w_ptr[c];
+        });
+    }
+    if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad)) {
+        auto node = std::make_shared<RmsNormNode>(eps);
+        node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
+        node->next_nodes = { input->creator, weight->creator };
+        node->saved_tensors = { input_c, weight_c, save_inv_rms };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
 }
 }
