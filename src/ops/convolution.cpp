@@ -136,11 +136,11 @@ public:
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
         auto gout_c = gout->is_contiguous() ? gout : gout->contiguous();
 
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
-        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
         std::shared_ptr<Tensor> grad_bias = nullptr;
         if (bias) {
-            grad_bias = Tensor::create(bias->shape, bias->device);
+            grad_bias = Tensor::create(bias->shape, bias->device, false, bias->dtype);
         }
 
         int N = input_c->shape[0];
@@ -216,7 +216,7 @@ public:
                 int w_off = weight_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
                 int gout_off = gout_c->offset;
-                auto gout_2d = Tensor::create({C_out, NHW}, input_c->device);
+                auto gout_2d = Tensor::create({C_out, NHW}, input_c->device, false, gout_c->dtype);
                 {
                     cl_mem g2_mem = gout_2d->gpu_data();
                     int g2_off = gout_2d->offset;
@@ -226,7 +226,7 @@ public:
                         {&gout_mem, &gout_off, &g2_mem, &g2_off, &n_v, &co_v, &ho_v, &wo_v},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
-                auto col = Tensor::create({K, NHW}, input_c->device);
+                auto col = Tensor::create({K, NHW}, input_c->device, false, input_c->dtype);
                 {
                     cl_mem col_mem = col->gpu_data();
                     int col_off = col->offset;
@@ -238,7 +238,7 @@ public:
                         {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
                         {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
                 }
-                auto gw_2d = Tensor::create({C_out, K}, input_c->device);
+                auto gw_2d = Tensor::create({C_out, K}, input_c->device, false, weight_c->dtype);
                 gw_2d->storage = grad_weight->storage;
                 gw_2d->offset = grad_weight->offset;
                 gw_2d->requires_grad = false;
@@ -247,7 +247,7 @@ public:
                                       col->gpu_data(), col->offset, true, NHW,
                                       gw_2d->gpu_data(), gw_2d->offset, C_out, K, NHW);
                 } else {
-                    auto col_t = Tensor::create({NHW, K}, input_c->device);
+                    auto col_t = Tensor::create({NHW, K}, input_c->device, false, input_c->dtype);
                     {
                         cl_mem s_mem = col->gpu_data();
                         int s_off = col->offset;
@@ -274,8 +274,8 @@ public:
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
                 }
-                auto dcol = Tensor::create({K, NHW}, input_c->device);
-                auto w_2d = Tensor::create({C_out, K}, weight_c->device);
+                auto dcol = Tensor::create({K, NHW}, input_c->device, false, input_c->dtype);
+                auto w_2d = Tensor::create({C_out, K}, weight_c->device, false, weight_c->dtype);
                 w_2d->storage = weight_c->storage;
                 w_2d->offset = weight_c->offset;
                 w_2d->requires_grad = false;
@@ -284,7 +284,7 @@ public:
                                       gout_2d->gpu_data(), gout_2d->offset, false, NHW,
                                       dcol->gpu_data(), dcol->offset, K, NHW, C_out);
                 } else {
-                    auto w_t = Tensor::create({K, C_out}, input_c->device);
+                    auto w_t = Tensor::create({K, C_out}, input_c->device, false, weight_c->dtype);
                     {
                         cl_mem s_mem = w_2d->gpu_data();
                         int s_off = w_2d->offset;
@@ -488,11 +488,11 @@ public:
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
-        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
         std::shared_ptr<Tensor> grad_bias = nullptr;
         if (bias) {
-            grad_bias = Tensor::create(bias->shape, bias->device);
+            grad_bias = Tensor::create(bias->shape, bias->device, false, bias->dtype);
         }
 
         int N = input_c->shape[0];

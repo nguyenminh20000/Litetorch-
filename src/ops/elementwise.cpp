@@ -1267,7 +1267,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto grad_input = Tensor::create(input_shape, grad_output->device);
+        auto grad_input = Tensor::create(input_shape, grad_output->device, false, grad_output->dtype);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
@@ -1376,7 +1376,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto grad_input = Tensor::create(input_shape, grad_output->device);
+        auto grad_input = Tensor::create(input_shape, grad_output->device, false, grad_output->dtype);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         float num_el = static_cast<float>(grad_input->numel());
         bool run_gpu = false;

@@ -38,7 +38,7 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         float scale = 2.0f / input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {
@@ -83,7 +83,7 @@ public:
         auto target_c = target->is_contiguous() ? target : target->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
 
         int N = input_c->shape[0];
         int C = input_c->shape[1];
@@ -170,7 +170,7 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         int size = input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {
@@ -211,7 +211,7 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         int size = input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {

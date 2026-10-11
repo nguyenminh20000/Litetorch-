@@ -43,7 +43,7 @@ public:
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         StorageUseGuard guard({input_c->storage, gout_c->storage, grad_input->storage});
         int size = input_c->numel();
         bool run_gpu = false;
@@ -131,7 +131,7 @@ public:
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(out_c->shape, out_c->device);
+        auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
         StorageUseGuard guard({out_c->storage, gout_c->storage, grad_input->storage});
         int size = out_c->numel();
         bool run_gpu = false;
@@ -175,7 +175,7 @@ public:
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         StorageUseGuard guard({input_c->storage, gout_c->storage, grad_input->storage});
         int size = input_c->numel();
         bool run_gpu = false;
@@ -222,7 +222,7 @@ public:
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(out_c->shape, out_c->device);
+        auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
         StorageUseGuard guard({out_c->storage, gout_c->storage, grad_input->storage});
         
         int64_t d_dim = dim;
@@ -296,7 +296,7 @@ public:
         auto a_c = a->is_contiguous() ? a : a->contiguous();
         auto st_c = save_tanh->is_contiguous() ? save_tanh : save_tanh->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(a_c->shape, a_c->device);
+        auto grad_input = Tensor::create(a_c->shape, a_c->device, false, a_c->dtype);
         StorageUseGuard guard({a_c->storage, st_c->storage, gout_c->storage, grad_input->storage});
         int size = a_c->numel();
         

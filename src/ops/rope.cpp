@@ -34,7 +34,7 @@ public:
         auto x_shape = saved_tensors[2]->shape;
         auto device = grad_output->device;
 
-        auto grad_x = Tensor::create(x_shape, device, false);
+        auto grad_x = Tensor::create(x_shape, device, false, grad_output->dtype);
 
         int64_t B = x_shape[0];
         int64_t H = x_shape[1];

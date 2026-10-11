@@ -56,11 +56,11 @@ public:
         auto save_mean_c = save_mean->is_contiguous() ? save_mean : save_mean->contiguous();
         auto save_var_c = save_var->is_contiguous() ? save_var : save_var->contiguous();
 
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         std::shared_ptr<Tensor> grad_weight = nullptr;
         std::shared_ptr<Tensor> grad_bias = nullptr;
-        if (weight_c) grad_weight = Tensor::create(weight_c->shape, weight_c->device);
-        if (bias_c) grad_bias = Tensor::create(bias_c->shape, bias_c->device);
+        if (weight_c) grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
+        if (bias_c) grad_bias = Tensor::create(bias_c->shape, bias_c->device, false, bias_c->dtype);
         
         int64_t M = 1;
         for (auto s : normalized_shape) M *= s;
@@ -293,9 +293,9 @@ public:
         auto var_c = var->is_contiguous() ? var : var->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
-        auto grad_input = Tensor::create(input_c->shape, input_c->device);
-        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device);
-        auto grad_bias = Tensor::create(weight_c->shape, weight_c->device);
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
+        auto grad_bias = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
         
         int N = input_c->shape[0];
         int C = input_c->shape[1];
