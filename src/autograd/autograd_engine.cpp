@@ -152,7 +152,7 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
                     }
                     std::lock_guard<std::mutex> lock(input_t->grad_mutex);
                     if (!input_t->grad) {
-                        input_t->grad = grad;
+                        input_t->grad = grad->clone();
                     } else if (create_graph) {
                         input_t->grad = Ops::add(input_t->grad, grad);
                     } else {
