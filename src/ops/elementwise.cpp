@@ -121,6 +121,13 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
     // in Autograd::backward would then corrupt them.
     if (grad->shape == orig_shape) return grad->clone();
 
+    DataType dt = grad->dtype;
+    if (dt != DataType::FP32) {
+        auto g32 = grad->cast(DataType::FP32);
+        auto r32 = reduce_broadcast(g32, orig_shape);
+        return r32->cast(dt);
+    }
+
     std::shared_ptr<Tensor> current = grad;
     int diff = grad->shape.size() - orig_shape.size();
 

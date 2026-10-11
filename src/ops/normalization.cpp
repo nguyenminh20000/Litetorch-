@@ -788,16 +788,20 @@ public:
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         int64_t N = input_c->numel() / weight_c->numel();
         int64_t M = weight_c->numel();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        DataType dt = input_c->dtype;
+        auto in_b = dt == DataType::FP32 ? input_c : input_c->cast(DataType::FP32);
+        auto w_b = weight_c->dtype == DataType::FP32 ? weight_c : weight_c->cast(DataType::FP32);
+        auto go_b = gout_c->dtype == DataType::FP32 ? gout_c : gout_c->cast(DataType::FP32);
+        auto grad_input_b = Tensor::create(input_c->shape, input_c->device, false, DataType::FP32);
         auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, DataType::FP32);
         if (input_c->device.type == DeviceType::GPU) {
-            StorageUseGuard guard({input_c->storage, weight_c->storage, gout_c->storage, inv_rms->storage, grad_input->storage, grad_weight->storage});
+            StorageUseGuard guard({in_b->storage, w_b->storage, go_b->storage, inv_rms->storage, grad_input_b->storage, grad_weight->storage});
             void* kdx = rt_gpu_get_kernel_by_id(KernelID::RmsNormBackwardDx);
             void* kdw = rt_gpu_get_kernel_by_id(KernelID::RmsNormBackwardDw);
-            cl_mem in_mem = input_c->gpu_data(); int in_off = (int)input_c->offset;
-            cl_mem gout_mem = gout_c->gpu_data(); int gout_off = (int)gout_c->offset;
-            cl_mem w_mem = weight_c->gpu_data(); int w_off = (int)weight_c->offset;
-            cl_mem gin_mem = grad_input->gpu_data(); int gin_off = (int)grad_input->offset;
+            cl_mem in_mem = in_b->gpu_data(); int in_off = (int)in_b->offset;
+            cl_mem gout_mem = go_b->gpu_data(); int gout_off = (int)go_b->offset;
+            cl_mem w_mem = w_b->gpu_data(); int w_off = (int)w_b->offset;
+            cl_mem gin_mem = grad_input_b->gpu_data(); int gin_off = (int)grad_input_b->offset;
             cl_mem gw_mem = grad_weight->gpu_data(); int gw_off = (int)grad_weight->offset;
             cl_mem sr_mem = inv_rms->gpu_data(); int sr_off = (int)inv_rms->offset;
             int n_val = (int)N; int m_val = (int)M;
@@ -809,27 +813,28 @@ public:
                 {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &sr_mem, &sr_off, &n_val, &m_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
         } else {
-            float* in_ptr = input_c->data_ptr();
-            float* w_ptr = weight_c->data_ptr();
-            float* gout_ptr = gout_c->data_ptr();
+            float* in_ptr = in_b->data_ptr();
+            float* w_ptr = w_b->data_ptr();
+            float* gout_ptr = go_b->data_ptr();
             float* sr_ptr = inv_rms->data_ptr();
-            float* gin_ptr = grad_input->data_ptr();
+            float* gin_ptr = grad_input_b->data_ptr();
             float* gw_ptr = grad_weight->data_ptr();
             for (int64_t c = 0; c < M; ++c) gw_ptr[c] = 0.0f;
             ThreadPool::get().parallel_for(0, N, [&](int64_t r) {
-                float inv_rms = sr_ptr[r];
+                float rms_v = sr_ptr[r];
                 float dot = 0.0f;
                 for (int64_t c = 0; c < M; ++c) dot += gout_ptr[r * M + c] * w_ptr[c] * in_ptr[r * M + c];
-                float c3 = inv_rms * inv_rms * inv_rms / (float)M * dot;
+                float c3 = rms_v * rms_v * rms_v / (float)M * dot;
                 for (int64_t c = 0; c < M; ++c) {
-                    gin_ptr[r * M + c] = inv_rms * gout_ptr[r * M + c] * w_ptr[c] - in_ptr[r * M + c] * c3;
+                    gin_ptr[r * M + c] = rms_v * gout_ptr[r * M + c] * w_ptr[c] - in_ptr[r * M + c] * c3;
                 }
             });
             for (int64_t r = 0; r < N; ++r) {
-                float inv_rms = sr_ptr[r];
-                for (int64_t c = 0; c < M; ++c) gw_ptr[c] += gout_ptr[r * M + c] * in_ptr[r * M + c] * inv_rms;
+                float rms_v = sr_ptr[r];
+                for (int64_t c = 0; c < M; ++c) gw_ptr[c] += gout_ptr[r * M + c] * in_ptr[r * M + c] * rms_v;
             }
         }
+        auto grad_input = dt == DataType::FP32 ? grad_input_b : grad_input_b->cast(dt);
         std::vector<std::shared_ptr<Tensor>> ret;
         ret.push_back(grad_input);
         ret.push_back(grad_weight);
@@ -857,6 +862,12 @@ std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<T
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &sr_mem, &sr_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {
+        if (input_c->dtype != DataType::FP32 || weight_c->dtype != DataType::FP32) {
+            auto in_fp32 = Ops::cast(input_c, DataType::FP32);
+            auto w_fp32 = Ops::cast(weight_c, DataType::FP32);
+            auto out_fp32 = rmsnorm(in_fp32, w_fp32, eps);
+            return Ops::cast(out_fp32, input_c->dtype);
+        }
         float* in_ptr = input_c->data_ptr();
         float* w_ptr = weight_c->data_ptr();
         float* out_ptr = out->data_ptr();

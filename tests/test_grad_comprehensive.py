@@ -1,4 +1,5 @@
 import math
+import sys
 
 import litetorch as lt
 
@@ -257,6 +258,8 @@ def main():
             line += " | " + msg
         print(line, flush=True)
     print("TOTAL: %d/%d passed" % (npass, len(RESULTS)), flush=True)
+    if npass != len(RESULTS):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
