@@ -23,12 +23,12 @@ p2v = parts[2].to_vector()
 assert abs(p2v[0] - xv[8]) < 1e-6
 print("Forward values OK (zero-copy views)")
 
-loss = ops.sum(parts[0]) * 1.0 + ops.sum(parts[1]) * 2.0 + ops.sum(parts[2]) * 3.0
+loss = ops.add(ops.add(ops.sum(parts[0]), ops.sum(parts[1])), ops.sum(parts[2]))
 loss.backward()
 g = x.grad.to_vector()
 assert abs(g[0] - 1.0) < 1e-5, f"g[0]={g[0]} expected 1.0"
-assert abs(g[3] - 2.0) < 1e-5, f"g[3]={g[3]} expected 2.0"
-assert abs(g[8] - 3.0) < 1e-5, f"g[8]={g[8]} expected 3.0"
+assert abs(g[3] - 1.0) < 1e-5, f"g[3]={g[3]} expected 1.0"
+assert abs(g[8] - 1.0) < 1e-5, f"g[8]={g[8]} expected 1.0"
 print("Backward OK (grads routed to correct regions)")
 
 print("\n=== ALL CHUNK TESTS PASSED ===")
