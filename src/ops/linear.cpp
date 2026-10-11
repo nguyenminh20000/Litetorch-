@@ -405,7 +405,8 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
     StorageUseGuard guard({a_c->storage, b_use->storage, bias_c->storage, out->storage});
     bool run_fused = false;
     auto native = BackendDispatcher::get().get_backend();
-    if (native && native->is_available() && a->dtype == DataType::FP32 && !cublaslt_disabled()) {
+    static const bool use_lt_bias = std::getenv("LITETORCH_CUBLASLT_MATMUL") != nullptr;
+    if (native && native->is_available() && a->dtype == DataType::FP32 && !cublaslt_disabled() && use_lt_bias) {
         typedef void (*MatmulExLtBiasFn)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
         MatmulExLtBiasFn matmul_lt_bias = reinterpret_cast<MatmulExLtBiasFn>(cached_matmul_lt_bias_kernel());
         if (matmul_lt_bias) {
@@ -418,7 +419,7 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
     }
     if (!run_fused) {
         NoGradGuard ng;
-        auto mm = matmul(a_c, b_c);
+        auto mm = matmul(a_c, b_use);
         auto b_view = bias_c->view({1, N});
         auto result = Ops::add(mm, b_view);
         out->copy_(result);
