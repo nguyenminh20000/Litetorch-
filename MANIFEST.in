@@ -4,6 +4,7 @@ include LICENSE
 include pyproject.toml
 include setup.py
 include Makefile
+recursive-include python *
 recursive-include include *
 recursive-include src *
 recursive-include tests *

@@ -333,6 +333,8 @@ setup(
     ],
     python_requires=">=3.8",
     ext_modules=ext_modules,
+    packages=["ltvision", "ltaudio", "lttext"],
+    package_dir={"": "python"},
     cmdclass={"build_ext": BuildExt, "install": InstallLib},
     zip_safe=False,
 )
