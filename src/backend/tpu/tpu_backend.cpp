@@ -312,6 +312,9 @@ void TPUBackend::adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void
     tpu_internal::tpu_adamw_update(p, g, m, v, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
 }
 
+void TPUBackend::adamw_8bit_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, void* M_scales, void* V_scales, int64_t size, int is_fp16, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1, float bias_correction2) {
+}
+
 void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     if (!Q || !K || !V || !O) return;
     const float* q_ptr = reinterpret_cast<const float*>(Q) + q_off;

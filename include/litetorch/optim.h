@@ -71,6 +71,7 @@ public:
 
 class AdamW8bit : public Optimizer {
 public:
+    static constexpr size_t BLOCK_SIZE = 2048;
     float lr;
     float beta1;
     float beta2;
@@ -79,8 +80,8 @@ public:
     int step_count = 0;
     std::vector<std::shared_ptr<Tensor>> m;
     std::vector<std::shared_ptr<Tensor>> v;
-    std::vector<float> m_scales;
-    std::vector<float> v_scales;
+    std::vector<std::vector<float>> m_scales;
+    std::vector<std::vector<float>> v_scales;
 
     AdamW8bit(const std::vector<std::shared_ptr<Tensor>>& params, float lr = 1e-3f, float beta1 = 0.9f, float beta2 = 0.999f, float eps = 1e-8f, float weight_decay = 0.0f);
     void step() override;
@@ -144,6 +145,20 @@ public:
 
     CosineAnnealingLR(Optimizer* optimizer, int T_max, float eta_min = 0.0f);
     void step();
+};
+
+class LinearWarmup {
+public:
+    Optimizer* optimizer;
+    int warmup_steps;
+    int total_steps;
+    float base_lr;
+    float min_lr;
+    int last_step = 0;
+
+    LinearWarmup(Optimizer* optimizer, int warmup_steps, int total_steps, float min_lr = 0.0f);
+    void step();
+    float get_lr() const;
 };
 
 }

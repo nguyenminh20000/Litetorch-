@@ -32,6 +32,7 @@ typedef void (*gpu_matmul_bf16_t)(void*, int64_t, void*, int64_t, void*, int64_t
 typedef void (*gpu_sum_t)(void*, int64_t, void*, int64_t, int64_t);
 typedef void (*gpu_max_t)(void*, int64_t, void*, int64_t, int64_t);
 typedef void (*gpu_adamw_step_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, float, float, float, float, float, float, float);
+typedef void (*gpu_adamw_8bit_step_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, void*, int64_t, int, float, float, float, float, float, float, float);
 typedef void (*gpu_flash_attention_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, int);
 typedef void (*gpu_flash_attention_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, int);
 typedef void (*gpu_flash_attention_backward_t)(void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, int);
@@ -97,6 +98,7 @@ public:
     gpu_sum_t gpu_sum_fn = nullptr;
     gpu_max_t gpu_max_fn = nullptr;
     gpu_adamw_step_t gpu_adamw_step_fn = nullptr;
+    gpu_adamw_8bit_step_t gpu_adamw_8bit_step_fn = nullptr;
     gpu_flash_attention_t gpu_flash_attention_fn = nullptr;
     gpu_flash_attention_half_t gpu_flash_attention_half_fn = nullptr;
     gpu_flash_attention_backward_t gpu_flash_attention_backward_fn = nullptr;
@@ -207,6 +209,7 @@ public:
         gpu_sum_fn = (gpu_sum_t)dlsym(handle, "gpu_sum_forward");
         gpu_max_fn = (gpu_max_t)dlsym(handle, "gpu_max_forward");
         gpu_adamw_step_fn = (gpu_adamw_step_t)dlsym(handle, "gpu_adamw_step");
+        gpu_adamw_8bit_step_fn = (gpu_adamw_8bit_step_t)dlsym(handle, "gpu_adamw_8bit_step");
         gpu_flash_attention_fn = (gpu_flash_attention_t)dlsym(handle, "gpu_flash_attention");
         gpu_flash_attention_half_fn = (gpu_flash_attention_half_t)dlsym(handle, "gpu_flash_attention_half");
         gpu_flash_attention_backward_fn = (gpu_flash_attention_backward_t)dlsym(handle, "gpu_flash_attention_backward");
@@ -288,6 +291,9 @@ public:
     }
     void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M_state, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {
         if (gpu_adamw_step_fn) gpu_adamw_step_fn(P, p_off, G, g_off, M_state, m_off, V, v_off, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
+    }
+    void adamw_8bit_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, void* M_scales, void* V_scales, int64_t size, int is_fp16, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {
+        if (gpu_adamw_8bit_step_fn) gpu_adamw_8bit_step_fn(P, p_off, G, g_off, M, m_off, V, v_off, M_scales, V_scales, size, is_fp16, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
     }
     void flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
         if (gpu_flash_attention_fn) gpu_flash_attention_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);

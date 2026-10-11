@@ -271,3 +271,114 @@ extern "C" void gpu_adam_foreach(
         bias_correction1, bias_correction2);
 #endif
 }
+
+extern "C" __global__ void adamw_8bit_step_kernel(
+    void* P, int p_off,
+    const void* G, int g_off,
+    int8_t* M, int m_off,
+    uint8_t* V, int v_off,
+    const float* M_scales, const float* V_scales,
+    float* new_M_scales, float* new_V_scales,
+    float* tmp_m, float* tmp_v,
+    int size, int is_fp16,
+    float lr, float beta1, float beta2, float eps, float weight_decay,
+    float bias_correction1, float bias_correction2)
+{
+    __shared__ float s_max_m[256];
+    __shared__ float s_max_v[256];
+    int tid = threadIdx.x;
+    int bid = blockIdx.x;
+    int block_size = 2048;
+    int start = bid * block_size;
+    int end = start + block_size < size ? start + block_size : size;
+
+    float local_max_m = 0.0f;
+    float local_max_v = 0.0f;
+
+    for (int idx = start + tid; idx < end; idx += blockDim.x) {
+        float p = is_fp16 ? __half2float(((const __half*)P)[p_off + idx]) : ((const float*)P)[p_off + idx];
+        float g = is_fp16 ? __half2float(((const __half*)G)[g_off + idx]) : ((const float*)G)[g_off + idx];
+        float m_val = (float)M[m_off + idx] * M_scales[bid];
+        float v_val = (float)V[v_off + idx] * V_scales[bid];
+
+        m_val = beta1 * m_val + (1.0f - beta1) * g;
+        v_val = beta2 * v_val + (1.0f - beta2) * g * g;
+
+        float am = fabsf(m_val);
+        if (am > local_max_m) local_max_m = am;
+        if (v_val > local_max_v) local_max_v = v_val;
+
+        float m_hat = m_val / bias_correction1;
+        float v_hat = v_val / bias_correction2;
+        float update = m_hat / (sqrtf(v_hat) + eps);
+        float new_p;
+        if (weight_decay != 0.0f) {
+            new_p = p - lr * (weight_decay * p + update);
+        } else {
+            new_p = p - lr * update;
+        }
+        if (is_fp16) {
+            ((__half*)P)[p_off + idx] = __float2half(new_p);
+        } else {
+            ((float*)P)[p_off + idx] = new_p;
+        }
+
+        tmp_m[bid * block_size + (idx - start)] = m_val;
+        tmp_v[bid * block_size + (idx - start)] = v_val;
+    }
+
+    s_max_m[tid] = local_max_m;
+    s_max_v[tid] = local_max_v;
+    __syncthreads();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (s_max_m[tid + s] > s_max_m[tid]) s_max_m[tid] = s_max_m[tid + s];
+            if (s_max_v[tid + s] > s_max_v[tid]) s_max_v[tid] = s_max_v[tid + s];
+        }
+        __syncthreads();
+    }
+
+    float new_m_scale = s_max_m[0] > 0.0f ? s_max_m[0] / 127.0f : M_scales[bid];
+    float new_v_scale = s_max_v[0] > 0.0f ? s_max_v[0] / 255.0f : V_scales[bid];
+    if (tid == 0) {
+        new_M_scales[bid] = new_m_scale;
+        new_V_scales[bid] = new_v_scale;
+    }
+    __syncthreads();
+
+    for (int idx = start + tid; idx < end; idx += blockDim.x) {
+        float m_val = tmp_m[bid * block_size + (idx - start)];
+        float v_val = tmp_v[bid * block_size + (idx - start)];
+        M[m_off + idx] = (int8_t)roundf(m_val / new_m_scale);
+        V[v_off + idx] = (uint8_t)roundf(v_val / new_v_scale);
+    }
+}
+
+extern "C" void gpu_adamw_8bit_step(void* P, int p_off, void* G, int g_off, void* M, int m_off, void* V, int v_off, void* M_scales, void* V_scales, int size, int is_fp16, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1, float bias_correction2) {
+    if (!P || !G || !M || !V || size <= 0) return;
+    auto_set_device(P);
+    int nblocks = (size + 2047) / 2048;
+    size_t tmp_bytes = (size_t)nblocks * 2048 * sizeof(float) * 2;
+    void* tmp = nullptr;
+    GPU_API(MallocAsync)(&tmp, tmp_bytes, dev_stream(current_device()));
+    float* tmp_m = (float*)tmp;
+    float* tmp_v = (float*)tmp + (size_t)nblocks * 2048;
+    dim3 block(256, 1, 1);
+    dim3 grid(nblocks, 1, 1);
+#ifndef __HIP_PLATFORM_AMD__
+    adamw_8bit_step_kernel<<<grid, block, 0, dev_stream(current_device())>>>(
+        P, p_off, G, g_off, (int8_t*)M, m_off, (uint8_t*)V, v_off,
+        (const float*)M_scales, (const float*)V_scales,
+        (float*)M_scales, (float*)V_scales,
+        tmp_m, tmp_v, size, is_fp16, lr, beta1, beta2, eps, weight_decay,
+        bias_correction1, bias_correction2);
+#else
+    hipLaunchKernelGGL(adamw_8bit_step_kernel, grid, block, 0, dev_stream(current_device()),
+        P, p_off, G, g_off, (int8_t*)M, m_off, (uint8_t*)V, v_off,
+        (const float*)M_scales, (const float*)V_scales,
+        (float*)M_scales, (float*)V_scales,
+        tmp_m, tmp_v, size, is_fp16, lr, beta1, beta2, eps, weight_decay,
+        bias_correction1, bias_correction2);
+#endif
+    GPU_API(FreeAsync)(tmp, dev_stream(current_device()));
+}
