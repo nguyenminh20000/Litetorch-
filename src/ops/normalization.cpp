@@ -271,7 +271,7 @@ public:
         ln_node->saved_tensors = { sum_input, weight, bias, save_mean, save_var };
         auto grads = ln_node->backward(grad_output);
         
-        return { grads[0], grads[0], grads[1], grads[2] };
+        return { grads[0], grads[0]->clone(), grads[1], grads[2] };
     }
 };
 

@@ -69,8 +69,8 @@ public:
             storages.push_back(grad_k->storage);
             storages.push_back(grad_v->storage);
             std::shared_ptr<Tensor> saved_p;
-            if (saved_tensors.size() > 3 && saved_tensors[3]) {
-                saved_p = saved_tensors[3]->is_contiguous() ? saved_tensors[3] : saved_tensors[3]->contiguous();
+            if (saved_tensors.size() > 4 && saved_tensors[4]) {
+                saved_p = saved_tensors[4]->is_contiguous() ? saved_tensors[4] : saved_tensors[4]->contiguous();
                 storages.push_back(saved_p->storage);
             }
             StorageUseGuard guard(storages);
@@ -698,7 +698,7 @@ public:
         auto q = saved_tensors[1];
         auto k = saved_tensors[2];
         auto v = saved_tensors[3];
-        std::shared_ptr<Tensor> saved_p = saved_tensors.size() > 4 ? saved_tensors[4] : nullptr;
+        std::shared_ptr<Tensor> saved_p = saved_tensors.size() > 5 ? saved_tensors[5] : nullptr;
         int64_t B = q->shape[0];
         int64_t H = q->shape[1];
         int64_t T = q->shape[2];

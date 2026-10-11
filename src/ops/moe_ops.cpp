@@ -61,11 +61,38 @@ public:
             std::vector<float> S(N * E, 0.0f);
 
             for (int64_t i = 0; i < N; ++i) {
+                float max_logit = -1e9f;
+                for (int e = 0; e < E; ++e) {
+                    float logit = 0.0f;
+                    for (int64_t d = 0; d < D; ++d) {
+                        logit += in_ptr[i * D + d] * gw_ptr[e * D + d];
+                    }
+                    if (logit > max_logit) max_logit = logit;
+                }
+                float sum_exp = 0.0f;
+                for (int e = 0; e < E; ++e) {
+                    float logit = 0.0f;
+                    for (int64_t d = 0; d < D; ++d) {
+                        logit += in_ptr[i * D + d] * gw_ptr[e * D + d];
+                    }
+                    S[i * E + e] = std::exp(logit - max_logit);
+                    sum_exp += S[i * E + e];
+                }
+                for (int e = 0; e < E; ++e) {
+                    S[i * E + e] /= (sum_exp + 1e-9f);
+                }
+                float T = 0.0f;
                 for (int k = 0; k < top_k; ++k) {
                     int e = static_cast<int>(idx_ptr[i * top_k + k]);
-                    float p = p_ptr[i * top_k + k];
-                    S[i * E + e] = p;
-                    dS[i * E + e] = d_out[i * top_k + k];
+                    T += S[i * E + e];
+                }
+                float sum_dp_p = 0.0f;
+                for (int k = 0; k < top_k; ++k) {
+                    sum_dp_p += d_out[i * top_k + k] * p_ptr[i * top_k + k];
+                }
+                for (int k = 0; k < top_k; ++k) {
+                    int e = static_cast<int>(idx_ptr[i * top_k + k]);
+                    dS[i * E + e] = (d_out[i * top_k + k] - sum_dp_p) / (T + 1e-9f);
                 }
             }
 

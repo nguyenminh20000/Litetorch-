@@ -459,16 +459,65 @@ __global__ void moe_gate_backward_kernel(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N) return;
 
-    float sum_ds_s = 0.0f;
+    float max_logit = -1e9f;
+    for (int e = 0; e < E; ++e) {
+        float logit = 0.0f;
+        for (int d = 0; d < D; ++d) {
+            logit += input[in_off + i * D + d] * gate_weight[gw_off + e * D + d];
+        }
+        if (logit > max_logit) max_logit = logit;
+    }
+    float sum_exp = 0.0f;
+    for (int e = 0; e < E; ++e) {
+        float logit = 0.0f;
+        for (int d = 0; d < D; ++d) {
+            logit += input[in_off + i * D + d] * gate_weight[gw_off + e * D + d];
+        }
+        sum_exp += expf(logit - max_logit);
+    }
+    float T = 0.0f;
     for (int k = 0; k < top_k; ++k) {
-        sum_ds_s += grad_output[gout_off + i * top_k + k] * probs[p_off + i * top_k + k];
+        int e = static_cast<int>(indices[idx_off + i * top_k + k]);
+        if (e >= 0 && e < E) {
+            float logit = 0.0f;
+            for (int d = 0; d < D; ++d) {
+                logit += input[in_off + i * D + d] * gate_weight[gw_off + e * D + d];
+            }
+            T += expf(logit - max_logit) / (sum_exp + 1e-9f);
+        }
+    }
+    float sum_dp_p = 0.0f;
+    for (int k = 0; k < top_k; ++k) {
+        sum_dp_p += grad_output[gout_off + i * top_k + k] * probs[p_off + i * top_k + k];
     }
 
     for (int k = 0; k < top_k; ++k) {
         int e = static_cast<int>(indices[idx_off + i * top_k + k]);
         if (e >= 0 && e < E) {
             float p = probs[p_off + i * top_k + k];
-            float dh = p * (grad_output[gout_off + i * top_k + k] - sum_ds_s);
+            float ds = (grad_output[gout_off + i * top_k + k] - sum_dp_p) / (T + 1e-9f);
+            float logit_e = 0.0f;
+            for (int d = 0; d < D; ++d) {
+                logit_e += input[in_off + i * D + d] * gate_weight[gw_off + e * D + d];
+            }
+            float s_e = expf(logit_e - max_logit) / (sum_exp + 1e-9f);
+            float dh = s_e * ds;
+            for (int ee = 0; ee < E; ++ee) {
+                float logit_ee = 0.0f;
+                for (int d = 0; d < D; ++d) {
+                    logit_ee += input[in_off + i * D + d] * gate_weight[gw_off + ee * D + d];
+                }
+                float s_ee = expf(logit_ee - max_logit) / (sum_exp + 1e-9f);
+                float ds_ee = 0.0f;
+                for (int kk = 0; kk < top_k; ++kk) {
+                    int ek = static_cast<int>(indices[idx_off + i * top_k + kk]);
+                    if (ek == ee) {
+                        ds_ee = (grad_output[gout_off + i * top_k + kk] - sum_dp_p) / (T + 1e-9f);
+                        break;
+                    }
+                }
+                dh -= s_e * s_ee * ds_ee;
+            }
 
             for (int d = 0; d < D; ++d) {
                 atomic_add_float(&grad_input[gin_off + i * D + d], dh * gate_weight[gw_off + e * D + d]);

@@ -218,15 +218,52 @@ public:
                 continue;
             }
             if (expr_->op == JITVar::OpType::RELU && saved_inputs_.size() == 1) {
-                grads.push_back(Ops::relu(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                auto inp = saved_inputs_[0];
+                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
+                auto mask = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_c->data_ptr();
+                float* m_ptr = mask->data_ptr();
+                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                    m_ptr[k] = (in_ptr[k] > 0.0f) ? 1.0f : 0.0f;
+                }
+                if (inp->device.type != DeviceType::CPU) {
+                    mask = mask->to(inp->device);
+                }
+                grads.push_back(Ops::mul(grad_output, mask));
                 continue;
             }
             if (expr_->op == JITVar::OpType::GELU && saved_inputs_.size() == 1) {
-                grads.push_back(Ops::gelu(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                auto inp = saved_inputs_[0];
+                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
+                auto deriv = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_c->data_ptr();
+                float* d_ptr = deriv->data_ptr();
+                const float C = 0.79788456f;
+                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                    float x = in_ptr[k];
+                    float u = C * (x + 0.044715f * x * x * x);
+                    float tanh_u = std::tanh(u);
+                    d_ptr[k] = 0.5f * (1.0f + tanh_u) + 0.5f * x * (1.0f - tanh_u * tanh_u) * C * (1.0f + 0.134145f * x * x);
+                }
+                if (inp->device.type != DeviceType::CPU) {
+                    deriv = deriv->to(inp->device);
+                }
+                grads.push_back(Ops::mul(grad_output, deriv));
                 continue;
             }
             if (expr_->op == JITVar::OpType::ABS && saved_inputs_.size() == 1) {
-                grads.push_back(Ops::abs(saved_inputs_[0])->creator->backward(grad_output)[0]);
+                auto inp = saved_inputs_[0];
+                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
+                auto signs = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_c->data_ptr();
+                float* s_ptr = signs->data_ptr();
+                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                    s_ptr[k] = (in_ptr[k] > 0.0f) ? 1.0f : ((in_ptr[k] < 0.0f) ? -1.0f : 0.0f);
+                }
+                if (inp->device.type != DeviceType::CPU) {
+                    signs = signs->to(inp->device);
+                }
+                grads.push_back(Ops::mul(grad_output, signs));
                 continue;
             }
             if (expr_->op == JITVar::OpType::MUL && saved_inputs_.size() == 2) {

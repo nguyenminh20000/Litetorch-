@@ -979,7 +979,7 @@ void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph) {
             if (numel() != 1) {
                 throw std::runtime_error("Grad can only be implicitly created for scalar outputs");
             }
-            gradient = from_vector({1.0f}, shape, device);
+            gradient = from_vector({1.0f}, shape, device, false, dtype);
         }
 
         if (!grad) {
