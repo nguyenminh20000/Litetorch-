@@ -4,6 +4,9 @@
 
 extern "C" void* gpu_allocate(size_t size);
 extern "C" bool gpu_is_tf32_enabled();
+extern "C" void gpu_matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
+                                   void* B, int64_t b_off, bool trans_b, int64_t ldb,
+                                   void* C, int64_t c_off, int64_t M, int64_t N, int64_t K);
 
 extern "C" void gpu_matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     auto_set_device(A);
