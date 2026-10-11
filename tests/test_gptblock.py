@@ -24,9 +24,9 @@ print("Forward OK")
 print("\n=== Causality check ===")
 import random
 random.seed(0)
-x1 = lt.Tensor.create([1, 8, 64], lt.Device("cpu"), False)
+lt.manual_seed(0)
+x1 = lt.randn([1, 8, 64], lt.Device("cpu"), False)
 d1 = x1.to_vector()
-x2 = lt.Tensor.create([1, 8, 64], lt.Device("cpu"), False)
 d2 = list(d1)
 for i in range(4*64, 8*64):
     d2[i] = d1[i] + 1.0
