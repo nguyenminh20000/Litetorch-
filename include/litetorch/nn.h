@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <string>
 
 namespace litetorch {
 namespace nn {
@@ -404,7 +405,20 @@ private:
     void ensure_rope_cache(int64_t T, int64_t D, const Device& device);
 };
 
+namespace init {
+std::shared_ptr<Tensor> kaiming_uniform_(std::shared_ptr<Tensor> tensor, float a = 0.0f, const std::string& mode = "fan_in", const std::string& nonlinearity = "relu");
+std::shared_ptr<Tensor> kaiming_normal_(std::shared_ptr<Tensor> tensor, float a = 0.0f, const std::string& mode = "fan_in", const std::string& nonlinearity = "relu");
+std::shared_ptr<Tensor> xavier_uniform_(std::shared_ptr<Tensor> tensor, float gain = 1.0f);
+std::shared_ptr<Tensor> xavier_normal_(std::shared_ptr<Tensor> tensor, float gain = 1.0f);
+std::shared_ptr<Tensor> normal_(std::shared_ptr<Tensor> tensor, float mean = 0.0f, float std = 1.0f);
+std::shared_ptr<Tensor> uniform_(std::shared_ptr<Tensor> tensor, float a = 0.0f, float b = 1.0f);
+std::shared_ptr<Tensor> zeros_(std::shared_ptr<Tensor> tensor);
+std::shared_ptr<Tensor> ones_(std::shared_ptr<Tensor> tensor);
+std::shared_ptr<Tensor> fill_(std::shared_ptr<Tensor> tensor, float value);
 }
+
+}
+
 }
 
 #endif

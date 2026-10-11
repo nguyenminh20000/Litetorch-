@@ -744,19 +744,13 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("last_epoch", &optim::CosineAnnealingLR::last_epoch);
 
     auto lr_sched_mod = optim_mod.def_submodule("lr_scheduler", "Learning rate schedulers");
-    py::class_<optim::StepLR, std::unique_ptr<optim::StepLR>>(lr_sched_mod, "StepLR")
-        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("step_size"), py::arg("gamma") = 0.1f)
-        .def("step", &optim::StepLR::step)
-        .def_readwrite("step_size", &optim::StepLR::step_size)
-        .def_readwrite("gamma", &optim::StepLR::gamma)
-        .def_readwrite("last_epoch", &optim::StepLR::last_epoch);
-    py::class_<optim::CosineAnnealingLR, std::unique_ptr<optim::CosineAnnealingLR>>(lr_sched_mod, "CosineAnnealingLR")
-        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("T_max"), py::arg("eta_min") = 0.0f)
-        .def("step", &optim::CosineAnnealingLR::step)
-        .def_readwrite("T_max", &optim::CosineAnnealingLR::T_max)
-        .def_readwrite("eta_min", &optim::CosineAnnealingLR::eta_min)
-        .def_readwrite("last_epoch", &optim::CosineAnnealingLR::last_epoch);
-    py::class_<optim::LinearWarmup, std::unique_ptr<optim::LinearWarmup>>(lr_sched_mod, "LinearWarmup")
+    lr_sched_mod.def("StepLR", [](optim::Optimizer* opt, int step_size, float gamma) {
+        return std::unique_ptr<optim::StepLR>(new optim::StepLR(opt, step_size, gamma));
+    }, py::keep_alive<0, 1>(), py::arg("optimizer"), py::arg("step_size"), py::arg("gamma") = 0.1f);
+    lr_sched_mod.def("CosineAnnealingLR", [](optim::Optimizer* opt, int T_max, float eta_min) {
+        return std::unique_ptr<optim::CosineAnnealingLR>(new optim::CosineAnnealingLR(opt, T_max, eta_min));
+    }, py::keep_alive<0, 1>(), py::arg("optimizer"), py::arg("T_max"), py::arg("eta_min") = 0.0f);
+    py::class_<optim::LinearWarmup>(lr_sched_mod, "LinearWarmup")
         .def(py::init<optim::Optimizer*, int, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("warmup_steps"), py::arg("total_steps"), py::arg("min_lr") = 0.0f)
         .def("step", &optim::LinearWarmup::step)
         .def("get_lr", &optim::LinearWarmup::get_lr)
