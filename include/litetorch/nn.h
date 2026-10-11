@@ -29,6 +29,8 @@ public:
     virtual void train() { training = true; }
     virtual void eval() { training = false; }
     virtual std::vector<std::shared_ptr<Module>> children() { return {}; }
+    virtual void save_pretrained(const std::string& path, int num_shards = 1);
+    virtual void load_pretrained(const std::string& path);
 
     void register_forward_pre_hook(std::function<void(Module*, std::shared_ptr<Tensor>)> hook) {
         forward_pre_hooks.push_back(hook);
@@ -403,6 +405,40 @@ private:
     bool rope_cache_valid_ = false;
     std::shared_ptr<Tensor> causal_mask(int64_t T, const Device& device);
     void ensure_rope_cache(int64_t T, int64_t D, const Device& device);
+};
+
+class GPT2B : public Module {
+public:
+    int vocab_size;
+    int d_model;
+    int n_layers;
+    int n_q_heads;
+    int n_kv_heads;
+    int d_ff;
+    float rope_theta;
+    bool tied = true;
+
+    std::shared_ptr<Embedding> tok_emb;
+    std::vector<std::shared_ptr<GPTBlock>> blocks;
+    std::shared_ptr<RMSNorm> final_norm;
+    std::shared_ptr<Linear> lm_head;
+
+    int n_stages = 1;
+    int stage_split = 0;
+    Device stage_dev0{DeviceType::CPU, 0};
+    Device stage_dev1{DeviceType::CPU, 0};
+
+    GPT2B(int vocab_size = 50257, int d_model = 2560, int n_layers = 28,
+          int n_q_heads = 20, int n_kv_heads = 5, int d_ff = 6912,
+          float rope_theta = 500000.0f);
+
+    void tie_weights();
+    void pipeline_to(const Device& d0, const Device& d1, int split = -1);
+    std::shared_ptr<Tensor> stage_forward(std::shared_ptr<Tensor> input, int stage);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    std::vector<std::shared_ptr<Module>> children() override;
 };
 
 namespace init {

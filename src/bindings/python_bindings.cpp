@@ -359,6 +359,8 @@ PYBIND11_MODULE(litetorch, m) {
         .def("train", &nn::Module::train)
         .def("eval", &nn::Module::eval)
         .def("compile", &nn::Module::compile)
+        .def("save_pretrained", &nn::Module::save_pretrained, py::arg("path"), py::arg("num_shards") = 1)
+        .def("load_pretrained", &nn::Module::load_pretrained, py::arg("path"))
         .def("__call__", &nn::Module::operator());
 
     py::class_<nn::Linear, nn::Module, std::shared_ptr<nn::Linear>>(nn_mod, "Linear")
@@ -552,6 +554,31 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("d_ff", &nn::GPTBlock::d_ff)
         .def_readwrite("head_dim", &nn::GPTBlock::head_dim)
         .def_readwrite("rope_theta", &nn::GPTBlock::rope_theta);
+
+    py::class_<nn::GPT2B, nn::Module, std::shared_ptr<nn::GPT2B>>(nn_mod, "GPT2B")
+        .def(py::init<int, int, int, int, int, int, float>(), py::arg("vocab_size") = 50257,
+             py::arg("d_model") = 2560, py::arg("n_layers") = 28, py::arg("n_q_heads") = 20,
+             py::arg("n_kv_heads") = 5, py::arg("d_ff") = 6912, py::arg("rope_theta") = 500000.0f)
+        .def("forward", &nn::GPT2B::forward)
+        .def("stage_forward", &nn::GPT2B::stage_forward, py::arg("input"), py::arg("stage"))
+        .def("parameters", &nn::GPT2B::parameters)
+        .def("to", &nn::GPT2B::to)
+        .def("tie_weights", &nn::GPT2B::tie_weights)
+        .def("pipeline_to", &nn::GPT2B::pipeline_to, py::arg("d0"), py::arg("d1"), py::arg("split") = -1)
+        .def_readwrite("vocab_size", &nn::GPT2B::vocab_size)
+        .def_readwrite("d_model", &nn::GPT2B::d_model)
+        .def_readwrite("n_layers", &nn::GPT2B::n_layers)
+        .def_readwrite("n_q_heads", &nn::GPT2B::n_q_heads)
+        .def_readwrite("n_kv_heads", &nn::GPT2B::n_kv_heads)
+        .def_readwrite("d_ff", &nn::GPT2B::d_ff)
+        .def_readwrite("rope_theta", &nn::GPT2B::rope_theta)
+        .def_readwrite("tied", &nn::GPT2B::tied)
+        .def_readwrite("n_stages", &nn::GPT2B::n_stages)
+        .def_readwrite("stage_split", &nn::GPT2B::stage_split)
+        .def_readwrite("tok_emb", &nn::GPT2B::tok_emb)
+        .def_readwrite("blocks", &nn::GPT2B::blocks)
+        .def_readwrite("final_norm", &nn::GPT2B::final_norm)
+        .def_readwrite("lm_head", &nn::GPT2B::lm_head);
 
     py::class_<nn::Sequential, nn::Module, std::shared_ptr<nn::Sequential>>(nn_mod, "Sequential")
         .def(py::init<>())
@@ -998,6 +1025,19 @@ PYBIND11_MODULE(litetorch, m) {
 
     m.def("save_parameters", &litetorch::save_parameters, py::arg("params"), py::arg("filepath"));
     m.def("load_parameters", &litetorch::load_parameters, py::arg("params"), py::arg("filepath"));
+    m.def("save_safetensors", [](py::dict tensors, const std::string& filepath) {
+        std::map<std::string, std::shared_ptr<Tensor>> m;
+        for (auto kv : tensors) {
+            m[kv.first.cast<std::string>()] = kv.second.cast<std::shared_ptr<Tensor>>();
+        }
+        litetorch::save_safetensors(m, filepath);
+    }, py::arg("tensors"), py::arg("filepath"));
+    m.def("load_safetensors", [](const std::string& filepath) {
+        auto m = litetorch::load_safetensors(filepath);
+        py::dict d;
+        for (auto& kv : m) d[py::str(kv.first)] = kv.second;
+        return d;
+    }, py::arg("filepath"));
     m.def("save_optimizer_state", &litetorch::save_optimizer_state, py::arg("optimizer"), py::arg("filepath"));
     m.def("load_optimizer_state", &litetorch::load_optimizer_state, py::arg("optimizer"), py::arg("filepath"));
 
