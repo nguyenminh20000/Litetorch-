@@ -1602,6 +1602,61 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
     return out;
 }
 
+class NarrowNode : public Node {
+public:
+    int64_t dim;
+    int64_t start;
+    int64_t length;
+    std::vector<int64_t> input_shape;
+    NarrowNode(int64_t dim, int64_t start, int64_t length, const std::vector<int64_t>& input_shape)
+        : Node("Narrow"), dim(dim), start(start), length(length), input_shape(input_shape) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto grad_input = Tensor::zeros(input_shape, grad_output->device, false);
+        if (grad_input->dtype != grad_output->dtype) {
+            grad_input = grad_input->cast(grad_output->dtype);
+        }
+        auto region = grad_input->slice(dim, start, start + length, 1);
+        region->copy_(grad_output);
+        return { grad_input };
+    }
+};
+
+std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim) {
+    int64_t ndim = static_cast<int64_t>(input->shape.size());
+    if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range for chunk");
+    }
+    int64_t total = 0;
+    for (auto s : sizes) {
+        if (s <= 0) throw std::runtime_error("[litetorch Error] chunk sizes must be positive");
+        total += s;
+    }
+    if (total != input->shape[dim]) {
+        throw std::runtime_error("[litetorch Error] chunk sizes must sum to dimension size");
+    }
+    std::vector<std::shared_ptr<Tensor>> outputs;
+    outputs.reserve(sizes.size());
+    int64_t start = 0;
+    bool grad_enabled = Autograd::is_grad_enabled() && input->requires_grad;
+    for (auto s : sizes) {
+        auto out = input->slice(dim, start, start + s, 1);
+        if (grad_enabled) {
+            auto node = std::make_shared<NarrowNode>(dim, start, s, input->shape);
+            node->inputs.push_back({input, true});
+            node->next_nodes.push_back(input->creator);
+            node->output = out;
+            out->creator = node;
+            out->requires_grad = true;
+        }
+        outputs.push_back(out);
+        start += s;
+    }
+    return outputs;
+}
+
 class SqueezeNode : public Node {
 public:
     std::vector<int64_t> input_shape;

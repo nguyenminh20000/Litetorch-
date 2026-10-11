@@ -376,14 +376,11 @@ public:
     int head_dim;
     float rope_theta;
 
-    std::shared_ptr<Linear> q_proj;
-    std::shared_ptr<Linear> k_proj;
-    std::shared_ptr<Linear> v_proj;
+    std::shared_ptr<Linear> qkv_proj;
     std::shared_ptr<Linear> o_proj;
     std::shared_ptr<RMSNorm> q_norm;
     std::shared_ptr<RMSNorm> k_norm;
-    std::shared_ptr<Linear> gate_proj;
-    std::shared_ptr<Linear> up_proj;
+    std::shared_ptr<Linear> gate_up_proj;
     std::shared_ptr<Linear> down_proj;
     std::shared_ptr<RMSNorm> attn_norm;
     std::shared_ptr<RMSNorm> ffn_norm;
@@ -394,7 +391,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
     std::vector<std::shared_ptr<Module>> children() override {
-        return {q_proj, k_proj, v_proj, o_proj, q_norm, k_norm, gate_proj, up_proj, down_proj, attn_norm, ffn_norm};
+        return {qkv_proj, o_proj, q_norm, k_norm, gate_up_proj, down_proj, attn_norm, ffn_norm};
     }
 
 private:

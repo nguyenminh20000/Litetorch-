@@ -36,6 +36,7 @@ std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slope = 0.01f);
 std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim = 0);
+std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim = -1);
 std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim = -1);
 std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim);
 std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride = -1, int padding = 0);
