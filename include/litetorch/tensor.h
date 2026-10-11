@@ -117,6 +117,12 @@ public:
     static std::shared_ptr<Tensor> create(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> from_vector(const std::vector<float>& data, const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> zeros(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false);
+    static std::shared_ptr<Tensor> ones(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
+    static std::shared_ptr<Tensor> randn(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
+    static std::shared_ptr<Tensor> arange(int64_t start, int64_t end, int64_t step = 1, const Device& device = Device(DeviceType::CPU, 0), DataType dtype = DataType::FP32);
+    std::shared_ptr<Tensor> masked_fill(std::shared_ptr<Tensor> mask, float value);
+    std::shared_ptr<Tensor> index_select(int64_t dim, std::shared_ptr<Tensor> indices);
+    std::shared_ptr<Tensor> slice(int64_t dim, int64_t start, int64_t end, int64_t step = 1);
 
     size_t numel() const { return numel_; }
     bool is_contiguous() const { return contiguous_; }
@@ -157,6 +163,8 @@ inline std::vector<int64_t> default_strides(const std::vector<int64_t>& shape) {
 }
 
 void manual_seed(unsigned int seed);
+std::string get_rng_state();
+void set_rng_state(const std::string& state);
 
 }
 

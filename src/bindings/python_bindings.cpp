@@ -236,6 +236,28 @@ PYBIND11_MODULE(litetorch, m) {
         .def_static("create", &Tensor::create, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("from_vector", &Tensor::from_vector, py::arg("data"), py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("zeros", &Tensor::zeros, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false)
+        .def_static("ones", &Tensor::ones, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
+        .def_static("randn", &Tensor::randn, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
+        .def_static("arange", &Tensor::arange, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32)
+        .def("masked_fill", &Tensor::masked_fill, py::arg("mask"), py::arg("value"))
+        .def("index_select", &Tensor::index_select, py::arg("dim"), py::arg("indices"))
+        .def("slice", &Tensor::slice, py::arg("dim"), py::arg("start"), py::arg("end"), py::arg("step") = 1)
+        .def("__getitem__", [](Tensor& self, py::object key) -> std::shared_ptr<Tensor> {
+            if (py::isinstance<py::int_>(key)) {
+                int64_t idx = key.cast<int64_t>();
+                auto s = self.slice(0, idx, idx + 1);
+                return Ops::squeeze(s, 0);
+            } else if (py::isinstance<py::slice>(key)) {
+                py::slice sl = key.cast<py::slice>();
+                int64_t dim_size = self.shape[0];
+                int64_t start, stop, step, slicelength;
+                if (!sl.compute(dim_size, &start, &stop, &step, &slicelength)) {
+                    throw py::index_error("invalid slice");
+                }
+                return self.slice(0, start, stop, step);
+            }
+            throw py::type_error("unsupported index type");
+        })
         .def_readwrite("shape", &Tensor::shape)
         .def_readwrite("strides", &Tensor::strides)
         .def_readwrite("dtype", &Tensor::dtype)
@@ -982,6 +1004,18 @@ PYBIND11_MODULE(litetorch, m) {
             throw std::runtime_error("load expects a Module, list of Tensor parameters, or Optimizer");
         }
     }, py::arg("obj"), py::arg("filepath"));
+
+    m.def("manual_seed", &litetorch::manual_seed, py::arg("seed"));
+
+    m.def("randn", [](const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+        return Tensor::randn(shape, device, requires_grad, dtype);
+    }, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32);
+    m.def("ones", [](const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+        return Tensor::ones(shape, device, requires_grad, dtype);
+    }, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32);
+    m.def("arange", [](int64_t start, int64_t end, int64_t step, const Device& device, DataType dtype) {
+        return Tensor::arange(start, end, step, device, dtype);
+    }, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32);
 
     m.def("empty_cache", []() {
         CachingAllocator::get().empty_cache();

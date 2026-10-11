@@ -13,8 +13,11 @@
 #include <algorithm>
 #include <mutex>
 #include <cstring>
+#include <sstream>
 
 namespace litetorch {
+
+std::mt19937& get_generator();
 
 struct StorageUseGuard {
     StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
@@ -295,6 +298,172 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
         }
     }
     return tensor;
+}
+
+std::shared_ptr<Tensor> Tensor::ones(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+    auto tensor = create(shape, device, requires_grad, dtype);
+    size_t n = tensor->numel();
+    std::vector<float> ones_vec(n, 1.0f);
+    if (tensor->device.type == DeviceType::GPU) {
+        if (auto native = native_gpu_backend()) {
+            native->write(tensor->gpu_data(), n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+        } else {
+            cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
+            rt_gpu_write(gpu_ptr, n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+        }
+    } else if (tensor->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        float* cpu_ptr = tensor->storage->get_cpu_ptr();
+        std::copy(ones_vec.begin(), ones_vec.end(), cpu_ptr + tensor->offset);
+        if (tpu && tensor->gpu_data()) {
+            tpu->write(tensor->gpu_data(), n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+        }
+    } else {
+        float* cpu_ptr = tensor->storage->get_cpu_ptr();
+        std::copy(ones_vec.begin(), ones_vec.end(), cpu_ptr + tensor->offset);
+    }
+    if (dtype != DataType::FP32) {
+        return tensor->cast(dtype);
+    }
+    return tensor;
+}
+
+std::shared_ptr<Tensor> Tensor::randn(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+    auto tensor = create(shape, device, requires_grad, DataType::FP32);
+    size_t n = tensor->numel();
+    std::vector<float> data(n);
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+    auto& gen = get_generator();
+    for (size_t i = 0; i < n; ++i) {
+        data[i] = dist(gen);
+    }
+    if (tensor->device.type == DeviceType::GPU) {
+        if (auto native = native_gpu_backend()) {
+            native->write(tensor->gpu_data(), n * sizeof(float), data.data(), tensor->offset * sizeof(float));
+        } else {
+            cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
+            rt_gpu_write(gpu_ptr, n * sizeof(float), data.data(), tensor->offset * sizeof(float));
+        }
+    } else if (tensor->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        float* cpu_ptr = tensor->storage->get_cpu_ptr();
+        std::copy(data.begin(), data.end(), cpu_ptr + tensor->offset);
+        if (tpu && tensor->gpu_data()) {
+            tpu->write(tensor->gpu_data(), n * sizeof(float), data.data(), tensor->offset * sizeof(float));
+        }
+    } else {
+        float* cpu_ptr = tensor->storage->get_cpu_ptr();
+        std::copy(data.begin(), data.end(), cpu_ptr + tensor->offset);
+    }
+    if (dtype != DataType::FP32) {
+        return tensor->cast(dtype);
+    }
+    return tensor;
+}
+
+std::shared_ptr<Tensor> Tensor::arange(int64_t start, int64_t end, int64_t step, const Device& device, DataType dtype) {
+    std::vector<float> data;
+    if (step > 0) {
+        for (int64_t i = start; i < end; i += step) data.push_back(static_cast<float>(i));
+    } else if (step < 0) {
+        for (int64_t i = start; i > end; i += step) data.push_back(static_cast<float>(i));
+    }
+    auto tensor = from_vector(data, {static_cast<int64_t>(data.size())}, device, false, DataType::FP32);
+    if (dtype != DataType::FP32) {
+        return tensor->cast(dtype);
+    }
+    return tensor;
+}
+
+std::shared_ptr<Tensor> Tensor::masked_fill(std::shared_ptr<Tensor> mask, float value) {
+    auto out = this->clone();
+    std::vector<float> data = out->to_vector();
+    std::vector<float> mask_data = mask->to_vector();
+    size_t n = std::min(data.size(), mask_data.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (mask_data[i] != 0.0f) data[i] = value;
+    }
+    size_t bytes = data.size() * sizeof(float);
+    if (out->device.type == DeviceType::GPU) {
+        if (auto native = native_gpu_backend()) {
+            native->write(out->gpu_data(), bytes, data.data(), out->offset * sizeof(float));
+        } else {
+            cl_mem gpu_ptr = out->storage->get_gpu_ptr();
+            rt_gpu_write(gpu_ptr, bytes, data.data(), out->offset * sizeof(float));
+        }
+    } else {
+        float* cpu_ptr = out->storage->get_cpu_ptr();
+        std::copy(data.begin(), data.end(), cpu_ptr + out->offset);
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> Tensor::slice(int64_t dim, int64_t start, int64_t end, int64_t step) {
+    int64_t ndim = static_cast<int64_t>(shape.size());
+    if (dim < 0) dim += ndim;
+    int64_t dim_size = shape[dim];
+    if (start < 0) start += dim_size;
+    if (end < 0) end += dim_size;
+    start = std::max<int64_t>(0, std::min(start, dim_size));
+    end = std::max<int64_t>(0, std::min(end, dim_size));
+    int64_t new_size = (end - start + step - 1) / step;
+    if (new_size < 0) new_size = 0;
+    std::vector<int64_t> new_shape = shape;
+    std::vector<int64_t> new_strides = strides;
+    new_shape[dim] = new_size;
+    new_strides[dim] = strides[dim] * step;
+    int64_t new_offset = offset + start * strides[dim];
+    auto out = std::make_shared<Tensor>(storage, new_shape, new_strides, new_offset, device, requires_grad);
+    out->dtype = dtype;
+    return out;
+}
+
+std::shared_ptr<Tensor> Tensor::index_select(int64_t dim, std::shared_ptr<Tensor> indices) {
+    int64_t ndim = static_cast<int64_t>(shape.size());
+    if (dim < 0) dim += ndim;
+    std::vector<float> idx_data = indices->to_vector();
+    int64_t num_idx = static_cast<int64_t>(idx_data.size());
+    std::vector<int64_t> new_shape = shape;
+    new_shape[dim] = num_idx;
+    auto out = create(new_shape, device, requires_grad, DataType::FP32);
+    std::vector<float> src_data = this->to_vector();
+    std::vector<float> out_data(out->numel());
+    std::vector<int64_t> src_strides = strides;
+    std::vector<int64_t> out_strides = default_strides(new_shape);
+    int64_t dim_size = shape[dim];
+    for (size_t i = 0; i < out->numel(); ++i) {
+        std::vector<int64_t> out_idx(ndim);
+        size_t rem = i;
+        for (int64_t d = ndim - 1; d >= 0; --d) {
+            out_idx[d] = rem % new_shape[d];
+            rem /= new_shape[d];
+        }
+        std::vector<int64_t> src_idx = out_idx;
+        int64_t ii = static_cast<int64_t>(idx_data[out_idx[dim]]);
+        if (ii < 0) ii += dim_size;
+        src_idx[dim] = ii;
+        size_t src_pos = 0;
+        for (int64_t d = 0; d < ndim; ++d) {
+            src_pos += src_idx[d] * src_strides[d];
+        }
+        out_data[i] = src_data[src_pos];
+    }
+    size_t bytes = out_data.size() * sizeof(float);
+    if (out->device.type == DeviceType::GPU) {
+        if (auto native = native_gpu_backend()) {
+            native->write(out->gpu_data(), bytes, out_data.data(), 0);
+        } else {
+            cl_mem gpu_ptr = out->storage->get_gpu_ptr();
+            rt_gpu_write(gpu_ptr, bytes, out_data.data(), 0);
+        }
+    } else {
+        float* cpu_ptr = out->storage->get_cpu_ptr();
+        std::copy(out_data.begin(), out_data.end(), cpu_ptr);
+    }
+    if (dtype != DataType::FP32) {
+        return out->cast(dtype);
+    }
+    return out;
 }
 
 std::shared_ptr<Tensor> Tensor::contiguous() {
@@ -1284,6 +1453,17 @@ void manual_seed(unsigned int seed) {
     std::seed_seq seq{g_seed_value, thread_id};
     g_thread_gen.seed(seq);
     g_thread_seed_version = g_global_seed_version;
+}
+
+std::string get_rng_state() {
+    std::ostringstream oss;
+    oss << get_generator();
+    return oss.str();
+}
+
+void set_rng_state(const std::string& state) {
+    std::istringstream iss(state);
+    iss >> get_generator();
 }
 
 }
