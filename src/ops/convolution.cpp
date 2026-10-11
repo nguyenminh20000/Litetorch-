@@ -100,10 +100,12 @@ public:
             auto out = saved_tensors.back();
             relu_out_c = out->is_contiguous() ? out : out->contiguous();
             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
-            relu_masked = Tensor::create(relu_gout_c->shape, relu_gout_c->device);
+            DataType rdt = relu_gout_c->dtype;
+            relu_masked = Tensor::create(relu_gout_c->shape, relu_gout_c->device, false, rdt);
             int rsize = relu_out_c->numel();
+            size_t resz = relu_masked->storage->element_size();
             bool run_gpu = false;
-            if (relu_out_c->device.type == DeviceType::GPU) {
+            if (relu_out_c->device.type == DeviceType::GPU && rdt == DataType::FP32) {
                 auto relu_bwd_k = cached_kernel<KernelID::ReluBackward>();
                 if (relu_bwd_k) {
                     run_gpu = true;
@@ -119,14 +121,37 @@ public:
                 }
             }
             if (!run_gpu) {
-                const float* o_ptr = relu_out_c->data_ptr();
-                const float* g_ptr = relu_gout_c->data_ptr();
-                float* m_ptr = relu_masked->data_ptr();
-                ThreadPool::get().parallel_for(0, rsize, [&](int64_t i) {
-                    m_ptr[i] = o_ptr[i] > 0.0f ? g_ptr[i] : 0.0f;
-                });
+                auto cpu_out = relu_out_c->device.type == DeviceType::CPU ? relu_out_c : relu_out_c->to(Device(DeviceType::CPU, 0));
+                auto cpu_gout = relu_gout_c->device.type == DeviceType::CPU ? relu_gout_c : relu_gout_c->to(Device(DeviceType::CPU, 0));
+                if (!cpu_out->is_contiguous()) cpu_out = cpu_out->contiguous();
+                if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+                auto cpu_masked = Tensor::create(relu_gout_c->shape, Device(DeviceType::CPU, 0), false, rdt);
+                if (rdt == DataType::FP32) {
+                    const float* o_ptr = reinterpret_cast<const float*>(cpu_out->storage->get_cpu_ptr());
+                    const float* g_ptr = reinterpret_cast<const float*>(cpu_gout->storage->get_cpu_ptr());
+                    float* m_ptr = reinterpret_cast<float*>(cpu_masked->storage->get_cpu_ptr());
+                    ThreadPool::get().parallel_for(0, rsize, [&](int64_t i) {
+                        m_ptr[i] = o_ptr[i] > 0.0f ? g_ptr[i] : 0.0f;
+                    });
+                } else {
+                    auto o_f32 = cpu_out->cast(DataType::FP32);
+                    auto g_f32 = cpu_gout->cast(DataType::FP32);
+                    if (!o_f32->is_contiguous()) o_f32 = o_f32->contiguous();
+                    if (!g_f32->is_contiguous()) g_f32 = g_f32->contiguous();
+                    auto tmp = Tensor::create(relu_gout_c->shape, Device(DeviceType::CPU, 0));
+                    const float* o_ptr = reinterpret_cast<const float*>(o_f32->storage->get_cpu_ptr());
+                    const float* g_ptr = reinterpret_cast<const float*>(g_f32->storage->get_cpu_ptr());
+                    float* m_ptr = reinterpret_cast<float*>(tmp->storage->get_cpu_ptr());
+                    ThreadPool::get().parallel_for(0, rsize, [&](int64_t i) {
+                        m_ptr[i] = o_ptr[i] > 0.0f ? g_ptr[i] : 0.0f;
+                    });
+                    cpu_masked = tmp->cast(rdt);
+                }
                 if (relu_masked->device.type == DeviceType::GPU) {
-                    rt_gpu_write(relu_masked->gpu_data(), rsize * sizeof(float), m_ptr);
+                    rt_gpu_write(relu_masked->gpu_data(), rsize * resz, cpu_masked->storage->get_cpu_ptr());
+                } else {
+                    std::memcpy(relu_masked->storage->get_cpu_ptr(), cpu_masked->storage->get_cpu_ptr(),
+                                rsize * resz);
                 }
             }
             gout = relu_masked;

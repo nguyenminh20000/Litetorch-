@@ -6,6 +6,7 @@
 #include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <limits>
 
@@ -27,6 +28,34 @@ struct StorageUseGuard {
         }
     }
 };
+
+inline uint16_t ew_float_to_half(float f) {
+    uint32_t x = *reinterpret_cast<uint32_t*>(&f);
+    uint32_t sign = (x >> 16) & 0x8000;
+    uint32_t exp = (x >> 23) & 0xff;
+    uint32_t mant = x & 0x7fffff;
+    if (exp == 0) return static_cast<uint16_t>(sign);
+    if (exp == 255) return static_cast<uint16_t>(sign | 0x7c00 | (mant ? 0x200 : 0));
+    int nexp = static_cast<int>(exp) - 127 + 15;
+    if (nexp >= 31) return static_cast<uint16_t>(sign | 0x7c00);
+    if (nexp <= 0) return static_cast<uint16_t>(sign);
+    return static_cast<uint16_t>(sign | (nexp << 10) | (mant >> 13));
+}
+
+inline float ew_half_to_float(uint16_t h) {
+    uint32_t sign = (h >> 15) & 0x1;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t mant = h & 0x3ff;
+    uint32_t f;
+    if (exp == 0) {
+        f = sign << 31;
+    } else if (exp == 31) {
+        f = (sign << 31) | 0x7f800000 | (mant << 13);
+    } else {
+        f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+    }
+    return *reinterpret_cast<float*>(&f);
+}
 
 struct IntBufferPool {
     static cl_mem get_and_fill(const std::vector<int64_t>& vec) {
@@ -1611,29 +1640,72 @@ public:
             cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
         }
         if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
-        auto grad_input = Tensor::create(input_shape, grad_output->device);
+        DataType dt = grad_output->dtype;
+        auto grad_input = Tensor::create(input_shape, grad_output->device, false, dt);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         int64_t ndim = static_cast<int64_t>(input_shape.size());
         int64_t outer_size = 1, inner_size = 1;
         for (int64_t i = 0; i < dim; ++i) outer_size *= input_shape[i];
         int64_t dim_size = input_shape[dim];
         for (int64_t i = dim + 1; i < ndim; ++i) inner_size *= input_shape[i];
-        float* g = grad_input->data_ptr();
-        float* gout = cpu_gout->data_ptr();
         float scale = 1.0f / divisor;
-        ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
-            for (int64_t i = 0; i < inner_size; ++i) {
-                float v = gout[o * inner_size + i] * scale;
-                for (int64_t d = 0; d < dim_size; ++d) {
-                    g[(o * dim_size + d) * inner_size + i] = v;
+        size_t esz = grad_input->storage->element_size();
+        if (dt == DataType::FP32) {
+            float* g = reinterpret_cast<float*>(grad_input->data_ptr());
+            float* gout = reinterpret_cast<float*>(cpu_gout->data_ptr());
+            ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+                for (int64_t i = 0; i < inner_size; ++i) {
+                    float v = gout[o * inner_size + i] * scale;
+                    for (int64_t d = 0; d < dim_size; ++d) {
+                        g[(o * dim_size + d) * inner_size + i] = v;
+                    }
                 }
+            });
+        } else if (dt == DataType::FP16) {
+            uint16_t* g = reinterpret_cast<uint16_t*>(grad_input->data_ptr());
+            uint16_t* gout = reinterpret_cast<uint16_t*>(cpu_gout->data_ptr());
+            ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+                for (int64_t i = 0; i < inner_size; ++i) {
+                    float v = ew_half_to_float(gout[o * inner_size + i]) * scale;
+                    uint16_t hv = ew_float_to_half(v);
+                    for (int64_t d = 0; d < dim_size; ++d) {
+                        g[(o * dim_size + d) * inner_size + i] = hv;
+                    }
+                }
+            });
+        } else {
+            auto gout_f32 = cpu_gout->dtype == DataType::FP32 ? cpu_gout : cpu_gout->cast(DataType::FP32);
+            if (!gout_f32->is_contiguous()) gout_f32 = gout_f32->contiguous();
+            auto tmp = Tensor::create(input_shape, grad_output->device);
+            float* g = reinterpret_cast<float*>(tmp->data_ptr());
+            float* gout = reinterpret_cast<float*>(gout_f32->data_ptr());
+            ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+                for (int64_t i = 0; i < inner_size; ++i) {
+                    float v = gout[o * inner_size + i] * scale;
+                    for (int64_t d = 0; d < dim_size; ++d) {
+                        g[(o * dim_size + d) * inner_size + i] = v;
+                    }
+                }
+            });
+            auto casted = tmp->cast(dt);
+            if (grad_output->device.type == DeviceType::GPU) {
+                rt_gpu_write(grad_input->gpu_data(), grad_input->numel() * esz,
+                             casted->storage->get_cpu_ptr());
+            } else if (grad_output->device.type == DeviceType::TPU) {
+                auto tpu = BackendDispatcher::get().get_tpu_backend();
+                if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * esz,
+                                   casted->storage->get_cpu_ptr());
+            } else {
+                std::memcpy(grad_input->storage->get_cpu_ptr(), casted->storage->get_cpu_ptr(),
+                            grad_input->numel() * esz);
             }
-        });
+            return { grad_input };
+        }
         if (grad_output->device.type == DeviceType::GPU) {
-            rt_gpu_write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+            rt_gpu_write(grad_input->gpu_data(), grad_input->numel() * esz, grad_input->storage->get_cpu_ptr());
         } else if (grad_output->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
-            if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+            if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * esz, grad_input->storage->get_cpu_ptr());
         }
         return { grad_input };
     }
@@ -1791,53 +1863,56 @@ public:
         int64_t offset = 0;
         int64_t ndim = grad_output->shape.size();
         int64_t concat_dim_size = grad_output->shape[dim];
+        DataType dt = grad_output->dtype;
+        size_t esz = grad_output->storage->element_size();
         bool run_gpu = false;
-        if (grad_output->device.type == DeviceType::GPU) {
+        if (grad_output->device.type == DeviceType::GPU && dt == DataType::FP32) {
             auto backend = BackendDispatcher::get().get_backend();
             if (backend && backend->is_available()) {
                 run_gpu = true;
                 for (size_t i = 0; i < input_shapes.size(); ++i) {
                     auto& shape = input_shapes[i];
-                    auto grad_input = Tensor::create(shape, grad_output->device);
+                    auto grad_input = Tensor::create(shape, grad_output->device, false, dt);
                     int64_t outer_size = 1;
                     for (int64_t d = 0; d < dim; ++d) outer_size *= shape[d];
                     int64_t inner_size = 1;
                     for (int64_t d = dim + 1; d < ndim; ++d) inner_size *= shape[d];
                     int64_t dim_size = shape[dim];
-                    
+
                     backend->cat_backward(grad_output->gpu_data(), grad_output->offset, grad_input->gpu_data(), grad_input->offset, outer_size, inner_size, dim_size, concat_dim_size, offset);
                     grads.push_back(grad_input);
                     offset += dim_size;
                 }
             }
         }
-        
+
         if (!run_gpu) {
             auto cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
-            float* src_ptr = cpu_gout->data_ptr();
-            
+            if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+            const char* src_base = reinterpret_cast<const char*>(cpu_gout->storage->get_cpu_ptr())
+                + cpu_gout->offset * esz;
+
             for (size_t i = 0; i < input_shapes.size(); ++i) {
                 auto& shape = input_shapes[i];
-                auto grad_input = Tensor::create(shape, grad_output->device);
-                auto cpu_gin = grad_input->to(Device(DeviceType::CPU, 0));
-                float* dst_ptr = cpu_gin->data_ptr();
-                
+                auto grad_input = Tensor::create(shape, grad_output->device, false, dt);
+                auto cpu_gin = Tensor::create(shape, Device(DeviceType::CPU, 0), false, dt);
+                char* dst_base = reinterpret_cast<char*>(cpu_gin->storage->get_cpu_ptr());
+
                 int64_t outer_size = 1;
                 for (int64_t d = 0; d < dim; ++d) outer_size *= shape[d];
                 int64_t inner_size = 1;
                 for (int64_t d = dim + 1; d < ndim; ++d) inner_size *= shape[d];
                 int64_t dim_size = shape[dim];
-                
+
                 ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
                     for (int64_t d = 0; d < dim_size; ++d) {
-                        for (int64_t in = 0; in < inner_size; ++in) {
-                            int64_t src_idx = (o * concat_dim_size + (offset + d)) * inner_size + in;
-                            int64_t dst_idx = (o * dim_size + d) * inner_size + in;
-                            dst_ptr[dst_idx] = src_ptr[src_idx];
-                        }
+                        int64_t src_idx = (o * concat_dim_size + (offset + d)) * inner_size;
+                        int64_t dst_idx = (o * dim_size + d) * inner_size;
+                        std::memcpy(dst_base + dst_idx * esz, src_base + src_idx * esz,
+                                    static_cast<size_t>(inner_size) * esz);
                     }
                 });
-                
+
                 grad_input->copy_(cpu_gin);
                 grads.push_back(grad_input);
                 offset += dim_size;

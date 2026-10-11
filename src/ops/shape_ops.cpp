@@ -5,6 +5,7 @@
 #include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -192,8 +193,12 @@ public:
             }
             gi[(size_t)pos] += g[i];
         }
-        auto grad_in = Tensor::create(input_shape, grad_output->device);
-        write_vec(grad_in, gi);
+        auto grad_in_f32 = Tensor::create(input_shape, grad_output->device);
+        write_vec(grad_in_f32, gi);
+        if (grad_output->dtype == DataType::FP32) {
+            return { grad_in_f32 };
+        }
+        auto grad_in = grad_in_f32->cast(grad_output->dtype);
         return { grad_in };
     }
 };

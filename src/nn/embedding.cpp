@@ -6,10 +6,36 @@
 #include "litetorch/thread_pool.h"
 #include <random>
 #include <algorithm>
+#include <cstring>
 
 namespace litetorch {
 extern const std::string litetorch_kernels_src;
 extern std::mt19937& get_generator();
+
+namespace {
+inline uint16_t emb_float_to_half(float f) {
+    uint32_t x = *reinterpret_cast<uint32_t*>(&f);
+    uint32_t sign = (x >> 16) & 0x8000;
+    uint32_t exp = (x >> 23) & 0xff;
+    uint32_t mant = x & 0x7fffff;
+    if (exp == 0) return static_cast<uint16_t>(sign);
+    if (exp == 255) return static_cast<uint16_t>(sign | 0x7c00 | (mant ? 0x200 : 0));
+    int nexp = static_cast<int>(exp) - 127 + 15;
+    if (nexp >= 31) return static_cast<uint16_t>(sign | 0x7c00);
+    if (nexp <= 0) return static_cast<uint16_t>(sign);
+    return static_cast<uint16_t>(sign | (nexp << 10) | (mant >> 13));
+}
+inline float emb_half_to_float(uint16_t h) {
+    uint32_t sign = (h >> 15) & 0x1;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t mant = h & 0x3ff;
+    uint32_t f;
+    if (exp == 0) f = sign << 31;
+    else if (exp == 31) f = (sign << 31) | 0x7f800000 | (mant << 13);
+    else f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+    return *reinterpret_cast<float*>(&f);
+}
+}
 
 namespace nn {
 
@@ -46,10 +72,12 @@ public:
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
-        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device);
+        auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
         StorageUseGuard guard({input_c->storage, weight_c->storage, gout_c->storage, grad_weight->storage});
+        DataType wdt = weight_c->dtype;
+        size_t wesz = weight_c->storage->element_size();
 
-        if (input_c->device.type == DeviceType::GPU) {
+        if (input_c->device.type == DeviceType::GPU && wdt == DataType::FP32) {
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_backward");
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
@@ -73,25 +101,66 @@ public:
                              static_cast<size_t>(gw_off + padding_idx * embedding_dim) * sizeof(float));
             }
         } else {
-            float* in_ptr = input_c->data_ptr();
-            float* gout_ptr = gout_c->data_ptr();
-            float* gw_ptr = grad_weight->data_ptr();
-            std::fill(gw_ptr, gw_ptr + grad_weight->numel(), 0.0f);
-            size_t num_indices = input_c->numel();
-            for (size_t i = 0; i < num_indices; ++i) {
-                int idx = static_cast<int>(in_ptr[i]);
-                if (idx >= 0 && idx < num_embeddings) {
-                    float* gw_row = gw_ptr + idx * embedding_dim;
-                    float* gout_row = gout_ptr + i * embedding_dim;
-                    for (int d = 0; d < embedding_dim; ++d) {
-                        gw_row[d] += gout_row[d];
+            auto cpu_input = input_c->device.type == DeviceType::CPU ? input_c : input_c->to(Device(DeviceType::CPU, 0));
+            auto cpu_gout = gout_c->device.type == DeviceType::CPU ? gout_c : gout_c->to(Device(DeviceType::CPU, 0));
+            if (!cpu_input->is_contiguous()) cpu_input = cpu_input->contiguous();
+            if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+            auto cpu_gw = Tensor::create(weight_c->shape, Device(DeviceType::CPU, 0), false, wdt);
+            size_t gw_n = cpu_gw->numel();
+            std::memset(cpu_gw->storage->get_cpu_ptr(), 0, gw_n * wesz);
+            float* in_ptr = cpu_input->data_ptr();
+            size_t num_indices = cpu_input->numel();
+            if (wdt == DataType::FP32) {
+                float* gout_ptr = reinterpret_cast<float*>(cpu_gout->storage->get_cpu_ptr());
+                float* gw_ptr = reinterpret_cast<float*>(cpu_gw->storage->get_cpu_ptr());
+                for (size_t i = 0; i < num_indices; ++i) {
+                    int idx = static_cast<int>(in_ptr[i]);
+                    if (idx >= 0 && idx < num_embeddings) {
+                        float* gw_row = gw_ptr + idx * embedding_dim;
+                        float* gout_row = gout_ptr + i * embedding_dim;
+                        for (int d = 0; d < embedding_dim; ++d) {
+                            gw_row[d] += gout_row[d];
+                        }
                     }
                 }
+                if (padding_idx >= 0 && padding_idx < num_embeddings) {
+                    std::fill(gw_ptr + padding_idx * embedding_dim,
+                              gw_ptr + (padding_idx + 1) * embedding_dim, 0.0f);
+                }
+            } else if (wdt == DataType::FP16) {
+                uint16_t* gout_ptr = reinterpret_cast<uint16_t*>(cpu_gout->storage->get_cpu_ptr());
+                uint16_t* gw_ptr = reinterpret_cast<uint16_t*>(cpu_gw->storage->get_cpu_ptr());
+                for (size_t i = 0; i < num_indices; ++i) {
+                    int idx = static_cast<int>(in_ptr[i]);
+                    if (idx >= 0 && idx < num_embeddings) {
+                        uint16_t* gw_row = gw_ptr + idx * embedding_dim;
+                        uint16_t* gout_row = gout_ptr + i * embedding_dim;
+                        for (int d = 0; d < embedding_dim; ++d) {
+                            float acc = emb_half_to_float(gw_row[d]) + emb_half_to_float(gout_row[d]);
+                            gw_row[d] = emb_float_to_half(acc);
+                        }
+                    }
+                }
+            } else {
+                auto gout_f32 = cpu_gout->cast(DataType::FP32);
+                if (!gout_f32->is_contiguous()) gout_f32 = gout_f32->contiguous();
+                auto tmp_gw = Tensor::create(weight_c->shape, Device(DeviceType::CPU, 0));
+                float* gout_ptr = reinterpret_cast<float*>(gout_f32->storage->get_cpu_ptr());
+                float* gw_ptr = reinterpret_cast<float*>(tmp_gw->storage->get_cpu_ptr());
+                std::fill(gw_ptr, gw_ptr + tmp_gw->numel(), 0.0f);
+                for (size_t i = 0; i < num_indices; ++i) {
+                    int idx = static_cast<int>(in_ptr[i]);
+                    if (idx >= 0 && idx < num_embeddings) {
+                        float* gw_row = gw_ptr + idx * embedding_dim;
+                        float* gout_row = gout_ptr + i * embedding_dim;
+                        for (int d = 0; d < embedding_dim; ++d) {
+                            gw_row[d] += gout_row[d];
+                        }
+                    }
+                }
+                cpu_gw = tmp_gw->cast(wdt);
             }
-            if (padding_idx >= 0 && padding_idx < num_embeddings) {
-                std::fill(gw_ptr + padding_idx * embedding_dim,
-                          gw_ptr + (padding_idx + 1) * embedding_dim, 0.0f);
-            }
+            grad_weight->copy_(cpu_gw);
         }
         std::vector<std::shared_ptr<Tensor>> res = { nullptr, grad_weight };
         return res;

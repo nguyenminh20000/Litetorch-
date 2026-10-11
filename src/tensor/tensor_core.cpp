@@ -871,7 +871,12 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> Tensor::max(int64_t 
 }
 
 float* Tensor::data_ptr() {
-    return storage->get_cpu_ptr() + offset;
+    size_t esz = storage->element_size();
+    if (esz == sizeof(float)) {
+        return storage->get_cpu_ptr() + offset;
+    }
+    char* base = reinterpret_cast<char*>(storage->get_cpu_ptr());
+    return reinterpret_cast<float*>(base + offset * esz);
 }
 
 cl_mem Tensor::gpu_data() {
