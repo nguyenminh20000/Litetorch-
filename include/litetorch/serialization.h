@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <map>
 
 namespace litetorch {
 
@@ -17,6 +18,9 @@ void load_parameters(const std::vector<std::shared_ptr<Tensor>>& params, const s
 
 void save_optimizer_state(optim::Optimizer* opt, const std::string& filepath);
 void load_optimizer_state(optim::Optimizer* opt, const std::string& filepath);
+
+void save_safetensors(const std::map<std::string, std::shared_ptr<Tensor>>& tensors, const std::string& filepath);
+std::map<std::string, std::shared_ptr<Tensor>> load_safetensors(const std::string& filepath);
 
 }
 
