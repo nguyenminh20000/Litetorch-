@@ -87,7 +87,7 @@ public:
         if (!out) return { nullptr };
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
-        auto grad_input = Tensor::create(out_c->shape, out_c->device);
+        auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
         StorageUseGuard guard({out_c->storage, gout_c->storage, grad_input->storage});
         int size = out_c->numel();
         bool run_gpu = false;

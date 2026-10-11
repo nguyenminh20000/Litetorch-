@@ -423,7 +423,11 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("cast", &Ops::cast, py::arg("a"), py::arg("target_dtype"));
     ops.def("fake_quantize", &Ops::fake_quantize, py::arg("input"), py::arg("scale"), py::arg("zero_point") = 0.0f, py::arg("bits") = 8);
     ops.def("mse_loss", &Ops::mse_loss);
-    ops.def("cross_entropy_loss", &Ops::cross_entropy_loss);
+    ops.def("cross_entropy_loss", &Ops::cross_entropy_loss,
+        py::arg("input"), py::arg("target"),
+        py::arg("weight") = nullptr,
+        py::arg("ignore_index") = -100,
+        py::arg("reduction") = "mean");
     ops.def("l1_loss", &Ops::l1_loss);
     ops.def("bce_loss", &Ops::bce_loss);
     ops.def("fused_linear_cross_entropy", &Ops::fused_linear_cross_entropy, py::arg("x"), py::arg("weight"), py::arg("target"), py::arg("bias") = nullptr);

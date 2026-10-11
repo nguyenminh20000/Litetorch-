@@ -37,16 +37,16 @@ lt.manual_seed(1)
 y = lt.randn([2, 8, 12], lt.Device("cpu"), True)
 
 c = ops.chunk(y, 5, -1)
-assert len(c) == 4, f"expected 4 chunks (ceil(12/5)=3), got {len(c)}"
+assert len(c) == 4, f"expected 4 chunks (chunk_size=ceil(12/5)=3), got {len(c)}"
 assert [list(p.shape) for p in c] == [[2, 8, 3]] * 4, [list(p.shape) for p in c]
 print("Uneven chunk shapes OK (fewer than requested, like torch)")
 
 c2 = ops.chunk(y, 6, 1)
-assert len(c2) == 6, f"expected 6 chunks, got {len(c2)}"
-assert [list(p.shape) for p in c2] == [[2, 1, 12]] * 6
+assert len(c2) == 4, f"expected 4 chunks (chunk_size=ceil(8/6)=2), got {len(c2)}"
+assert [list(p.shape) for p in c2] == [[2, 2, 12]] * 4
 yv = y.to_vector()
 cv = c2[2].to_vector()
-assert abs(cv[0] - yv[2 * 12]) < 1e-6
+assert abs(cv[0] - yv[4 * 12]) < 1e-6
 print("Dim-1 chunk values OK")
 
 c3 = ops.chunk(y, 20, 0)
