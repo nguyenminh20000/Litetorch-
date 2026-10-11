@@ -109,10 +109,8 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
     k_4d = k_norm->forward(k_4d_c);
 
     ensure_rope_cache(T, head_dim, x->device);
-    auto q_4d_cc = q_4d->is_contiguous() ? q_4d : q_4d->contiguous();
-    auto k_4d_cc = k_4d->is_contiguous() ? k_4d : k_4d->contiguous();
-    q_4d = Ops::rope(q_4d_cc, rope_cos_cache_, rope_sin_cache_);
-    k_4d = Ops::rope(k_4d_cc, rope_cos_cache_, rope_sin_cache_);
+    q_4d = Ops::rope(q_4d, rope_cos_cache_, rope_sin_cache_);
+    k_4d = Ops::rope(k_4d, rope_cos_cache_, rope_sin_cache_);
 
     auto attn_4d = Ops::flash_attention(q_4d, k_4d, v_4d, true);
     auto attn_t = attn_4d->transpose(1, 2);

@@ -178,8 +178,17 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
             throw std::runtime_error("[litetorch Error] Dimension mismatch in matmul");
         }
         int64_t batch_elements = a->numel() / in_features;
+        bool b_trans = (b->strides[0] == 1 && b->strides[1] == b->shape[0]);
+        bool trans_aware = false;
+        if (a->device.type == DeviceType::GPU) {
+            auto native = BackendDispatcher::get().get_backend();
+            trans_aware = native && native->is_available();
+        } else if (a->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            trans_aware = tpu && tpu->is_available();
+        }
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto b_c = b->is_contiguous() ? b : b->contiguous();
+        auto b_c = (trans_aware && b_trans) ? b : (b->is_contiguous() ? b : b->contiguous());
         auto a_flat = a_c->view({batch_elements, in_features});
         auto out_flat = matmul(a_flat, b_c);
         

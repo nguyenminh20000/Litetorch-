@@ -280,16 +280,11 @@ std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, cons
 std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const Device& device, bool requires_grad) {
     auto tensor = create(shape, device, requires_grad);
     if (tensor->device.type == DeviceType::GPU) {
-        if (auto native = native_gpu_backend()) {
-            std::vector<float> zeros_vec(tensor->numel(), 0.0f);
-            native->write(tensor->gpu_data(), tensor->numel() * sizeof(float), zeros_vec.data(), tensor->offset * sizeof(float));
-        } else {
-            void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
-            int size_val = static_cast<int>(tensor->numel());
-            int off_val = static_cast<int>(tensor->offset);
-            cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-            rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
-        }
+        void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
+        int size_val = static_cast<int>(tensor->numel());
+        int off_val = static_cast<int>(tensor->offset);
+        cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
+        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu && tensor->gpu_data()) {
@@ -721,7 +716,7 @@ std::shared_ptr<Tensor> Tensor::clone() {
         } else {
             cl_mem src_gpu = gpu_data();
             cl_mem dst_gpu = cloned->gpu_data();
-            rt_gpu_copy(src_gpu, dst_gpu, numel() * elem_sz, offset * elem_sz, 0);
+            rt_gpu_copy_async(src_gpu, dst_gpu, numel() * elem_sz, offset * elem_sz, 0);
         }
     } else {
         auto cont = contiguous();
@@ -865,7 +860,7 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
     }
     if (device.type == DeviceType::GPU) {
         if (src_cont->device.type == DeviceType::GPU) {
-            rt_gpu_copy(src_cont->gpu_data(), gpu_data(), numel() * elem_sz, src_cont->offset * elem_sz, offset * elem_sz);
+            rt_gpu_copy_async(src_cont->gpu_data(), gpu_data(), numel() * elem_sz, src_cont->offset * elem_sz, offset * elem_sz);
         } else {
             rt_gpu_write(gpu_data(), numel() * elem_sz, (char*)src_cont->storage->get_cpu_ptr() + src_cont->offset * elem_sz, offset * elem_sz);
         }

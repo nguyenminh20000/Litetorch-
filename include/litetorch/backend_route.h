@@ -68,6 +68,12 @@ inline void rt_gpu_copy(cl_mem src, cl_mem dst, size_t bytes, size_t src_offset 
     CLBackend::get().copy(src, dst, bytes, src_offset, dst_offset);
 }
 
+inline void rt_gpu_copy_async(cl_mem src, cl_mem dst, size_t bytes, size_t src_offset = 0, size_t dst_offset = 0) {
+    if (!src || !dst) return;
+    if (auto n = native_gpu_backend()) { n->copy_async((void*)src, (void*)dst, bytes, src_offset, dst_offset); return; }
+    CLBackend::get().copy(src, dst, bytes, src_offset, dst_offset);
+}
+
 inline void* rt_gpu_get_kernel(const std::string& prog, const std::string& src, const std::string& name) {
     if (auto n = native_gpu_backend()) return n->get_kernel(prog, src, name);
     return (void*)CLBackend::get().get_kernel(prog, src, name);

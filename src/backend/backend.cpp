@@ -261,6 +261,7 @@ public:
     void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) override { if (gpu_read_async_fn) gpu_read_async_fn(ptr, size, host_ptr, offset); else gpu_read_fn(ptr, size, host_ptr, offset); }
     void write_async(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) override { if (gpu_write_async_fn) gpu_write_async_fn(ptr, size, host_ptr, offset); else gpu_write_fn(ptr, size, host_ptr, offset); }
     void copy(void* src, void* dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0) override { gpu_copy_fn(src, dst, size, src_offset, dst_offset); }
+    void copy_async(void* src, void* dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0) override { if (gpu_copy_async_fn) gpu_copy_async_fn(src, dst, size, src_offset, dst_offset); else gpu_copy_fn(src, dst, size, src_offset, dst_offset); }
     void copy_peer(void* src, int src_device, void* dst, int dst_device, size_t size) override { if (gpu_copy_peer_fn) gpu_copy_peer_fn(src, src_device, dst, dst_device, size); else gpu_copy_fn(src, dst, size, 0, 0); }
     void finish() override { gpu_finish_fn(); }
     void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_sum_fn) gpu_sum_fn(A, a_off, B, b_off, size); }

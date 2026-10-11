@@ -1,8 +1,13 @@
 import litetorch as lt
 from litetorch import nn
 import time
+import sys
 
-print("=== GPTBlock MFU Benchmark (Wave 2: fused QKV + fused gate/up) ===")
+use_fp16 = "--fp16" in sys.argv
+dtype_name = "FP16 (autocast)" if use_fp16 else "FP32"
+peak = 65.0 if use_fp16 else 8.1
+
+print(f"=== GPTBlock MFU Benchmark [{dtype_name}] ===")
 
 device = lt.Device("cuda:0")
 B, T = 1, 512
@@ -14,6 +19,8 @@ total_params = sum(p.numel() for p in params)
 print(f"Params per block: {total_params:,}")
 
 x = lt.randn([B, T, 2560], device, True)
+
+guard = lt.amp.AutocastGuard(True) if use_fp16 else None
 
 for _ in range(3):
     out = block.forward(x)
@@ -35,11 +42,13 @@ for _ in range(n_iters):
 lt.cuda_synchronize()
 t1 = time.perf_counter()
 
+if guard is not None:
+    del guard
+
 ms_per_iter = (t1 - t0) / n_iters * 1000
 print(f"Forward+backward per iter: {ms_per_iter:.1f} ms")
 
-flops_per_iter = 2 * 2 * 6 * total_params * B * T
+flops_per_iter = 6 * total_params * B * T
 tflops = flops_per_iter / (ms_per_iter / 1000) / 1e12
-print(f"Achieved: {tflops:.1f} TFLOPS")
-print(f"MFU vs T4 peak 65 TFLOPS (FP16): {tflops / 65 * 100:.1f}%")
-print(f"MFU vs T4 sustained ~40 TFLOPS: {tflops / 40 * 100:.1f}%")
+print(f"Achieved: {tflops:.2f} TFLOPS")
+print(f"MFU vs T4 {dtype_name} peak {peak} TFLOPS: {tflops / peak * 100:.1f}%")
