@@ -1534,6 +1534,13 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
 
     auto out = Tensor::create(out_shape, tensors[0]->device);
     storages.push_back(out->storage);
+    std::vector<std::shared_ptr<Tensor>> inputs;
+    inputs.reserve(tensors.size());
+    for (auto& t : tensors) {
+        auto tc = t->is_contiguous() ? t : t->contiguous();
+        inputs.push_back(tc);
+        storages.push_back(tc->storage);
+    }
     StorageUseGuard guard(storages);
 
     bool run_gpu = false;
@@ -1542,7 +1549,7 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
         auto backend = BackendDispatcher::get().get_backend();
         if (backend && backend->is_available()) {
             run_gpu = true;
-            for (auto& t : tensors) {
+            for (auto& t : inputs) {
                 int64_t outer_size = 1;
                 for (int64_t d = 0; d < dim; ++d) outer_size *= t->shape[d];
                 int64_t inner_size = 1;
@@ -1559,7 +1566,7 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
         float* dst_ptr = cpu_out->data_ptr();
         offset = 0;
 
-        for (auto& t : tensors) {
+        for (auto& t : inputs) {
             auto cpu_t = t->to(Device(DeviceType::CPU, 0));
             float* src_ptr = cpu_t->data_ptr();
             int64_t outer_size = 1;

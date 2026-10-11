@@ -1,4 +1,5 @@
 import litetorch as lt
+from litetorch import Ops
 import gc
 
 def test_checkpoint_detach():
@@ -6,9 +7,9 @@ def test_checkpoint_detach():
     x = lt.Tensor.from_vector([1.0, 2.0, 3.0, 4.0], [2, 2], d, True)
     w = lt.Tensor.from_vector([0.5, 0.5, 0.5, 0.5], [2, 2], d, True)
     def fn(inp):
-        return lt.ops.matmul(inp, w)
+        return Ops.matmul(inp, w)
     y = lt.checkpoint(fn, x)
-    y2 = lt.ops.matmul(x, w)
+    y2 = Ops.matmul(x, w)
     assert y.to_vector() == y2.to_vector(), "checkpoint forward mismatch"
     print("[PASS] checkpoint forward matches")
 
@@ -17,9 +18,9 @@ def test_checkpoint_grad():
     x = lt.Tensor.from_vector([1.0, 2.0], [1, 2], d, True)
     w = lt.Tensor.from_vector([3.0, 4.0, 5.0, 6.0], [2, 2], d, True)
     def fn(inp):
-        return lt.ops.matmul(inp, w)
+        return Ops.matmul(inp, w)
     y = lt.checkpoint(fn, x)
-    s = lt.ops.sum(y)
+    s = Ops.sum(y)
     s.backward()
     assert x.grad is not None, "x.grad is None"
     assert w.grad is not None, "w.grad is None"

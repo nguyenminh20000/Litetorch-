@@ -1,5 +1,5 @@
 import litetorch as lt
-from litetorch import nn
+from litetorch import nn, Ops
 
 print("=== GPTBlock Llama-3 style verification ===")
 
@@ -41,7 +41,7 @@ print("Causality OK - future tokens do not affect past positions")
 print("\n=== Gradient check ===")
 xg = lt.Tensor.create([1, 4, 64], lt.Device("cpu"), True)
 og = sm.forward(xg)
-loss = og.sum()
+loss = Ops.sum(og)
 loss.backward()
 has_grad = sum(1 for p in sm.parameters() if p.grad is not None)
 print(f"Params with grad: {has_grad}/{len(sm.parameters())}")
