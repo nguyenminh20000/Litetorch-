@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -21,8 +22,8 @@ inline bool cudnn_disabled() {
     return disabled;
 }
 template <KernelID ID>
-inline cl_kernel cached_kernel() {
-    static cl_kernel k = CLBackend::get().get_kernel(ID);
+inline void* cached_kernel() {
+    static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
 inline void* get_native_kernel_cached(const char* name) {
@@ -112,7 +113,7 @@ public:
                     int gout_off = relu_gout_c->offset;
                     cl_mem gin_mem = relu_masked->gpu_data();
                     int gin_off = relu_masked->offset;
-                    CLBackend::get().launch(relu_bwd_k, {static_cast<size_t>(rsize)}, {},
+                    rt_gpu_launch(relu_bwd_k, {static_cast<size_t>(rsize)}, {},
                         {&in_mem, &in_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &rsize},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
                 }
@@ -125,7 +126,7 @@ public:
                     m_ptr[i] = o_ptr[i] > 0.0f ? g_ptr[i] : 0.0f;
                 });
                 if (relu_masked->device.type == DeviceType::GPU) {
-                    CLBackend::get().write(relu_masked->gpu_data(), rsize * sizeof(float), m_ptr);
+                    rt_gpu_write(relu_masked->gpu_data(), rsize * sizeof(float), m_ptr);
                 }
             }
             gout = relu_masked;
@@ -192,7 +193,7 @@ public:
                         cl_mem gb_mem = grad_bias->gpu_data();
                         int gb_off = grad_bias->offset;
                         int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
-                        CLBackend::get().launch(gb_k, {(size_t)C_out}, {},
+                        rt_gpu_launch(gb_k, {(size_t)C_out}, {},
                             {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_v, &co_v, &ho_v, &wo_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
@@ -221,7 +222,7 @@ public:
                     int g2_off = gout_2d->offset;
                     int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
                     size_t total = (size_t)C_out * (size_t)NHW;
-                    CLBackend::get().launch(transp_inv_k, {total}, {},
+                    rt_gpu_launch(transp_inv_k, {total}, {},
                         {&gout_mem, &gout_off, &g2_mem, &g2_off, &n_v, &co_v, &ho_v, &wo_v},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
@@ -233,7 +234,7 @@ public:
                     int kh_v = KH, kw_v = KW, pad_v = padding, st_v = stride;
                     int ho_v = H_out, wo_v = W_out;
                     size_t total = (size_t)K * (size_t)NHW;
-                    CLBackend::get().launch(im2col_k, {total}, {},
+                    rt_gpu_launch(im2col_k, {total}, {},
                         {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
                         {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
                 }
@@ -254,7 +255,7 @@ public:
                         int d_off = col_t->offset;
                         int rows_v = (int)K, cols_v = (int)NHW;
                         size_t total = (size_t)K * (size_t)NHW;
-                        CLBackend::get().launch(transpose_k, {total}, {},
+                        rt_gpu_launch(transpose_k, {total}, {},
                             {&s_mem, &s_off, &d_mem, &d_off, &rows_v, &cols_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
                     }
@@ -268,7 +269,7 @@ public:
                         int m_v = (int)C_out, k_v = (int)NHW, n_v = (int)K;
                         size_t gx = (size_t)((m_v + 15) / 16 * 16);
                         size_t gy = (size_t)((n_v + 15) / 16 * 16);
-                        CLBackend::get().launch(matmul_k, {gx, gy}, {16, 16},
+                        rt_gpu_launch(matmul_k, {gx, gy}, {16, 16},
                             {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &m_v, &k_v, &n_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
@@ -291,7 +292,7 @@ public:
                         int d_off = w_t->offset;
                         int rows_v = (int)C_out, cols_v = (int)K;
                         size_t total = (size_t)C_out * (size_t)K;
-                        CLBackend::get().launch(transpose_k, {total}, {},
+                        rt_gpu_launch(transpose_k, {total}, {},
                             {&s_mem, &s_off, &d_mem, &d_off, &rows_v, &cols_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
                     }
@@ -305,14 +306,14 @@ public:
                         int m_v = (int)K, k_v = (int)C_out, n_v = (int)NHW;
                         size_t gx = (size_t)((m_v + 15) / 16 * 16);
                         size_t gy = (size_t)((n_v + 15) / 16 * 16);
-                        CLBackend::get().launch(matmul_k, {gx, gy}, {16, 16},
+                        rt_gpu_launch(matmul_k, {gx, gy}, {16, 16},
                             {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &m_v, &k_v, &n_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
                 }
                 {
                     std::vector<float> zeros(grad_input->numel(), 0.0f);
-                    CLBackend::get().write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(grad_input->offset) * sizeof(float));
+                    rt_gpu_write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(grad_input->offset) * sizeof(float));
                 }
                 {
                     cl_mem dc_mem = dcol->gpu_data();
@@ -323,7 +324,7 @@ public:
                     int kh_v = KH, kw_v = KW, pad_v = padding, st_v = stride;
                     int ho_v = H_out, wo_v = W_out;
                     size_t total = (size_t)K * (size_t)NHW;
-                    CLBackend::get().launch(col2im_k, {total}, {},
+                    rt_gpu_launch(col2im_k, {total}, {},
                         {&dc_mem, &dc_off, &gin_mem, &gin_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
@@ -332,7 +333,7 @@ public:
                     if (kernel_gb) {
                         cl_mem gb_mem = grad_bias->gpu_data();
                         int gb_off = grad_bias->offset;
-                        CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
+                        rt_gpu_launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
                             {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &H_out, &W_out},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
@@ -355,7 +356,7 @@ public:
                     }
                     cl_mem gb_mem = grad_bias->gpu_data();
                     int gb_off = grad_bias->offset;
-                    CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
+                    rt_gpu_launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
                         {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &H_out, &W_out},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
@@ -365,7 +366,7 @@ public:
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
                     }
                     int total_gw = C_out * C_in * KH * KW;
-                    CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
+                    rt_gpu_launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                         {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
@@ -375,7 +376,7 @@ public:
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
                     }
                     int total_gdx = N * C_in * H_in * W_in;
-                    CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
+                    rt_gpu_launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                         {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
@@ -531,7 +532,7 @@ public:
                 }
                 cl_mem gb_mem = grad_bias->gpu_data();
                 int gb_off = grad_bias->offset;
-                CLBackend::get().launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
+                rt_gpu_launch(kernel_gb, {static_cast<size_t>(C_out)}, {},
                     {&gout_mem, &gout_off, &gb_mem, &gb_off, &N, &C_out, &D_out, &H_out, &W_out},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -542,7 +543,7 @@ public:
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardWeight kernel not available");
                 }
                 int total_gw = C_out * C_in * KD * KH * KW;
-                CLBackend::get().launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
+                rt_gpu_launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -553,7 +554,7 @@ public:
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardInput kernel not available");
                 }
                 int total_gdx = N * C_in * D_in * H_in * W_in;
-                CLBackend::get().launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
+                rt_gpu_launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                     {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -743,7 +744,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                     int rsize = N * C_out * H_out * W_out;
                     cl_mem rm_mem = out->gpu_data();
                     int rm_off = out->offset;
-                    CLBackend::get().launch(relu_k, {static_cast<size_t>(rsize)}, {},
+                    rt_gpu_launch(relu_k, {static_cast<size_t>(rsize)}, {},
                         {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
                 }
@@ -770,7 +771,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                 cl_mem col_mem = col->gpu_data();
                 int col_off = col->offset;
                 size_t total = (size_t)K * (size_t)NHW;
-                CLBackend::get().launch(im2col_k, {total}, {},
+                rt_gpu_launch(im2col_k, {total}, {},
                     {&in_mem, &in_off, &n_v, &ci_v, &hi_v, &wi_v, &kh_v, &kw_v, &pad_v, &st_v, &ho_v, &wo_v, &col_mem, &col_off},
                     {sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int)});
             }
@@ -791,7 +792,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                 int out_off = out->offset;
                 int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
                 size_t total = (size_t)N * (size_t)C_out * (size_t)HW_out;
-                CLBackend::get().launch(epilogue_k, {total}, {},
+                rt_gpu_launch(epilogue_k, {total}, {},
                     {&tmp_mem, &tmp_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &fuse_relu, &n_v, &co_v, &ho_v, &wo_v},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -814,7 +815,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                 int out_off = out->offset;
                 int total_threads = N * C_out * H_out * W_out;
 
-                CLBackend::get().launch(kernel_conv, {static_cast<size_t>(total_threads)}, {},
+                rt_gpu_launch(kernel_conv, {static_cast<size_t>(total_threads)}, {},
                     {&in_mem, &in_off, &w_mem, &w_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off,
                      &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -826,7 +827,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
                     int rsize = N * C_out * H_out * W_out;
                     cl_mem rm_mem = out->gpu_data();
                     int rm_off = out->offset;
-                    CLBackend::get().launch(relu_k, {static_cast<size_t>(rsize)}, {},
+                    rt_gpu_launch(relu_k, {static_cast<size_t>(rsize)}, {},
                         {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
                 }
@@ -953,7 +954,7 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         int out_off = out->offset;
         int has_bias = bias_c ? 1 : 0;
         int total_threads = N * C_out * D_out * H_out * W_out;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                 {&in_mem, &in_off, &w_mem, &w_off, &b_mem, &b_off, &has_bias, &out_mem, &out_off,
                                  &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
                                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int),

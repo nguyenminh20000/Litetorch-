@@ -2,6 +2,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/autograd.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include <cmath>
 #include <algorithm>
@@ -67,13 +68,13 @@ std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale
     float clip_max = bound;
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::FakeQuantizeForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::FakeQuantizeForward);
         int size = out->numel();
         cl_mem a_mem = input_c->gpu_data();
         cl_mem b_mem = out->gpu_data();
         int a_off = input_c->offset;
         int b_off = out->offset;
-        CLBackend::get().launch(
+        rt_gpu_launch(
             kernel,
             {static_cast<size_t>(size)},
             {},

@@ -2,6 +2,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/autograd.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include <random>
 #include <algorithm>
@@ -47,7 +48,7 @@ public:
         StorageUseGuard guard({input_c->storage, weight_c->storage, gout_c->storage, grad_weight->storage});
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_backward");
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_backward");
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem gout_mem = gout_c->gpu_data();
@@ -59,9 +60,9 @@ public:
             int embedding_dim_val = embedding_dim;
 
             std::vector<float> zeros(grad_weight->numel(), 0.0f);
-            CLBackend::get().write(gw_mem, zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(gw_off) * sizeof(float));
+            rt_gpu_write(gw_mem, zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(gw_off) * sizeof(float));
             int total_threads = num_indices;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                 {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &num_indices, &num_embeddings_val, &embedding_dim_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
@@ -111,7 +112,7 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
     StorageUseGuard guard({input_c->storage, weight_c->storage, out->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_forward");
+        auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_forward");
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem w_mem = weight_c->gpu_data();
@@ -123,7 +124,7 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
         int embedding_dim_val = embedding_dim;
 
         int total_threads = num_indices * embedding_dim_val;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &num_indices, &num_embeddings_val, &embedding_dim_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
     } else {

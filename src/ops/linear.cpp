@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/amp.h"
 #include <algorithm>
 #include <cstdlib>
@@ -253,9 +254,9 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         } else {
             void* kernel = nullptr;
             if (a_c->dtype == DataType::FP16) {
-                kernel = CLBackend::get().get_kernel("", "", "matmul_half_kernel");
+                kernel = rt_gpu_get_kernel("", "", "matmul_half_kernel");
             } else {
-                kernel = CLBackend::get().get_kernel(KernelID::MatMul);
+                kernel = rt_gpu_get_kernel_by_id(KernelID::MatMul);
             }
             if (kernel) {
                 run_gpu = true;
@@ -272,7 +273,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                     static_cast<size_t>((N + 15) / 16 * 16)
                 };
                 
-                CLBackend::get().launch(kernel, {global_sz[0], global_sz[1]}, {local_sz[0], local_sz[1]},
+                rt_gpu_launch(kernel, {global_sz[0], global_sz[1]}, {local_sz[0], local_sz[1]},
                                         {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &M, &K, &N},
                                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -312,7 +313,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                 }
             });
             if (out->device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), C);
+                rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), C);
             } else if (out->device.type == DeviceType::TPU) {
                 auto tpu = BackendDispatcher::get().get_tpu_backend();
                 if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), C);
@@ -486,9 +487,9 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         } else {
             void* kernel = nullptr;
             if (a_c->dtype == DataType::FP16) {
-                kernel = CLBackend::get().get_kernel("", "", "bmm_half_kernel");
+                kernel = rt_gpu_get_kernel("", "", "bmm_half_kernel");
             } else {
-                kernel = CLBackend::get().get_kernel(KernelID::BMM);
+                kernel = rt_gpu_get_kernel_by_id(KernelID::BMM);
             }
             if (kernel) {
                 run_gpu = true;
@@ -504,7 +505,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                     static_cast<size_t>((N + 15) / 16 * 16),
                     static_cast<size_t>(B)
                 };
-                CLBackend::get().launch(kernel, {global_sz[0], global_sz[1], global_sz[2]}, {local_sz[0], local_sz[1], local_sz[2]},
+                rt_gpu_launch(kernel, {global_sz[0], global_sz[1], global_sz[2]}, {local_sz[0], local_sz[1], local_sz[2]},
                                         {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &M, &K, &N, &B},
                                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -542,7 +543,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 }
             });
             if (out->device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), C);
+                rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), C);
             } else if (out->device.type == DeviceType::TPU) {
                 auto tpu = BackendDispatcher::get().get_tpu_backend();
                 if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), C);

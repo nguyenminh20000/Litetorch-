@@ -2,6 +2,7 @@
 #define LITETORCH_FSDP_H
 
 #include "litetorch/tensor.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/nn.h"
 #include "litetorch/distributed.h"
 #include <vector>
@@ -53,10 +54,10 @@ public:
                         );
                     }
                 } else if (CLBackend::get().is_available()) {
-                    auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch::litetorch_kernels_src, "fill_zero");
+                    auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch::litetorch_kernels_src, "fill_zero");
                     int size_val = static_cast<int>(shard_size);
                     cl_mem gpu_ptr = sharded_storage->get_gpu_ptr();
-                    CLBackend::get().launch(kernel, {shard_size}, {}, {&gpu_ptr, &size_val}, {sizeof(cl_mem), sizeof(int)});
+                    rt_gpu_launch(kernel, {shard_size}, {}, {&gpu_ptr, &size_val}, {sizeof(cl_mem), sizeof(int)});
 
                     size_t start_idx = rank * shard_size;
                     size_t copy_elements = 0;
@@ -64,7 +65,7 @@ public:
                         copy_elements = std::min(shard_size, total_size - start_idx);
                     }
                     if (copy_elements > 0) {
-                        CLBackend::get().copy(
+                        rt_gpu_copy(
                             p->storage->get_gpu_ptr(),
                             gpu_ptr,
                             copy_elements * p->storage->element_size(),

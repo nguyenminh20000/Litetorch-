@@ -1,6 +1,7 @@
 #include "litetorch/nn.h"
 #include "litetorch/ops.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include <random>
 
 namespace litetorch {
@@ -16,7 +17,7 @@ std::shared_ptr<Tensor> Dropout::forward(std::shared_ptr<Tensor> input) {
 
     if (input->device.type == DeviceType::GPU) {
         auto mask = Tensor::create(input->shape, input->device);
-        auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "generate_dropout_mask");
+        auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "generate_dropout_mask");
         cl_mem mask_mem = mask->gpu_data();
         int mask_off = mask->offset;
         float scale = 1.0f / (1.0f - p);
@@ -24,7 +25,7 @@ std::shared_ptr<Tensor> Dropout::forward(std::shared_ptr<Tensor> input) {
         std::mt19937& gen = get_generator();
         unsigned int seed = gen();
 
-        CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
             {&mask_mem, &mask_off, &p, &scale, &seed, &size},
             {sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(unsigned int), sizeof(int)});
 

@@ -2,6 +2,7 @@
 #include "litetorch/distributed.h"
 #include "litetorch/autograd.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/allocator.h"
 #include <cstring>
 #include <unordered_set>
@@ -32,12 +33,7 @@ public:
         for (size_t i = 0; i < full_params.size(); ++i) {
             auto full = full_params[i];
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
-                auto backend = BackendDispatcher::get().get_backend();
-                if (backend && backend->is_available()) {
-                    full->storage->gpu_data = (cl_mem)backend->allocate(full->storage->size);
-                } else if (CLBackend::get().is_available()) {
-                    full->storage->gpu_data = CLBackend::get().allocate(full->storage->size);
-                }
+                full->storage->gpu_data = rt_gpu_allocate(full->storage->size);
             } else if (full->device.type == DeviceType::CPU && !full->storage->cpu_data) {
                 full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
             }
@@ -129,12 +125,7 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
         for (size_t i = 0; i < full_params->size(); ++i) {
             auto full = (*full_params)[i];
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
-                auto backend = BackendDispatcher::get().get_backend();
-                if (backend && backend->is_available()) {
-                    full->storage->gpu_data = (cl_mem)backend->allocate(full->storage->size);
-                } else if (CLBackend::get().is_available()) {
-                    full->storage->gpu_data = CLBackend::get().allocate(full->storage->size);
-                }
+                full->storage->gpu_data = rt_gpu_allocate(full->storage->size);
             } else if (full->device.type == DeviceType::CPU && !full->storage->cpu_data) {
                 full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
             }

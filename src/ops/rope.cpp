@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include <cmath>
 
 namespace litetorch {
@@ -57,8 +58,8 @@ public:
 
             int b_val = B, h_val = H, t_val = T, d_val = D;
 
-            auto kernel = CLBackend::get().get_kernel(KernelID::RopeBackward);
-            CLBackend::get().launch(kernel, {static_cast<size_t>(B * H * T * D)}, {},
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::RopeBackward);
+            rt_gpu_launch(kernel, {static_cast<size_t>(B * H * T * D)}, {},
                 {&dy_mem, &dy_off, &cos_mem, &cos_off, &sin_mem, &sin_off, &dx_mem, &dx_off, &b_val, &h_val, &t_val, &d_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
@@ -127,8 +128,8 @@ std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> 
 
         int b_val = B, h_val = H, t_val = T, d_val = D;
 
-        auto kernel = CLBackend::get().get_kernel(KernelID::RopeForward);
-        CLBackend::get().launch(kernel, {static_cast<size_t>(B * H * T * D)}, {},
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::RopeForward);
+        rt_gpu_launch(kernel, {static_cast<size_t>(B * H * T * D)}, {},
             {&x_mem, &x_off, &cos_mem, &cos_off, &sin_mem, &sin_off, &y_mem, &y_off, &b_val, &h_val, &t_val, &d_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
     } else {

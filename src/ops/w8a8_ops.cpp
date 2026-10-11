@@ -1,6 +1,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -52,7 +53,7 @@ std::shared_ptr<Tensor> w8a8_matmul(
     StorageUseGuard guard({x_c->storage, w_c->storage, out->storage});
 
     if (x_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::W8A8MatMul);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::W8A8MatMul);
         cl_mem x_mem = x_c->gpu_data();
         cl_mem w_mem = w_c->gpu_data();
         cl_mem out_mem = out->gpu_data();
@@ -69,7 +70,7 @@ std::shared_ptr<Tensor> w8a8_matmul(
             static_cast<size_t>((N + 15) / 16 * 16)
         };
 
-        CLBackend::get().launch(kernel, {global_sz[0], global_sz[1]}, {local_sz[0], local_sz[1]},
+        rt_gpu_launch(kernel, {global_sz[0], global_sz[1]}, {local_sz[0], local_sz[1]},
                                 {&x_mem, &x_off, &w_mem, &w_off, &out_mem, &out_off, &M_val, &K_val, &N_val, &x_scale, &w_scale},
                                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(float)});
     } else {

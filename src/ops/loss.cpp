@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -41,7 +42,7 @@ public:
         float scale = 2.0f / input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::MseLossBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::MseLossBackward);
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem tgt_mem = target_c->gpu_data();
@@ -51,7 +52,7 @@ public:
             cl_mem gin_mem = grad_input->gpu_data();
             int gin_off = grad_input->offset;
             int size = input_c->numel();
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
@@ -82,7 +83,7 @@ public:
         StorageUseGuard guard({input_c->storage, target_c->storage, gout_c->storage, grad_input->storage});
 
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::CrossEntropyLossBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::CrossEntropyLossBackward);
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem tgt_mem = target_c->gpu_data();
@@ -92,7 +93,7 @@ public:
             cl_mem gin_mem = grad_input->gpu_data();
             int gin_off = grad_input->offset;
 
-            CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(N)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &N, &C},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
         } else {
@@ -145,7 +146,7 @@ public:
         int size = input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::L1LossBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::L1LossBackward);
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem tgt_mem = target_c->gpu_data();
@@ -155,7 +156,7 @@ public:
             cl_mem gin_mem = grad_input->gpu_data();
             int gin_off = grad_input->offset;
             float scale = 1.0f / size;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
@@ -186,7 +187,7 @@ public:
         int size = input_c->numel();
         StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::BceLossBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::BceLossBackward);
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem tgt_mem = target_c->gpu_data();
@@ -196,7 +197,7 @@ public:
             cl_mem gin_mem = grad_input->gpu_data();
             int gin_off = grad_input->offset;
             float scale = 1.0f / size;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
@@ -230,7 +231,7 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
     float inv_n = 1.0f / size;
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::L1LossForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::L1LossForward);
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem tgt_mem = target_c->gpu_data();
@@ -239,10 +240,10 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
         int out_off = out->offset;
         int size_val = size;
         float zero = 0.0f;
-        CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+        rt_gpu_write(out_mem, sizeof(float), &zero, out_off);
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
-        CLBackend::get().launch(kernel, {blocks * 256}, {256},
+        rt_gpu_launch(kernel, {blocks * 256}, {256},
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
@@ -279,7 +280,7 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
     float inv_n = 1.0f / size;
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::BceLossForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::BceLossForward);
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem tgt_mem = target_c->gpu_data();
@@ -288,10 +289,10 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         int out_off = out->offset;
         int size_val = size;
         float zero = 0.0f;
-        CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+        rt_gpu_write(out_mem, sizeof(float), &zero, out_off);
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
-        CLBackend::get().launch(kernel, {blocks * 256}, {256},
+        rt_gpu_launch(kernel, {blocks * 256}, {256},
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
@@ -338,7 +339,7 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
     float inv_n = 1.0f / size;
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::MseLossForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::MseLossForward);
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem tgt_mem = target_c->gpu_data();
@@ -347,10 +348,10 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         int out_off = out->offset;
         int size_val = size;
         float zero = 0.0f;
-        CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+        rt_gpu_write(out_mem, sizeof(float), &zero, out_off);
         size_t blocks = std::min(static_cast<size_t>(32), (size + 255) / 256);
         if (blocks < 1) blocks = 1;
-        CLBackend::get().launch(kernel, {blocks * 256}, {256},
+        rt_gpu_launch(kernel, {blocks * 256}, {256},
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
@@ -392,7 +393,7 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
     StorageUseGuard guard({input_c->storage, target_c->storage, out->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = CLBackend::get().get_kernel(KernelID::CrossEntropyLossForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::CrossEntropyLossForward);
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem tgt_mem = target_c->gpu_data();
@@ -400,9 +401,9 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
         cl_mem out_mem = out->gpu_data();
         int out_off = out->offset;
         float zero = 0.0f;
-        CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+        rt_gpu_write(out_mem, sizeof(float), &zero, out_off);
         float inv_n = 1.0f / N;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(N)}, {},
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &N, &C, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {

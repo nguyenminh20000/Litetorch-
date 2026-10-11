@@ -1,5 +1,6 @@
 #include "litetorch/distributed.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/platform.h"
 #include <cstring>
 #include <stdexcept>
@@ -177,7 +178,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
     if (N * elem_sz > shm_buffer_size_) return false;
 
     if (tensor->device.type == DeviceType::GPU) {
-        CLBackend::get().read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_], tensor->offset * elem_sz);
+        rt_gpu_read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_], tensor->offset * elem_sz);
     } else {
         std::memcpy(shm_buffers_[rank_], tensor->data_ptr(), N * elem_sz);
     }
@@ -202,7 +203,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
             acc[j] = float_to_half(sum);
         }
         if (tensor->device.type == DeviceType::GPU) {
-            CLBackend::get().write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
         } else {
             std::memcpy(tensor->data_ptr(), acc.data(), N * elem_sz);
         }
@@ -220,7 +221,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
             acc[j] = (uint16_t)(val >> 16);
         }
         if (tensor->device.type == DeviceType::GPU) {
-            CLBackend::get().write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
         } else {
             std::memcpy(tensor->data_ptr(), acc.data(), N * elem_sz);
         }
@@ -234,7 +235,7 @@ bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor) {
             acc[j] = sum;
         }
         if (tensor->device.type == DeviceType::GPU) {
-            CLBackend::get().write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, acc.data(), tensor->offset * elem_sz);
         } else {
             std::memcpy(tensor->data_ptr(), acc.data(), N * elem_sz);
         }
@@ -260,7 +261,7 @@ bool ProcessGroup::broadcast_shm(std::shared_ptr<Tensor> tensor, int src) {
 
     if (rank_ == src) {
         if (tensor->device.type == DeviceType::GPU) {
-            CLBackend::get().read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_], tensor->offset * elem_sz);
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_], tensor->offset * elem_sz);
         } else {
             std::memcpy(shm_buffers_[rank_], tensor->data_ptr(), N * elem_sz);
         }
@@ -277,7 +278,7 @@ bool ProcessGroup::broadcast_shm(std::shared_ptr<Tensor> tensor, int src) {
 
     if (rank_ != src) {
         if (tensor->device.type == DeviceType::GPU) {
-            CLBackend::get().write(tensor->gpu_data(), N * elem_sz, shm_buffers_[src], tensor->offset * elem_sz);
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, shm_buffers_[src], tensor->offset * elem_sz);
         } else {
             std::memcpy(tensor->data_ptr(), shm_buffers_[src], N * elem_sz);
         }
@@ -301,7 +302,7 @@ bool ProcessGroup::all_gather_shm(std::shared_ptr<Tensor> shard, std::shared_ptr
     if (total_bytes > shm_buffer_size_) return false;
 
     if (shard->device.type == DeviceType::GPU) {
-        CLBackend::get().read(shard->gpu_data(), S * elem_sz, shm_buffers_[rank_], shard->offset * elem_sz);
+        rt_gpu_read(shard->gpu_data(), S * elem_sz, shm_buffers_[rank_], shard->offset * elem_sz);
     } else {
         std::memcpy(shm_buffers_[rank_], shard->data_ptr(), S * elem_sz);
     }
@@ -324,7 +325,7 @@ bool ProcessGroup::all_gather_shm(std::shared_ptr<Tensor> shard, std::shared_ptr
 
     if (full_eff->device.type == DeviceType::GPU) {
         for (int r = 0; r < world_size_; ++r) {
-            CLBackend::get().write(full_eff->gpu_data(), S * elem_sz, shm_buffers_[r], (full_eff->offset + r * S) * elem_sz);
+            rt_gpu_write(full_eff->gpu_data(), S * elem_sz, shm_buffers_[r], (full_eff->offset + r * S) * elem_sz);
         }
     } else {
         for (int r = 0; r < world_size_; ++r) {
@@ -335,8 +336,8 @@ bool ProcessGroup::all_gather_shm(std::shared_ptr<Tensor> shard, std::shared_ptr
     if (need_pad) {
         if (full->device.type == DeviceType::GPU) {
             std::vector<char> tmp(N * elem_sz);
-            CLBackend::get().read(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
-            CLBackend::get().write(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
+            rt_gpu_read(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
+            rt_gpu_write(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
         } else {
             std::memcpy(full->data_ptr(), full_eff->data_ptr(), N * elem_sz);
         }
@@ -365,11 +366,11 @@ bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared
         full_eff = Tensor::create({(int64_t)(S * world_size_)}, full->device, false, full->dtype);
         if (full->device.type == DeviceType::GPU) {
             std::vector<char> tmp(N * elem_sz);
-            CLBackend::get().read(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
-            CLBackend::get().write(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
+            rt_gpu_read(full->gpu_data(), N * elem_sz, tmp.data(), full->offset * elem_sz);
+            rt_gpu_write(full_eff->gpu_data(), N * elem_sz, tmp.data(), full_eff->offset * elem_sz);
             if (total_bytes > N * elem_sz) {
                 std::vector<char> zeros(total_bytes - N * elem_sz, 0);
-                CLBackend::get().write(full_eff->gpu_data(), zeros.size(), zeros.data(), (full_eff->offset * elem_sz) + N * elem_sz);
+                rt_gpu_write(full_eff->gpu_data(), zeros.size(), zeros.data(), (full_eff->offset * elem_sz) + N * elem_sz);
             }
         } else {
             std::memcpy(full_eff->data_ptr(), full->data_ptr(), N * elem_sz);
@@ -378,7 +379,7 @@ bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared
     }
 
     if (full_eff->device.type == DeviceType::GPU) {
-        CLBackend::get().read(full_eff->gpu_data(), total_bytes, shm_buffers_[rank_], full_eff->offset * elem_sz);
+        rt_gpu_read(full_eff->gpu_data(), total_bytes, shm_buffers_[rank_], full_eff->offset * elem_sz);
     } else {
         std::memcpy(shm_buffers_[rank_], full_eff->data_ptr(), total_bytes);
     }
@@ -402,7 +403,7 @@ bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared
             acc[j] = sum;
         }
         if (shard->device.type == DeviceType::GPU) {
-            CLBackend::get().write(shard->gpu_data(), S * elem_sz, acc.data(), shard->offset * elem_sz);
+            rt_gpu_write(shard->gpu_data(), S * elem_sz, acc.data(), shard->offset * elem_sz);
         } else {
             std::memcpy(shard->data_ptr(), acc.data(), S * elem_sz);
         }

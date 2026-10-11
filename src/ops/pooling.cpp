@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
@@ -12,8 +13,8 @@ extern const std::string litetorch_kernels_src;
 
 namespace {
 template <KernelID ID>
-inline cl_kernel cached_kernel() {
-    static cl_kernel k = CLBackend::get().get_kernel(ID);
+inline void* cached_kernel() {
+    static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
 struct StorageUseGuard {
@@ -65,7 +66,7 @@ public:
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+            rt_gpu_launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = cached_kernel<KernelID::MaxPool2dBackward>();
             cl_mem ind_mem = ind_c->gpu_data();
@@ -74,7 +75,7 @@ public:
             int gout_off = gout_c->offset;
 
             int total_threads = N * C * H_out * W_out;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                     {&ind_mem, &ind_off, &gout_mem, &gout_off, &gin_mem, &gin_off,
                                      &N, &C, &H_in, &W_in, &H_out, &W_out},
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -139,7 +140,7 @@ public:
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+            rt_gpu_launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = cached_kernel<KernelID::MaxPool3dBackward>();
             cl_mem ind_mem = ind_c->gpu_data();
@@ -148,7 +149,7 @@ public:
             int gout_off = gout_c->offset;
 
             int total_threads = N * C * D_out * H_out * W_out;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                     {&ind_mem, &ind_off, &gout_mem, &gout_off, &gin_mem, &gin_off,
                                      &N, &C, &D_in, &H_in, &W_in, &D_out, &H_out, &W_out},
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -202,14 +203,14 @@ public:
             int gin_size = grad_input->numel();
             int gin_off = grad_input->offset;
             cl_mem gin_mem = grad_input->gpu_data();
-            CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+            rt_gpu_launch(zero_kernel, {static_cast<size_t>(gin_size)}, {}, {&gin_mem, &gin_off, &gin_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
 
             auto kernel = cached_kernel<KernelID::AdaptiveAvgPool2dBackward>();
             cl_mem gout_mem = gout_c->gpu_data();
             int gout_off = gout_c->offset;
 
             int total_threads = N * C * H * W;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                     {&gout_mem, &gout_off, &gin_mem, &gin_off, &N, &C, &H, &W, &OH, &OW},
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
@@ -283,7 +284,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
         int out_off = out->offset;
         int ind_off = save_indices->offset;
         int total_threads = N * C * H_out * W_out;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                 {&in_mem, &in_off, &out_mem, &out_off, &ind_mem, &ind_off,
                                  &N, &C, &H_in, &W_in, &H_out, &W_out, &kernel_size, &stride, &padding},
                                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -369,7 +370,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
         int out_off = out->offset;
         int ind_off = save_indices->offset;
         int total_threads = N * C * D_out * H_out * W_out;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                 {&in_mem, &in_off, &out_mem, &out_off, &ind_mem, &ind_off,
                                  &N, &C, &D_in, &H_in, &W_in, &D_out, &H_out, &W_out, &kernel_size, &stride, &padding},
                                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -452,7 +453,7 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
         int in_off = input_c->offset;
         int out_off = out->offset;
         int total_threads = N * C * OH * OW;
-        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                                 {&in_mem, &in_off, &out_mem, &out_off, &N, &C, &H, &W, &OH, &OW},
                                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
     } else {

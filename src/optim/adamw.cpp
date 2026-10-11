@@ -2,6 +2,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include "optim_utils.h"
 #include <cmath>
 
@@ -78,9 +79,9 @@ void AdamW::step() {
                 int v_off = v[i]->offset;
                 int size = p->numel();
 
-                auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
+                auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
                 if (kernel) {
-                    CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                    rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                         {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
                 }

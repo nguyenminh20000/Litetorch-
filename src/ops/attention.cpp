@@ -2,6 +2,7 @@
 #include "litetorch/autograd.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/amp.h"
 #include <cmath>
@@ -280,9 +281,9 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         } else {
             void* kernel = nullptr;
             if (q_c->dtype == DataType::FP16) {
-                kernel = CLBackend::get().get_kernel("", "", "flash_attention_half_forward");
+                kernel = rt_gpu_get_kernel("", "", "flash_attention_half_forward");
             } else {
-                kernel = CLBackend::get().get_kernel(KernelID::FlashAttentionForward);
+                kernel = rt_gpu_get_kernel_by_id(KernelID::FlashAttentionForward);
             }
             if (kernel) {
                 run_gpu = true;
@@ -303,7 +304,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
                 int d_val = D;
 
                 int total_threads = B * H * Tq;
-                CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                     {&q_mem, &q_off, &k_mem, &k_off, &v_mem, &v_off, &out_mem, &out_off, &b_val, &h_val, &h_kv_val, &tq_val, &tk_val, &d_val, &scale},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
@@ -381,7 +382,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
                 }
             });
             if (out->device.type == DeviceType::GPU) {
-                CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+                rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
             }
         }
     }
@@ -551,11 +552,11 @@ std::shared_ptr<Tensor> paged_attention(
         int head_dim_val = static_cast<int>(head_dim);
         int max_num_blocks_val = static_cast<int>(max_num_blocks_per_seq);
 
-        auto kernel = CLBackend::get().get_kernel(KernelID::PagedAttentionForward);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::PagedAttentionForward);
         if (!kernel) {
             throw std::runtime_error("[litetorch Error] paged_attention: GPU kernel not available on this backend");
         }
-        CLBackend::get().launch(kernel, {static_cast<size_t>(num_seqs * num_heads)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(num_seqs * num_heads)}, {},
             {&q_mem, &q_off, &k_mem, &k_off, &v_mem, &v_off, &bt_mem, &bt_off, &cl_mem_val, &cl_off, &o_mem, &o_off,
              &num_seqs_val, &num_heads_val, &num_kv_heads_val, &head_dim_val, &max_num_blocks_val, &block_size, &scale},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
@@ -620,9 +621,9 @@ void qkv_do_split(std::shared_ptr<Tensor> qkv_c, std::shared_ptr<Tensor> q,
             });
         }
         if (q->device.type == DeviceType::GPU) {
-            CLBackend::get().write(q->gpu_data(), q->numel() * elem_sz, q->data_ptr());
-            CLBackend::get().write(k->gpu_data(), k->numel() * elem_sz, k->data_ptr());
-            CLBackend::get().write(v->gpu_data(), v->numel() * elem_sz, v->data_ptr());
+            rt_gpu_write(q->gpu_data(), q->numel() * elem_sz, q->data_ptr());
+            rt_gpu_write(k->gpu_data(), k->numel() * elem_sz, k->data_ptr());
+            rt_gpu_write(v->gpu_data(), v->numel() * elem_sz, v->data_ptr());
         }
     }
 }
@@ -679,7 +680,7 @@ void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::s
             });
         }
         if (gqkv->device.type == DeviceType::GPU) {
-            CLBackend::get().write(gqkv->gpu_data(), gqkv->numel() * elem_sz, gqkv->data_ptr());
+            rt_gpu_write(gqkv->gpu_data(), gqkv->numel() * elem_sz, gqkv->data_ptr());
         }
     }
 }
@@ -870,7 +871,7 @@ public:
                 gqkv_ptr[g] = gout_ptr[((b * H + h) * T + t) * D + d];
             });
             if (grad_qkv->device.type == DeviceType::GPU) {
-                CLBackend::get().write(grad_qkv->gpu_data(), grad_qkv->numel() * sizeof(float), gqkv_ptr);
+                rt_gpu_write(grad_qkv->gpu_data(), grad_qkv->numel() * sizeof(float), gqkv_ptr);
             }
         }
         return { grad_qkv };
@@ -922,7 +923,7 @@ std::shared_ptr<Tensor> qkv_extract(std::shared_ptr<Tensor> qkv, int64_t num_hea
             out_ptr[g] = qkv_ptr[(b * T + t) * 3 * C + index * C + c];
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         }
     }
     if (Autograd::is_grad_enabled() && (qkv->requires_grad)) {

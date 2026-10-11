@@ -3,6 +3,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include <sstream>
 #include <fstream>
@@ -323,7 +324,7 @@ void JITFunction::compile_for_shape(const std::string& shape_key) {
     std::string source = ss.str();
     void* kernel = nullptr;
     if (is_opencl && !source.empty()) {
-        kernel = CLBackend::get().get_kernel(k_name + "_program", source, k_name);
+        kernel = rt_gpu_get_kernel(k_name + "_program", source, k_name);
     }
     kernels_map_[shape_key] = kernel;
 }

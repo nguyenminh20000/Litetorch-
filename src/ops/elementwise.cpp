@@ -3,6 +3,7 @@
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
+#include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -34,22 +35,22 @@ struct IntBufferPool {
         std::vector<int> int_vec(vec.begin(), vec.end());
         size_t size_bytes = int_vec.size() * sizeof(int);
         if (pool.size() < 32) {
-            cl_mem buf = CLBackend::get().allocate(64 * sizeof(int));
+            cl_mem buf = rt_gpu_allocate(64 * sizeof(int));
             if (buf) {
                 pool.push_back(buf);
-                CLBackend::get().write(buf, size_bytes, int_vec.data());
+                rt_gpu_write(buf, size_bytes, int_vec.data());
                 return buf;
             }
         }
         if (!pool.empty()) {
             cl_mem buf = pool[index % pool.size()];
             index++;
-            CLBackend::get().write(buf, size_bytes, int_vec.data());
+            rt_gpu_write(buf, size_bytes, int_vec.data());
             return buf;
         }
-        cl_mem buf = CLBackend::get().allocate(size_bytes);
+        cl_mem buf = rt_gpu_allocate(size_bytes);
         if (buf) {
-            CLBackend::get().write(buf, size_bytes, int_vec.data());
+            rt_gpu_write(buf, size_bytes, int_vec.data());
         }
         return buf;
     }
@@ -143,7 +144,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                 }
             }
             if (!run_gpu) {
-                auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastPrepended);
+                auto kernel = rt_gpu_get_kernel_by_id(KernelID::ReduceBroadcastPrepended);
                 if (kernel) {
                     run_gpu = true;
                     auto reshaped = current->view({prod_prepended, remaining});
@@ -157,7 +158,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                     int prod_val = prod_prepended;
                     int rem_val = remaining;
 
-                    CLBackend::get().launch(kernel, {static_cast<size_t>(remaining)}, {},
+                    rt_gpu_launch(kernel, {static_cast<size_t>(remaining)}, {},
                         {&in_mem, &in_off, &out_mem, &out_off, &prod_val, &rem_val},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
 
@@ -180,7 +181,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
             });
             if (grad->device.type == DeviceType::GPU) {
                 auto gpu_summed = Tensor::create({remaining}, grad->device);
-                CLBackend::get().write(gpu_summed->gpu_data(), remaining * sizeof(float), res_ptr);
+                rt_gpu_write(gpu_summed->gpu_data(), remaining * sizeof(float), res_ptr);
                 current = gpu_summed->view(final_shape);
             } else if (grad->device.type == DeviceType::TPU) {
                 auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -219,7 +220,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                     }
                 }
                 if (!run_gpu) {
-                    auto kernel = CLBackend::get().get_kernel(KernelID::ReduceBroadcastDim);
+                    auto kernel = rt_gpu_get_kernel_by_id(KernelID::ReduceBroadcastDim);
                     if (kernel) {
                         run_gpu = true;
                         auto summed = Tensor::create(new_shape, grad->device);
@@ -234,7 +235,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                         int in_sz = inner_size;
 
                         int total_threads = outer_size * inner_size;
-                        CLBackend::get().launch(kernel, {static_cast<size_t>(total_threads)}, {},
+                        rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                             {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
 
@@ -258,7 +259,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                 });
                 if (grad->device.type == DeviceType::GPU) {
                     auto gpu_summed = Tensor::create(new_shape, grad->device);
-                    CLBackend::get().write(gpu_summed->gpu_data(), gpu_summed->numel() * sizeof(float), dst);
+                    rt_gpu_write(gpu_summed->gpu_data(), gpu_summed->numel() * sizeof(float), dst);
                     current = gpu_summed;
                 } else if (grad->device.type == DeviceType::TPU) {
                     auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -345,7 +346,7 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::Add);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::Add);
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -355,12 +356,12 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_off = b->offset;
                 int c_off = out->offset;
                 int size = out->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
         } else {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_add");
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_add");
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -382,7 +383,7 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_ndims = b->shape.size();
                 int size = out->numel();
 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
@@ -437,7 +438,7 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             });
         }
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
@@ -468,7 +469,7 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::Sub);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::Sub);
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -478,12 +479,12 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_off = b->offset;
                 int c_off = out->offset;
                 int size = out->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
         } else {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_sub");
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_sub");
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -505,7 +506,7 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_ndims = b->shape.size();
                 int size = out->numel();
 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
@@ -560,7 +561,7 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             });
         }
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
@@ -591,7 +592,7 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::Mul);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::Mul);
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -601,12 +602,12 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_off = b->offset;
                 int c_off = out->offset;
                 int size = out->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
         } else {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_mul");
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_mul");
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -628,7 +629,7 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_ndims = b->shape.size();
                 int size = out->numel();
 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
@@ -683,7 +684,7 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             });
         }
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
@@ -714,7 +715,7 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::Div);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::Div);
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -724,12 +725,12 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_off = b->offset;
                 int c_off = out->offset;
                 int size = out->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
         } else {
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_div");
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_div");
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -751,7 +752,7 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int b_ndims = b->shape.size();
                 int size = out->numel();
 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
@@ -806,7 +807,7 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             });
         }
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), out_ptr);
@@ -848,14 +849,14 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Pow);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Pow);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &exponent, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -867,7 +868,7 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
             out_ptr[i] = std::pow(a_ptr[i], exponent);
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -908,14 +909,14 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Sqrt);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Sqrt);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -927,7 +928,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
             out_ptr[i] = std::sqrt(a_ptr[i]);
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -967,14 +968,14 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Exp);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Exp);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -986,7 +987,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
             out_ptr[i] = std::exp(a_ptr[i]);
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -1025,14 +1026,14 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Log);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Log);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -1044,7 +1045,7 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
             out_ptr[i] = std::log(a_ptr[i]);
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -1093,14 +1094,14 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Abs);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Abs);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -1112,7 +1113,7 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
             out_ptr[i] = std::fabs(a_ptr[i]);
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -1150,14 +1151,14 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto kernel = CLBackend::get().get_kernel(KernelID::Neg);
+        auto kernel = rt_gpu_get_kernel_by_id(KernelID::Neg);
         if (kernel) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
             int a_off = a_c->offset;
             int b_off = out->offset;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
         }
@@ -1169,7 +1170,7 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
             out_ptr[i] = -a_ptr[i];
         });
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), out_ptr);
@@ -1199,7 +1200,7 @@ public:
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SumBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
             if (kernel) {
                 run_gpu = true;
                 cl_mem gout_mem = grad_output->gpu_data();
@@ -1207,7 +1208,7 @@ public:
                 cl_mem gin_mem = grad_input->gpu_data();
                 int gin_off = grad_input->offset;
                 int size = grad_input->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&gin_mem, &gin_off, &gout_mem, &gout_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
@@ -1220,7 +1221,7 @@ public:
                 ptr[i] = val;
             });
             if (grad_input->device.type == DeviceType::GPU) {
-                CLBackend::get().write(grad_input->gpu_data(), size * sizeof(float), ptr);
+                rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), ptr);
             } else if (grad_input->device.type == DeviceType::TPU) {
                 auto tpu = BackendDispatcher::get().get_tpu_backend();
                 if (tpu) tpu->write(grad_input->gpu_data(), size * sizeof(float), ptr);
@@ -1240,7 +1241,7 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             backend->sum(a->gpu_data(), a->offset, out->gpu_data(), out->offset, a->numel());
         } else {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SumForward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::SumForward);
             if (kernel) {
                 run_gpu = true;
                 cl_mem a_mem = a->gpu_data();
@@ -1249,10 +1250,10 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
                 int out_off = out->offset;
                 int size = a->numel();
                 float zero = 0.0f;
-                CLBackend::get().write(out_mem, sizeof(float), &zero, out_off);
+                rt_gpu_write(out_mem, sizeof(float), &zero, out_off);
                 size_t blocks = std::min(static_cast<size_t>(32), (static_cast<size_t>(size) + 255) / 256);
                 if (blocks < 1) blocks = 1;
-                CLBackend::get().launch(kernel, {blocks * 256}, {256},
+                rt_gpu_launch(kernel, {blocks * 256}, {256},
                     {&a_mem, &a_off, &out_mem, &out_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             }
@@ -1275,7 +1276,7 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
         float* out_ptr = out->data_ptr();
         out_ptr[0] = total;
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
+            rt_gpu_write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
@@ -1304,7 +1305,7 @@ public:
         float num_el = static_cast<float>(grad_input->numel());
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
-            auto kernel = CLBackend::get().get_kernel(KernelID::SumBackward);
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = grad_output->gpu_data();
@@ -1312,7 +1313,7 @@ public:
                 cl_mem out_mem = grad_input->gpu_data();
                 int out_off = grad_input->offset;
                 int size = grad_input->numel();
-                CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&in_mem, &in_off, &out_mem, &out_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
                 
@@ -1328,7 +1329,7 @@ public:
                 ptr[i] = val;
             });
             if (grad_input->device.type == DeviceType::GPU) {
-                CLBackend::get().write(grad_input->gpu_data(), size * sizeof(float), ptr);
+                rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), ptr);
             }
         }
         return { grad_input };
@@ -1378,7 +1379,7 @@ public:
             float val = cpu_gout->data_ptr()[0];
             std::vector<float> cpu_gin(size, 0.0f);
             cpu_gin[max_idx] = val;
-            CLBackend::get().write(grad_input->gpu_data(), size * sizeof(float), cpu_gin.data());
+            rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), cpu_gin.data());
         } else {
             float val = grad_output->data_ptr()[0];
             grad_input->data_ptr()[max_idx] = val;
@@ -1411,7 +1412,7 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         float* out_ptr = out->data_ptr();
         out_ptr[0] = max_val;
         if (out->device.type == DeviceType::GPU) {
-            CLBackend::get().write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
+            rt_gpu_write(out->gpu_data(), sizeof(float), out_ptr, static_cast<size_t>(out->offset) * sizeof(float));
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) tpu->write(out->gpu_data(), sizeof(float), out_ptr, out->offset);
@@ -1781,7 +1782,7 @@ std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float ma
         dst[i] = x < min_val ? min_val : (x > max_val ? max_val : x);
     });
     if (out->device.type == DeviceType::GPU) {
-        CLBackend::get().write(out->gpu_data(), size * sizeof(float), dst);
+        rt_gpu_write(out->gpu_data(), size * sizeof(float), dst);
     } else if (out->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);

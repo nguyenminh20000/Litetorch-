@@ -1,6 +1,7 @@
 #include "litetorch/optim.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
 #include "optim_utils.h"
 #include <cmath>
 
@@ -35,8 +36,8 @@ void RMSprop::step() {
             int sq_off = square_avg[i]->offset;
             int size = p->numel();
 
-            auto kernel = CLBackend::get().get_kernel("litetorch_kernels", litetorch_kernels_src, "rmsprop_step_kernel");
-            CLBackend::get().launch(kernel, {static_cast<size_t>(size)}, {},
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "rmsprop_step_kernel");
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&p_mem, &p_off, &g_mem, &g_off, &sq_mem, &sq_off, &alpha, &lr, &eps, &weight_decay, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
         } else {

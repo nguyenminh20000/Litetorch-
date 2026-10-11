@@ -14,8 +14,8 @@ extern const std::string litetorch_kernels_src;
 
 namespace {
 template <KernelID ID>
-inline cl_kernel cached_kernel() {
-    static cl_kernel k = CLBackend::get().get_kernel(ID);
+inline void* cached_kernel() {
+    static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
 struct StorageUseGuard {
@@ -81,14 +81,14 @@ public:
                     cl_mem gw_mem = grad_weight->gpu_data();
                     int gw_off = grad_weight->offset;
                     int gw_size = static_cast<int>(grad_weight->numel());
-                    CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gw_size)}, {},
+                    rt_gpu_launch(zero_kernel, {static_cast<size_t>(gw_size)}, {},
                         {&gw_mem, &gw_off, &gw_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
                 }
                 if (grad_bias) {
                     cl_mem gb_mem = grad_bias->gpu_data();
                     int gb_off = grad_bias->offset;
                     int gb_size = static_cast<int>(grad_bias->numel());
-                    CLBackend::get().launch(zero_kernel, {static_cast<size_t>(gb_size)}, {},
+                    rt_gpu_launch(zero_kernel, {static_cast<size_t>(gb_size)}, {},
                         {&gb_mem, &gb_off, &gb_size}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
                 }
                 cl_mem in_mem = input_c->gpu_data();
@@ -112,7 +112,7 @@ public:
                 int sv_off = save_var_c->offset;
                 int n_val = static_cast<int>(N);
                 int m_val = static_cast<int>(M);
-                CLBackend::get().launch(fused_kernel, {static_cast<size_t>(N)}, {},
+                rt_gpu_launch(fused_kernel, {static_cast<size_t>(N)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &w_mem, &w_off, &has_weight,
                      &gin_mem, &gin_off, &gw_mem, &gw_off, &has_dw, &gb_mem, &gb_off, &has_db,
                      &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val},
@@ -142,7 +142,7 @@ public:
                 int n_val = N;
                 int m_val = M;
                 float eps_val = eps;
-                CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(N)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &w_mem, &w_off, &has_weight, &gin_mem, &gin_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val, &eps_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
@@ -161,7 +161,7 @@ public:
                 int n_val = N;
                 int m_val = M;
                 float eps_val = eps;
-                CLBackend::get().launch(kernel, {static_cast<size_t>(M)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(M)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val, &eps_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
@@ -173,7 +173,7 @@ public:
                 int gb_off = grad_bias->offset;
                 int n_val = N;
                 int m_val = M;
-                CLBackend::get().launch(kernel, {static_cast<size_t>(M)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(M)}, {},
                     {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_val, &m_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
             }
@@ -327,7 +327,7 @@ public:
                 int w_val = W;
                 float eps_val = eps;
                 
-                CLBackend::get().launch(kernel, {static_cast<size_t>(C)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(C)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &gw_mem, &gw_off, &gb_mem, &gb_off, &n_val, &c_val, &h_val, &w_val, &eps_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
@@ -356,7 +356,7 @@ public:
                 float eps_val = eps;
                 
                 int total = N * C * H * W;
-                CLBackend::get().launch(kernel, {static_cast<size_t>(total)}, {},
+                rt_gpu_launch(kernel, {static_cast<size_t>(total)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &w_mem, &w_off, &gw_mem, &gw_off, &gb_mem, &gb_off, &gin_mem, &gin_off, &n_val, &c_val, &h_val, &w_val, &eps_val},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
             }
@@ -457,7 +457,7 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
         int m_val = M;
         float eps_val = eps;
         
-        CLBackend::get().launch(kernel, {launch_n}, {},
+        rt_gpu_launch(kernel, {launch_n}, {},
             {&in_mem, &in_off, &w_mem, &w_off, &has_weight, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {
@@ -562,7 +562,7 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
         int m_val = M;
         float eps_val = eps;
         
-        CLBackend::get().launch(kernel, {static_cast<size_t>(N)}, {},
+        rt_gpu_launch(kernel, {static_cast<size_t>(N)}, {},
             {&in_mem, &in_off, &res_mem, &res_off, &w_mem, &w_off, &has_weight, &b_mem, &b_off, &has_bias, &out_mem, &out_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {
@@ -673,7 +673,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
             float mom_val = momentum;
             float eps_val = eps;
 
-            CLBackend::get().launch(kernel, {static_cast<size_t>(C)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(C)}, {},
                 {&in_mem, &in_off, &rm_mem, &rm_off, &rv_mem, &rv_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &n_val, &c_val, &h_val, &w_val, &train_val, &mom_val, &eps_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(float)});
         }
@@ -698,7 +698,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
             float eps_val = eps;
 
             int total = N * C * H * W;
-            CLBackend::get().launch(kernel, {static_cast<size_t>(total)}, {},
+            rt_gpu_launch(kernel, {static_cast<size_t>(total)}, {},
                 {&in_mem, &in_off, &sm_mem, &sm_off, &sv_mem, &sv_off, &w_mem, &w_off, &b_mem, &b_off, &out_mem, &out_off, &n_val, &c_val, &h_val, &w_val, &eps_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
         }
