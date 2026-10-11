@@ -1,5 +1,5 @@
 import litetorch as lt
-from litetorch import ops
+from litetorch import Ops as ops
 
 print("=== Ops.chunk correctness ===")
 
