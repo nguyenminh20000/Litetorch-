@@ -87,6 +87,8 @@ public:
 
     virtual void set_tf32_enabled(bool) {}
     virtual bool is_tf32_enabled() const { return false; }
+    virtual void set_fp16_math_enabled(bool) {}
+    virtual bool is_fp16_math_enabled() const { return false; }
 };
 
 class BackendDispatcher {

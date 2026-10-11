@@ -26,6 +26,11 @@ public:
     virtual std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) = 0;
     virtual std::vector<std::shared_ptr<Tensor>> parameters() { return {}; }
     virtual void to(const Device&) {}
+    virtual void half() {
+        for (auto& child : children()) {
+            if (child) child->half();
+        }
+    }
     virtual void train() { training = true; }
     virtual void eval() { training = false; }
     virtual std::vector<std::shared_ptr<Module>> children() { return {}; }
@@ -62,6 +67,7 @@ public:
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
+    void half() override;
 };
 
 class QLoRALinear : public Module {
@@ -365,6 +371,7 @@ public:
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
+    void half() override;
 };
 
 class GPTBlock : public Module {
@@ -376,11 +383,14 @@ public:
     int head_dim;
     float rope_theta;
 
-    std::shared_ptr<Linear> qkv_proj;
+    std::shared_ptr<Linear> q_proj;
+    std::shared_ptr<Linear> k_proj;
+    std::shared_ptr<Linear> v_proj;
     std::shared_ptr<Linear> o_proj;
     std::shared_ptr<RMSNorm> q_norm;
     std::shared_ptr<RMSNorm> k_norm;
-    std::shared_ptr<Linear> gate_up_proj;
+    std::shared_ptr<Linear> gate_proj;
+    std::shared_ptr<Linear> up_proj;
     std::shared_ptr<Linear> down_proj;
     std::shared_ptr<RMSNorm> attn_norm;
     std::shared_ptr<RMSNorm> ffn_norm;
@@ -391,7 +401,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
     std::vector<std::shared_ptr<Module>> children() override {
-        return {qkv_proj, o_proj, q_norm, k_norm, gate_up_proj, down_proj, attn_norm, ffn_norm};
+        return {q_proj, k_proj, v_proj, o_proj, q_norm, k_norm, gate_proj, up_proj, down_proj, attn_norm, ffn_norm};
     }
 
 private:

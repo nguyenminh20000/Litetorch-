@@ -32,14 +32,21 @@ void RMSNorm::to(const Device& device) {
     }
 }
 
+void RMSNorm::half() {
+    weight = weight->cast(DataType::FP16);
+}
+
 GPTBlock::GPTBlock(int d_model, int n_q_heads, int n_kv_heads, int d_ff, float rope_theta)
     : d_model(d_model), n_q_heads(n_q_heads), n_kv_heads(n_kv_heads), d_ff(d_ff),
       head_dim(d_model / n_q_heads), rope_theta(rope_theta) {
-    qkv_proj = std::make_shared<Linear>(d_model, (n_q_heads + 2 * n_kv_heads) * head_dim, false);
+    q_proj = std::make_shared<Linear>(d_model, n_q_heads * head_dim, false);
+    k_proj = std::make_shared<Linear>(d_model, n_kv_heads * head_dim, false);
+    v_proj = std::make_shared<Linear>(d_model, n_kv_heads * head_dim, false);
     o_proj = std::make_shared<Linear>(d_model, d_model, false);
     q_norm = std::make_shared<RMSNorm>(std::vector<int64_t>{head_dim});
     k_norm = std::make_shared<RMSNorm>(std::vector<int64_t>{head_dim});
-    gate_up_proj = std::make_shared<Linear>(d_model, 2 * d_ff, false);
+    gate_proj = std::make_shared<Linear>(d_model, d_ff, false);
+    up_proj = std::make_shared<Linear>(d_model, d_ff, false);
     down_proj = std::make_shared<Linear>(d_ff, d_model, false);
     attn_norm = std::make_shared<RMSNorm>(std::vector<int64_t>{d_model});
     ffn_norm = std::make_shared<RMSNorm>(std::vector<int64_t>{d_model});
@@ -89,11 +96,9 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
 
     auto h = attn_norm->forward(x);
 
-    auto qkv = qkv_proj->forward(h);
-    auto qkv_parts = Ops::chunk(qkv, {n_q_heads * head_dim, n_kv_heads * head_dim, n_kv_heads * head_dim}, -1);
-    auto q = qkv_parts[0];
-    auto k = qkv_parts[1];
-    auto v = qkv_parts[2];
+    auto q = q_proj->forward(h);
+    auto k = k_proj->forward(h);
+    auto v = v_proj->forward(h);
 
     auto q_c = q->is_contiguous() ? q : q->contiguous();
     auto k_c = k->is_contiguous() ? k : k->contiguous();
@@ -121,10 +126,8 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
     auto x1 = Ops::add(x, attn_out);
 
     auto h2 = ffn_norm->forward(x1);
-    auto gate_up = gate_up_proj->forward(h2);
-    auto gu_parts = Ops::chunk(gate_up, {d_ff, d_ff}, -1);
-    auto gate = gu_parts[0];
-    auto up = gu_parts[1];
+    auto gate = gate_proj->forward(h2);
+    auto up = up_proj->forward(h2);
     auto silu_gate = Ops::mul(gate, Ops::sigmoid(gate));
     auto swiglu = Ops::mul(silu_gate, up);
     auto ffn_out = down_proj->forward(swiglu);
@@ -134,19 +137,25 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
 
 std::vector<std::shared_ptr<Tensor>> GPTBlock::parameters() {
     std::vector<std::shared_ptr<Tensor>> params;
-    auto p1 = qkv_proj->parameters();
+    auto p1 = q_proj->parameters();
+    auto p2 = k_proj->parameters();
+    auto p3 = v_proj->parameters();
     auto p4 = o_proj->parameters();
     auto p5 = q_norm->parameters();
     auto p6 = k_norm->parameters();
-    auto p7 = gate_up_proj->parameters();
+    auto p7 = gate_proj->parameters();
+    auto p8 = up_proj->parameters();
     auto p9 = down_proj->parameters();
     auto p10 = attn_norm->parameters();
     auto p11 = ffn_norm->parameters();
     params.insert(params.end(), p1.begin(), p1.end());
+    params.insert(params.end(), p2.begin(), p2.end());
+    params.insert(params.end(), p3.begin(), p3.end());
     params.insert(params.end(), p4.begin(), p4.end());
     params.insert(params.end(), p5.begin(), p5.end());
     params.insert(params.end(), p6.begin(), p6.end());
     params.insert(params.end(), p7.begin(), p7.end());
+    params.insert(params.end(), p8.begin(), p8.end());
     params.insert(params.end(), p9.begin(), p9.end());
     params.insert(params.end(), p10.begin(), p10.end());
     params.insert(params.end(), p11.begin(), p11.end());
@@ -154,11 +163,14 @@ std::vector<std::shared_ptr<Tensor>> GPTBlock::parameters() {
 }
 
 void GPTBlock::to(const Device& device) {
-    qkv_proj->to(device);
+    q_proj->to(device);
+    k_proj->to(device);
+    v_proj->to(device);
     o_proj->to(device);
     q_norm->to(device);
     k_norm->to(device);
-    gate_up_proj->to(device);
+    gate_proj->to(device);
+    up_proj->to(device);
     down_proj->to(device);
     attn_norm->to(device);
     ffn_norm->to(device);

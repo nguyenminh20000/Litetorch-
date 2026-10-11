@@ -45,5 +45,10 @@ void Linear::to(const Device& device) {
     if (scales) scales = scales->to(device);
 }
 
+void Linear::half() {
+    weight = weight->cast(DataType::FP16);
+    if (bias) bias = bias->cast(DataType::FP16);
+}
+
 }
 }

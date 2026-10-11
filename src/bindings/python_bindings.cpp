@@ -201,6 +201,19 @@ PYBIND11_MODULE(litetorch, m) {
         }
         return false;
     });
+    cuda_mod.def("set_fp16_math_enabled", [](bool enabled) {
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend) {
+            backend->set_fp16_math_enabled(enabled);
+        }
+    }, py::arg("enabled") = true);
+    cuda_mod.def("is_fp16_math_enabled", []() {
+        auto backend = litetorch::BackendDispatcher::get().get_backend();
+        if (backend) {
+            return backend->is_fp16_math_enabled();
+        }
+        return false;
+    });
     cuda_mod.def("memory_allocated", []() -> size_t {
         return litetorch::MemoryManager::get().get_gpu_used();
     });
@@ -357,6 +370,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("forward", &nn::Module::forward)
         .def("parameters", &nn::Module::parameters)
         .def("to", &nn::Module::to)
+        .def("half", &nn::Module::half)
         .def("train", &nn::Module::train)
         .def("eval", &nn::Module::eval)
         .def("compile", &nn::Module::compile)

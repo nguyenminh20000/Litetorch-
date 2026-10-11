@@ -85,18 +85,35 @@ GPU_API(Stream_t) g_d2h_stream = nullptr;
 
 #ifndef __HIP_PLATFORM_AMD__
 static bool g_tf32_enabled = true;
+static bool g_fp16_math_enabled = false;
+
+static cublasMath_t current_math_mode() {
+    if (g_fp16_math_enabled) return CUBLAS_TENSOR_OP_MATH;
+    return g_tf32_enabled ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
+}
 
 extern "C" void gpu_set_tf32_enabled(bool enabled) {
     g_tf32_enabled = enabled;
     cublasHandle_t handle = get_cublas_handle();
     if (handle) {
-        cublasMath_t mode = enabled ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
-        cublasSetMathMode(handle, mode);
+        cublasSetMathMode(handle, current_math_mode());
     }
 }
 
 extern "C" bool gpu_is_tf32_enabled() {
     return g_tf32_enabled;
+}
+
+extern "C" void gpu_set_fp16_math_enabled(bool enabled) {
+    g_fp16_math_enabled = enabled;
+    cublasHandle_t handle = get_cublas_handle();
+    if (handle) {
+        cublasSetMathMode(handle, current_math_mode());
+    }
+}
+
+extern "C" bool gpu_is_fp16_math_enabled() {
+    return g_fp16_math_enabled;
 }
 
 cublasHandle_t get_cublas_handle(const void* ref) {
@@ -108,8 +125,7 @@ cublasHandle_t get_cublas_handle(const void* ref) {
     cublasHandle_t handle = nullptr;
     cublasCreate(&handle);
     cublasSetStream(handle, dev_stream(dev));
-    cublasMath_t mode = g_tf32_enabled ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
-    cublasSetMathMode(handle, mode);
+    cublasSetMathMode(handle, current_math_mode());
     handles[dev] = handle;
     return handle;
 }
