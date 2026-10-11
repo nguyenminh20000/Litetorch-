@@ -240,11 +240,11 @@ def test_grad_scaler():
     if all(a == b for p, q in zip(before, snap(model.parameters())) for a, b in zip(p, q)):
         return False, "params did not change after scaler.step"
     scaler.update()
-    s0 = scaler.scale
+    s0 = scaler.get_scale()
     scaler.update()
-    if abs(scaler.scale - s0 * 2.0) > 1e-6:
-        return False, f"scale did not grow after interval: {scaler.scale}"
-    return True, f"scale 4.0 -> {scaler.scale}"
+    if abs(scaler.get_scale() - s0 * 2.0) > 1e-6:
+        return False, f"scale did not grow after interval: {scaler.get_scale()}"
+    return True, f"scale 4.0 -> {scaler.get_scale()}"
 
 
 def test_zero3():

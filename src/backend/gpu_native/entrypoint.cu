@@ -747,6 +747,7 @@ static const KernelMap& gpu_kernel_map() {
         m["cast_fp8_e5m2_to_fp32"] = (void*)&cast_fp8_e5m2_to_fp32;
         m["embedding_forward"] = (void*)&embedding_forward;
         m["embedding_backward"] = (void*)&embedding_backward;
+        m["embedding_zero_padding_rows"] = (void*)&embedding_zero_padding_rows;
         m["generate_dropout_mask"] = (void*)&generate_dropout_mask;
         m["sgd_step_kernel"] = (void*)&sgd_step_kernel;
         m["rmsprop_step_kernel"] = (void*)&rmsprop_step_kernel;

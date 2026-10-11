@@ -128,8 +128,13 @@ public:
     std::shared_ptr<Tensor> bias;
     int stride;
     int padding;
+    std::vector<int> kernel_size;
+    std::vector<int> stride_vec;
+    std::vector<int> padding_vec;
 
     Conv2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true);
+    Conv2d(int in_channels, int out_channels, const std::vector<int>& kernel_size,
+           const std::vector<int>& stride, const std::vector<int>& padding, bool has_bias = true);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
@@ -198,12 +203,15 @@ public:
     int num_features;
     float eps;
     float momentum;
+    bool affine;
+    bool track_running_stats;
     std::shared_ptr<Tensor> weight;
     std::shared_ptr<Tensor> bias;
     std::shared_ptr<Tensor> running_mean;
     std::shared_ptr<Tensor> running_var;
 
-    BatchNorm2d(int num_features, float eps = 1e-5f, float momentum = 0.1f);
+    BatchNorm2d(int num_features, float eps = 1e-5f, float momentum = 0.1f,
+                bool affine = true, bool track_running_stats = true);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
@@ -237,28 +245,39 @@ public:
 
 class MSELoss : public Module {
 public:
-    MSELoss() = default;
+    std::string reduction;
+
+    MSELoss(const std::string& reduction = "mean");
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 };
 
 class CrossEntropyLoss : public Module {
 public:
-    CrossEntropyLoss() = default;
+    std::shared_ptr<Tensor> weight;
+    int64_t ignore_index;
+    std::string reduction;
+
+    CrossEntropyLoss(std::shared_ptr<Tensor> weight = nullptr, int64_t ignore_index = -100,
+                     const std::string& reduction = "mean");
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 };
 
 class BCELoss : public Module {
 public:
-    BCELoss() = default;
+    std::string reduction;
+
+    BCELoss(const std::string& reduction = "mean");
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 };
 
 class L1Loss : public Module {
 public:
-    L1Loss() = default;
+    std::string reduction;
+
+    L1Loss(const std::string& reduction = "mean");
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 };
@@ -267,9 +286,10 @@ class Embedding : public Module {
 public:
     int num_embeddings;
     int embedding_dim;
+    int64_t padding_idx;
     std::shared_ptr<Tensor> weight;
 
-    Embedding(int num_embeddings, int embedding_dim);
+    Embedding(int num_embeddings, int embedding_dim, int64_t padding_idx = -1);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
@@ -306,17 +326,36 @@ public:
     int embed_dim;
     int num_heads;
     int head_dim;
+    int kdim;
+    int vdim;
+    double dropout_p;
+    bool use_bias;
+    bool batch_first;
 
     std::shared_ptr<Linear> qkv_proj;
+    std::shared_ptr<Linear> q_proj;
+    std::shared_ptr<Linear> k_proj;
+    std::shared_ptr<Linear> v_proj;
     std::shared_ptr<Linear> out_proj;
+    std::shared_ptr<Dropout> attn_dropout;
 
-    MultiHeadAttention(int embed_dim, int num_heads);
+    MultiHeadAttention(int embed_dim, int num_heads, double dropout = 0.0, bool bias = true,
+                       int kdim = -1, int vdim = -1, bool batch_first = false);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> query, std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value);
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
+    void train() override;
+    void eval() override;
     std::vector<std::shared_ptr<Module>> children() override {
-        return {qkv_proj, out_proj};
+        std::vector<std::shared_ptr<Module>> ch;
+        if (qkv_proj) ch.push_back(qkv_proj);
+        if (q_proj) ch.push_back(q_proj);
+        if (k_proj) ch.push_back(k_proj);
+        if (v_proj) ch.push_back(v_proj);
+        if (out_proj) ch.push_back(out_proj);
+        if (attn_dropout) ch.push_back(attn_dropout);
+        return ch;
     }
 };
 

@@ -4,6 +4,8 @@
 #include "litetorch/tensor.h"
 #include <memory>
 #include <vector>
+#include <cstdint>
+#include <utility>
 
 namespace litetorch {
 namespace Ops {
@@ -16,6 +18,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
 std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, std::shared_ptr<Tensor> bias);
 std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
 std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
 std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a);
@@ -23,7 +26,8 @@ std::shared_ptr<Tensor> conv2d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
 std::shared_ptr<Tensor> conv2d_relu(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
-std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target,
+    std::shared_ptr<Tensor> weight = nullptr, int64_t ignore_index = -100, const std::string& reduction = "mean");
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape);
 
 std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent);
@@ -33,11 +37,32 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
 std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
+std::shared_ptr<Tensor> permute(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims);
+std::shared_ptr<Tensor> expand(std::shared_ptr<Tensor> a, const std::vector<int64_t>& shape);
+std::shared_ptr<Tensor> stack(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim = 0);
+std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::shared_ptr<Tensor> index);
+std::shared_ptr<Tensor> argmax(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
+std::shared_ptr<Tensor> argmin(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim = false);
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> topk(std::shared_ptr<Tensor> a, int64_t k, int64_t dim = -1, bool largest = true, bool sorted = true);
+std::shared_ptr<Tensor> eq(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> ne(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> lt(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> gt(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> le(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> ge(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
+std::shared_ptr<Tensor> log_softmax(std::shared_ptr<Tensor> a, int64_t dim = -1);
+std::shared_ptr<Tensor> silu(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slope = 0.01f);
 std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim = 0);
-std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim = -1);
-std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim = -1);
+std::vector<std::shared_ptr<Tensor>> split(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim = -1);
+std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, int64_t chunks, int64_t dim = 0);
+constexpr int64_t SQUEEZE_ALL_DIMS = INT64_MIN;
+std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim = SQUEEZE_ALL_DIMS);
 std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim);
 std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride = -1, int padding = 0);
 std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_size, int stride = -1, int padding = 0);

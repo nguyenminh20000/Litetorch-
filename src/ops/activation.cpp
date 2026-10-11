@@ -346,6 +346,11 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = relu(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -391,6 +396,11 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
 }
 
 std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = sigmoid(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -436,6 +446,11 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
 }
 
 std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = tanh(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -481,6 +496,11 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
 }
 
 std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slope) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = leaky_relu(a_fp32, negative_slope);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -526,6 +546,11 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
 }
 
 std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = softmax(a_fp32, dim);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -619,6 +644,11 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
 }
 
 std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = gelu(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     auto save_tanh = Tensor::create(a_c->shape, a_c->device);

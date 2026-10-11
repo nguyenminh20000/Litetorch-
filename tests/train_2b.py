@@ -129,7 +129,7 @@ def save_checkpoint(model, step, tokens_seen, loss_val, lr, scaler, sched):
         "tokens_seen": tokens_seen,
         "loss": loss_val,
         "lr": lr,
-        "scaler_scale": scaler.scale,
+        "scaler_scale": scaler.get_scale(),
         "sched_last_step": sched.last_step,
         "rng_state": lt.get_rng_state(),
         "fp16": USE_FP16,
@@ -152,7 +152,7 @@ def load_checkpoint(model, opt, sched, scaler):
     step = int(state["step"])
     opt.set_lr(float(state["lr"]))
     sched.last_step = int(state["sched_last_step"])
-    scaler.scale = float(state["scaler_scale"])
+    scaler.set_scale(float(state["scaler_scale"]))
     lt.set_rng_state(state["rng_state"])
     log(f"resumed at step {step}, tokens_seen={state['tokens_seen']}")
     return step, int(state["tokens_seen"])

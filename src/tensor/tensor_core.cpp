@@ -665,6 +665,14 @@ std::shared_ptr<Tensor> Tensor::to(const Device& target_device) {
     return new_tensor;
 }
 
+std::shared_ptr<Tensor> Tensor::to(DataType target_dtype) {
+    return Ops::cast(shared_from_this(), target_dtype);
+}
+
+std::shared_ptr<Tensor> Tensor::to(const Device& target_device, DataType target_dtype) {
+    return to(target_device)->to(target_dtype);
+}
+
 std::shared_ptr<Tensor> Tensor::to_device_async(const Device& target_device) {
     if (device == target_device) return shared_from_this();
     
@@ -786,6 +794,80 @@ std::shared_ptr<Tensor> Tensor::transpose(int64_t dim0, int64_t dim1) {
         out->creator = node;
     }
     return out;
+}
+
+std::shared_ptr<Tensor> Tensor::permute(const std::vector<int64_t>& dims) {
+    return Ops::permute(shared_from_this(), dims);
+}
+
+std::shared_ptr<Tensor> Tensor::detach() {
+    auto out = std::make_shared<Tensor>(storage, shape, strides, offset, device, false);
+    out->dtype = dtype;
+    return out;
+}
+
+std::shared_ptr<Tensor> Tensor::expand(const std::vector<int64_t>& shape) {
+    return Ops::expand(shared_from_this(), shape);
+}
+
+std::shared_ptr<Tensor> Tensor::gather(int64_t dim, std::shared_ptr<Tensor> index) {
+    return Ops::gather(shared_from_this(), dim, index);
+}
+
+std::shared_ptr<Tensor> Tensor::argmax(int64_t dim, bool keepdim) {
+    return Ops::argmax(shared_from_this(), dim, keepdim);
+}
+
+std::shared_ptr<Tensor> Tensor::argmin(int64_t dim, bool keepdim) {
+    return Ops::argmin(shared_from_this(), dim, keepdim);
+}
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> Tensor::topk(int64_t k, int64_t dim, bool largest, bool sorted) {
+    return Ops::topk(shared_from_this(), k, dim, largest, sorted);
+}
+
+std::shared_ptr<Tensor> Tensor::eq(std::shared_ptr<Tensor> other) {
+    return Ops::eq(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::ne(std::shared_ptr<Tensor> other) {
+    return Ops::ne(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::lt(std::shared_ptr<Tensor> other) {
+    return Ops::lt(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::gt(std::shared_ptr<Tensor> other) {
+    return Ops::gt(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::le(std::shared_ptr<Tensor> other) {
+    return Ops::le(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::ge(std::shared_ptr<Tensor> other) {
+    return Ops::ge(shared_from_this(), other);
+}
+
+std::shared_ptr<Tensor> Tensor::log_softmax(int64_t dim) {
+    return Ops::log_softmax(shared_from_this(), dim);
+}
+
+std::shared_ptr<Tensor> Tensor::silu() {
+    return Ops::silu(shared_from_this());
+}
+
+std::shared_ptr<Tensor> Tensor::sum(int64_t dim, bool keepdim) {
+    return Ops::sum(shared_from_this(), dim, keepdim);
+}
+
+std::shared_ptr<Tensor> Tensor::mean(int64_t dim, bool keepdim) {
+    return Ops::mean(shared_from_this(), dim, keepdim);
+}
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> Tensor::max(int64_t dim, bool keepdim) {
+    return Ops::max_with_indices(shared_from_this(), dim, keepdim);
 }
 
 float* Tensor::data_ptr() {

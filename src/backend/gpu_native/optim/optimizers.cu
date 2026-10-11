@@ -100,19 +100,22 @@ extern "C" __global__ void sgd_step_kernel(
     const float* G, int g_off,
     float* V, int v_off,
     int has_momentum, float momentum,
+    float dampening, int nesterov,
     float lr, float weight_decay, int size)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        float grad_val = G[g_off + idx];
+        float d_p = G[g_off + idx];
         if (weight_decay != 0.0f) {
-            grad_val += weight_decay * P[p_off + idx];
+            d_p += weight_decay * P[p_off + idx];
         }
         if (has_momentum) {
-            V[v_off + idx] = momentum * V[v_off + idx] + grad_val;
-            P[p_off + idx] -= lr * V[v_off + idx];
+            float buf = momentum * V[v_off + idx] + (1.0f - dampening) * d_p;
+            V[v_off + idx] = buf;
+            float upd = nesterov ? (d_p + momentum * buf) : buf;
+            P[p_off + idx] -= lr * upd;
         } else {
-            P[p_off + idx] -= lr * grad_val;
+            P[p_off + idx] -= lr * d_p;
         }
     }
 }

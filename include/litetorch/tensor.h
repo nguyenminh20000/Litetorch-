@@ -10,6 +10,7 @@
 #include <mutex>
 #include <atomic>
 #include <functional>
+#include <utility>
 
 namespace litetorch {
 
@@ -128,6 +129,8 @@ public:
     bool is_contiguous() const { return contiguous_; }
     std::shared_ptr<Tensor> contiguous();
     std::shared_ptr<Tensor> to(const Device& target_device);
+    std::shared_ptr<Tensor> to(DataType target_dtype);
+    std::shared_ptr<Tensor> to(const Device& target_device, DataType target_dtype);
     std::shared_ptr<Tensor> to_device_async(const Device& target_device);
     std::shared_ptr<Tensor> cast(DataType target_dtype);
     std::shared_ptr<Tensor> clone();
@@ -136,6 +139,24 @@ public:
     std::shared_ptr<Tensor> view(const std::vector<int64_t>& new_shape);
     std::shared_ptr<Tensor> reshape(const std::vector<int64_t>& new_shape);
     std::shared_ptr<Tensor> transpose(int64_t dim0, int64_t dim1);
+    std::shared_ptr<Tensor> permute(const std::vector<int64_t>& dims);
+    std::shared_ptr<Tensor> detach();
+    std::shared_ptr<Tensor> expand(const std::vector<int64_t>& shape);
+    std::shared_ptr<Tensor> gather(int64_t dim, std::shared_ptr<Tensor> index);
+    std::shared_ptr<Tensor> argmax(int64_t dim = -1, bool keepdim = false);
+    std::shared_ptr<Tensor> argmin(int64_t dim = -1, bool keepdim = false);
+    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> topk(int64_t k, int64_t dim = -1, bool largest = true, bool sorted = true);
+    std::shared_ptr<Tensor> eq(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> ne(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> lt(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> gt(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> le(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> ge(std::shared_ptr<Tensor> other);
+    std::shared_ptr<Tensor> log_softmax(int64_t dim = -1);
+    std::shared_ptr<Tensor> silu();
+    std::shared_ptr<Tensor> sum(int64_t dim, bool keepdim = false);
+    std::shared_ptr<Tensor> mean(int64_t dim, bool keepdim = false);
+    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max(int64_t dim, bool keepdim = false);
 
     float* data_ptr();
     cl_mem gpu_data();

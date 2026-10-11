@@ -25,10 +25,13 @@ class SGD : public Optimizer {
 public:
     float lr;
     float momentum;
+    float dampening;
+    bool nesterov;
     float weight_decay;
     std::vector<std::shared_ptr<Tensor>> velocity;
 
-    SGD(const std::vector<std::shared_ptr<Tensor>>& params, float lr = 1e-2f, float momentum = 0.0f, float weight_decay = 0.0f);
+    SGD(const std::vector<std::shared_ptr<Tensor>>& params, float lr = 1e-2f, float momentum = 0.0f,
+        float dampening = 0.0f, float weight_decay = 0.0f, bool nesterov = false);
     void step() override;
     float get_lr() const override { return lr; }
     void set_lr(float new_lr) override { lr = new_lr; }

@@ -7,8 +7,10 @@
 namespace litetorch {
 namespace optim {
 
-SGD::SGD(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float momentum, float weight_decay)
-    : Optimizer(params), lr(lr), momentum(momentum), weight_decay(weight_decay) {
+SGD::SGD(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float momentum,
+         float dampening, float weight_decay, bool nesterov)
+    : Optimizer(params), lr(lr), momentum(momentum), dampening(dampening),
+      nesterov(nesterov), weight_decay(weight_decay) {
     if (momentum != 0.0f) {
         for (auto& p : params) {
             velocity.push_back(Tensor::zeros(p->shape, p->device));
@@ -47,9 +49,10 @@ void SGD::step() {
             }
 
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "sgd_step_kernel");
+            int nesterov_val = nesterov ? 1 : 0;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                {&p_mem, &p_off, &g_mem, &g_off, &v_mem, &v_off, &has_momentum, &momentum, &lr, &weight_decay, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
+                {&p_mem, &p_off, &g_mem, &g_off, &v_mem, &v_off, &has_momentum, &momentum, &dampening, &nesterov_val, &lr, &weight_decay, &size},
+                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float), sizeof(float), sizeof(int), sizeof(float), sizeof(float), sizeof(int)});
         } else {
             float* p_ptr = p->data_ptr();
             float* g_ptr = g_c->data_ptr();
@@ -58,12 +61,14 @@ void SGD::step() {
             if (momentum != 0.0f) {
                 float* v_ptr = velocity[i]->data_ptr();
                 ThreadPool::get().parallel_for(0, size, [&](int64_t j) {
-                    float grad_val = g_ptr[j];
+                    float d_p = g_ptr[j];
                     if (weight_decay != 0.0f) {
-                        grad_val += weight_decay * p_ptr[j];
+                        d_p += weight_decay * p_ptr[j];
                     }
-                    v_ptr[j] = momentum * v_ptr[j] + grad_val;
-                    p_ptr[j] -= lr * v_ptr[j];
+                    float buf = momentum * v_ptr[j] + (1.0f - dampening) * d_p;
+                    v_ptr[j] = buf;
+                    float upd = nesterov ? (d_p + momentum * buf) : buf;
+                    p_ptr[j] -= lr * upd;
                 });
             } else {
                 ThreadPool::get().parallel_for(0, size, [&](int64_t j) {

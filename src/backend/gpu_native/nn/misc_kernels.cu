@@ -139,33 +139,50 @@ extern "C" __global__ void bce_loss_backward(
 
 extern "C" __global__ void cross_entropy_loss_forward(const float* input, int in_off,
                                          const float* target, int tgt_off,
+                                         const float* weight, int w_off, int has_weight,
                                          float* output, int out_off,
-                                         int N, int C) {
+                                         int N, int C, int ignore_index, float norm_inv, int per_sample) {
     int i = (blockIdx.x * blockDim.x + threadIdx.x);
     if (i < N) {
-        float max_val = input[in_off + i * C];
-        for (int j = 1; j < C; ++j) {
-            float val = input[in_off + i * C + j];
-            if (val > max_val) max_val = val;
-        }
-        float sum_exp = 0.0f;
-        for (int j = 0; j < C; ++j) {
-            sum_exp += expf(input[in_off + i * C + j] - max_val);
-        }
         int target_idx = (int)target[tgt_off + i];
-        float correct_logit = input[in_off + i * C + target_idx];
-        float loss = -correct_logit + max_val + logf(sum_exp);
-        atomic_add_float(&output[out_off], loss / (N > 0 ? N : 1));
+        float loss = 0.0f;
+        if (target_idx != ignore_index) {
+            float max_val = input[in_off + i * C];
+            for (int j = 1; j < C; ++j) {
+                float val = input[in_off + i * C + j];
+                if (val > max_val) max_val = val;
+            }
+            float sum_exp = 0.0f;
+            for (int j = 0; j < C; ++j) {
+                sum_exp += expf(input[in_off + i * C + j] - max_val);
+            }
+            float correct_logit = input[in_off + i * C + target_idx];
+            loss = -correct_logit + max_val + logf(sum_exp);
+            if (has_weight) loss *= weight[w_off + target_idx];
+        }
+        if (per_sample) {
+            output[out_off + i] = loss;
+        } else {
+            atomic_add_float(&output[out_off], loss * norm_inv);
+        }
     }
 }
 
 extern "C" __global__ void cross_entropy_loss_backward(const float* input, int in_off,
                                           const float* target, int tgt_off,
+                                          const float* weight, int w_off, int has_weight,
                                           const float* grad_output, int gout_off,
                                           float* grad_input, int gin_off,
-                                          int N, int C) {
+                                          int N, int C, int ignore_index, float norm_inv, int per_sample) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
+        int target_idx = (int)target[tgt_off + i];
+        if (target_idx == ignore_index) {
+            for (int j = 0; j < C; ++j) {
+                grad_input[gin_off + i * C + j] = 0.0f;
+            }
+            return;
+        }
         float max_val = input[in_off + i * C];
         for (int j = 1; j < C; ++j) {
             float val = input[in_off + i * C + j];
@@ -175,12 +192,13 @@ extern "C" __global__ void cross_entropy_loss_backward(const float* input, int i
         for (int j = 0; j < C; ++j) {
             sum += expf(input[in_off + i * C + j] - max_val);
         }
-        int target_idx = (int)target[tgt_off + i];
-        float go = grad_output[gout_off];
+        float go = per_sample ? grad_output[gout_off + i] : grad_output[gout_off];
+        float wt = has_weight ? weight[w_off + target_idx] : 1.0f;
+        float scale = wt * norm_inv * go;
         for (int j = 0; j < C; ++j) {
             float prob = expf(input[in_off + i * C + j] - max_val) / sum;
             float indicator = (j == target_idx) ? 1.0f : 0.0f;
-            grad_input[gin_off + i * C + j] = (prob - indicator) / N * go;
+            grad_input[gin_off + i * C + j] = (prob - indicator) * scale;
         }
     }
 }
@@ -230,6 +248,20 @@ extern "C" __global__ void embedding_forward(
         output[out_off + i * embedding_dim + d] = weight[w_off + idx * embedding_dim + d];
     } else {
         output[out_off + i * embedding_dim + d] = 0.0f;
+    }
+}
+
+extern "C" __global__ void embedding_zero_padding_rows(
+    const float* input, int in_off,
+    float* out, int out_off,
+    int num_indices, int embedding_dim, int padding_idx)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_indices) return;
+    if (static_cast<int>(input[in_off + i]) == padding_idx) {
+        for (int d = 0; d < embedding_dim; ++d) {
+            out[out_off + i * embedding_dim + d] = 0.0f;
+        }
     }
 }
 

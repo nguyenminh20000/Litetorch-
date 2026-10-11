@@ -96,9 +96,15 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim);
 std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim);
 std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim);
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim);
 std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim);
+std::vector<std::shared_ptr<Tensor>> split(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim);
+std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, int64_t chunks, int64_t dim);
 std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim);
 std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim);
 std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float max_val);
@@ -335,6 +341,13 @@ public:
 };
 
 std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto b_fp32 = cast(b, DataType::FP32);
+        auto out_fp32 = add(a_fp32, b_fp32);
+        return cast(out_fp32, out_dtype);
+    }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
         else a = a->to(b->device);
@@ -458,6 +471,13 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto b_fp32 = cast(b, DataType::FP32);
+        auto out_fp32 = sub(a_fp32, b_fp32);
+        return cast(out_fp32, out_dtype);
+    }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
         else a = a->to(b->device);
@@ -581,6 +601,13 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto b_fp32 = cast(b, DataType::FP32);
+        auto out_fp32 = mul(a_fp32, b_fp32);
+        return cast(out_fp32, out_dtype);
+    }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
         else a = a->to(b->device);
@@ -704,6 +731,13 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto b_fp32 = cast(b, DataType::FP32);
+        auto out_fp32 = div(a_fp32, b_fp32);
+        return cast(out_fp32, out_dtype);
+    }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
         else a = a->to(b->device);
@@ -842,6 +876,11 @@ public:
 };
 
 std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = pow(a_fp32, exponent);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -902,6 +941,11 @@ public:
 };
 
 std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = sqrt(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -961,6 +1005,11 @@ public:
 };
 
 std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = exp(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -1019,6 +1068,11 @@ public:
 };
 
 std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = log(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -1087,6 +1141,11 @@ public:
 };
 
 std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = abs(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -1144,6 +1203,11 @@ public:
 };
 
 std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = neg(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -1232,6 +1296,11 @@ public:
 };
 
 std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = sum(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto out = Tensor::create({1}, a->device);
     StorageUseGuard guard({a->storage, out->storage});
     bool run_gpu = false;
@@ -1337,6 +1406,11 @@ public:
 };
 
 std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = mean(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     float num_el = static_cast<float>(a->numel());
     auto out = sum(a);
     auto scale = Tensor::from_vector({1.0f / num_el}, {1}, a->device);
@@ -1389,6 +1463,11 @@ public:
 };
 
 std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = max(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto out = Tensor::create({1}, a->device);
     StorageUseGuard guard({a->storage, out->storage});
 
@@ -1429,6 +1508,267 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         out->requires_grad = true;
     }
     return out;
+}
+
+static std::shared_ptr<Tensor> sum_dim_forward(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim, float scale) {
+    int64_t ndim = static_cast<int64_t>(a->shape.size());
+    if (ndim == 0) throw std::runtime_error("[litetorch Error] sum over dim of a 0-dim tensor");
+    if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for sum");
+    int64_t outer_size = 1, inner_size = 1;
+    for (int64_t i = 0; i < dim; ++i) outer_size *= a->shape[i];
+    int64_t dim_size = a->shape[dim];
+    for (int64_t i = dim + 1; i < ndim; ++i) inner_size *= a->shape[i];
+    std::vector<int64_t> out_shape;
+    out_shape.reserve(keepdim ? static_cast<size_t>(ndim) : static_cast<size_t>(ndim - 1));
+    for (int64_t i = 0; i < ndim; ++i) {
+        if (i == dim) { if (keepdim) out_shape.push_back(1); }
+        else out_shape.push_back(a->shape[i]);
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(out_shape, a->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    bool run_gpu = false;
+    if (a->device.type == DeviceType::GPU) {
+        auto native = BackendDispatcher::get().get_backend();
+        if (native && native->is_available()) {
+            typedef void (*ReduceDimFn)(void*, int, void*, int, int, int, int);
+            auto fn = reinterpret_cast<ReduceDimFn>(native->get_kernel("", "", "gpu_reduce_broadcast_dim"));
+            if (fn) {
+                run_gpu = true;
+                fn(a_c->gpu_data(), a_c->offset, out->gpu_data(), out->offset,
+                   (int)outer_size, (int)dim_size, (int)inner_size);
+                if (scale != 1.0f) {
+                    auto scale_t = Tensor::from_vector({scale}, {1}, a->device);
+                    out = mul(out, scale_t);
+                }
+            }
+        }
+        if (!run_gpu) {
+            auto kernel = rt_gpu_get_kernel_by_id(KernelID::ReduceBroadcastDim);
+            if (kernel) {
+                run_gpu = true;
+                cl_mem in_mem = a_c->gpu_data();
+                int in_off = a_c->offset;
+                cl_mem out_mem = out->gpu_data();
+                int out_off = out->offset;
+                int out_sz = (int)outer_size;
+                int d_sz = (int)dim_size;
+                int in_sz = (int)inner_size;
+                int total_threads = (int)(outer_size * inner_size);
+                rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
+                    {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                if (scale != 1.0f) {
+                    auto scale_t = Tensor::from_vector({scale}, {1}, a->device);
+                    out = mul(out, scale_t);
+                }
+            }
+        }
+    }
+    if (!run_gpu) {
+        float* src = a_c->data_ptr();
+        float* dst = out->data_ptr();
+        ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+            for (int64_t in = 0; in < inner_size; ++in) {
+                float s = 0.0f;
+                for (int64_t d = 0; d < dim_size; ++d) {
+                    s += src[(o * dim_size + d) * inner_size + in];
+                }
+                dst[o * inner_size + in] = s * scale;
+            }
+        });
+        if (a->device.type == DeviceType::GPU) {
+            rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), dst);
+        } else if (a->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(out->gpu_data(), out->numel() * sizeof(float), dst);
+        }
+    }
+    return out;
+}
+
+class SumDimNode : public Node {
+public:
+    int64_t dim;
+    bool keepdim;
+    std::vector<int64_t> input_shape;
+    float divisor;
+    SumDimNode(int64_t dim, bool keepdim, const std::vector<int64_t>& input_shape, float divisor)
+        : Node("SumDim"), dim(dim), keepdim(keepdim), input_shape(input_shape), divisor(divisor) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto cpu_gout = grad_output;
+        if (grad_output->device.type != DeviceType::CPU) {
+            cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
+        }
+        if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+        auto grad_input = Tensor::create(input_shape, grad_output->device);
+        StorageUseGuard guard({grad_input->storage, grad_output->storage});
+        int64_t ndim = static_cast<int64_t>(input_shape.size());
+        int64_t outer_size = 1, inner_size = 1;
+        for (int64_t i = 0; i < dim; ++i) outer_size *= input_shape[i];
+        int64_t dim_size = input_shape[dim];
+        for (int64_t i = dim + 1; i < ndim; ++i) inner_size *= input_shape[i];
+        float* g = grad_input->data_ptr();
+        float* gout = cpu_gout->data_ptr();
+        float scale = 1.0f / divisor;
+        ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+            for (int64_t i = 0; i < inner_size; ++i) {
+                float v = gout[o * inner_size + i] * scale;
+                for (int64_t d = 0; d < dim_size; ++d) {
+                    g[(o * dim_size + d) * inner_size + i] = v;
+                }
+            }
+        });
+        if (grad_output->device.type == DeviceType::GPU) {
+            rt_gpu_write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+        } else if (grad_output->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+        }
+        return { grad_input };
+    }
+};
+
+std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    auto out = sum_dim_forward(a, dim, keepdim, 1.0f);
+    int64_t ndim = static_cast<int64_t>(a->shape.size());
+    int64_t d = dim < 0 ? dim + ndim : dim;
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
+        auto node = std::make_shared<SumDimNode>(d, keepdim, a->shape, 1.0f);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    int64_t ndim = static_cast<int64_t>(a->shape.size());
+    int64_t d = dim < 0 ? dim + ndim : dim;
+    if (d < 0 || d >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for mean");
+    float dim_size = static_cast<float>(a->shape[d]);
+    auto out = sum_dim_forward(a, dim, keepdim, 1.0f / dim_size);
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
+        auto node = std::make_shared<SumDimNode>(d, keepdim, a->shape, dim_size);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+class MaxDimNode : public Node {
+public:
+    int64_t dim;
+    std::vector<int64_t> input_shape;
+    std::vector<int64_t> argmax;
+    MaxDimNode(int64_t dim, const std::vector<int64_t>& input_shape, const std::vector<int64_t>& argmax)
+        : Node("MaxDim"), dim(dim), input_shape(input_shape), argmax(argmax) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto cpu_gout = grad_output;
+        if (grad_output->device.type != DeviceType::CPU) {
+            cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
+        }
+        if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+        auto grad_input = Tensor::zeros(input_shape, grad_output->device);
+        StorageUseGuard guard({grad_input->storage, grad_output->storage});
+        int64_t ndim = static_cast<int64_t>(input_shape.size());
+        int64_t outer_size = 1, inner_size = 1;
+        for (int64_t i = 0; i < dim; ++i) outer_size *= input_shape[i];
+        int64_t dim_size = input_shape[dim];
+        for (int64_t i = dim + 1; i < ndim; ++i) inner_size *= input_shape[i];
+        float* g = grad_input->data_ptr();
+        float* gout = cpu_gout->data_ptr();
+        ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+            for (int64_t i = 0; i < inner_size; ++i) {
+                int64_t k = o * inner_size + i;
+                g[(o * dim_size + argmax[static_cast<size_t>(k)]) * inner_size + i] += gout[k];
+            }
+        });
+        if (grad_output->device.type == DeviceType::GPU) {
+            rt_gpu_write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+        } else if (grad_output->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), g);
+        }
+        return { grad_input };
+    }
+};
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    int64_t ndim = static_cast<int64_t>(a->shape.size());
+    if (ndim == 0) throw std::runtime_error("[litetorch Error] max over dim of a 0-dim tensor");
+    if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for max");
+    int64_t outer_size = 1, inner_size = 1;
+    for (int64_t i = 0; i < dim; ++i) outer_size *= a->shape[i];
+    int64_t dim_size = a->shape[dim];
+    for (int64_t i = dim + 1; i < ndim; ++i) inner_size *= a->shape[i];
+    std::vector<int64_t> out_shape;
+    out_shape.reserve(keepdim ? static_cast<size_t>(ndim) : static_cast<size_t>(ndim - 1));
+    for (int64_t i = 0; i < ndim; ++i) {
+        if (i == dim) { if (keepdim) out_shape.push_back(1); }
+        else out_shape.push_back(a->shape[i]);
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto cpu_in = a_c;
+    if (a->device.type != DeviceType::CPU) {
+        cpu_in = a_c->to(Device(DeviceType::CPU, 0));
+    }
+    if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
+    auto out = Tensor::create(out_shape, a->device);
+    auto indices = Tensor::create(out_shape, a->device, false, DataType::INT32);
+    StorageUseGuard guard({a_c->storage, out->storage, indices->storage});
+    float* src = cpu_in->data_ptr();
+    float* dst = out->data_ptr();
+    int32_t* idst = reinterpret_cast<int32_t*>(indices->data_ptr());
+    std::vector<int64_t> argmax(static_cast<size_t>(outer_size * inner_size));
+    ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
+        for (int64_t i = 0; i < inner_size; ++i) {
+            float best = src[(o * dim_size) * inner_size + i];
+            int64_t best_d = 0;
+            for (int64_t d = 1; d < dim_size; ++d) {
+                float v = src[(o * dim_size + d) * inner_size + i];
+                if (v > best) { best = v; best_d = d; }
+            }
+            int64_t k = o * inner_size + i;
+            dst[k] = best;
+            idst[k] = static_cast<int32_t>(best_d);
+            argmax[static_cast<size_t>(k)] = best_d;
+        }
+    });
+    if (a->device.type == DeviceType::GPU) {
+        rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), dst);
+        rt_gpu_write(indices->gpu_data(), indices->numel() * sizeof(int32_t), idst);
+    } else if (a->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu) {
+            tpu->write(out->gpu_data(), out->numel() * sizeof(float), dst);
+            tpu->write(indices->gpu_data(), indices->numel() * sizeof(int32_t), idst);
+        }
+    }
+    if (Autograd::is_grad_enabled() && (a->requires_grad)) {
+        auto node = std::make_shared<MaxDimNode>(dim, a->shape, argmax);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return { out, indices };
+}
+
+std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    return max_with_indices(a, dim, keepdim).first;
 }
 
 class CatNode : public Node {
@@ -1501,6 +1841,23 @@ public:
 };
 
 std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim) {
+    if (!tensors.empty()) {
+        bool any_non_fp32 = false;
+        DataType first_dtype = tensors[0]->dtype;
+        bool all_same = true;
+        for (auto& t : tensors) {
+            if (t->dtype != DataType::FP32) any_non_fp32 = true;
+            if (t->dtype != first_dtype) all_same = false;
+        }
+        if (any_non_fp32) {
+            DataType out_dtype = all_same ? first_dtype : DataType::FP32;
+            std::vector<std::shared_ptr<Tensor>> fp32_tensors;
+            fp32_tensors.reserve(tensors.size());
+            for (auto& t : tensors) fp32_tensors.push_back(cast(t, DataType::FP32));
+            auto out_fp32 = cat(fp32_tensors, dim);
+            return cast(out_fp32, out_dtype);
+        }
+    }
     if (tensors.empty()) {
         throw std::runtime_error("[litetorch Error] cat requires at least one tensor");
     }
@@ -1624,19 +1981,19 @@ public:
     }
 };
 
-std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim) {
+std::vector<std::shared_ptr<Tensor>> split(std::shared_ptr<Tensor> input, const std::vector<int64_t>& sizes, int64_t dim) {
     int64_t ndim = static_cast<int64_t>(input->shape.size());
     if (dim < 0) dim += ndim;
     if (dim < 0 || dim >= ndim) {
-        throw std::runtime_error("[litetorch Error] Dimension out of range for chunk");
+        throw std::runtime_error("[litetorch Error] Dimension out of range for split");
     }
     int64_t total = 0;
     for (auto s : sizes) {
-        if (s <= 0) throw std::runtime_error("[litetorch Error] chunk sizes must be positive");
+        if (s <= 0) throw std::runtime_error("[litetorch Error] split sizes must be positive");
         total += s;
     }
     if (total != input->shape[dim]) {
-        throw std::runtime_error("[litetorch Error] chunk sizes must sum to dimension size");
+        throw std::runtime_error("[litetorch Error] split sizes must sum to dimension size");
     }
     std::vector<std::shared_ptr<Tensor>> outputs;
     outputs.reserve(sizes.size());
@@ -1658,6 +2015,37 @@ std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, const 
     return outputs;
 }
 
+std::vector<std::shared_ptr<Tensor>> chunk(std::shared_ptr<Tensor> input, int64_t chunks, int64_t dim) {
+    int64_t ndim = static_cast<int64_t>(input->shape.size());
+    if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range for chunk");
+    }
+    if (chunks <= 0) {
+        throw std::runtime_error("[litetorch Error] chunk expects at least a 1-dimensional tensor and chunks > 0");
+    }
+    int64_t dim_size = input->shape[dim];
+    if (dim_size == 0) {
+        auto out = input->slice(dim, 0, 0, 1);
+        if (Autograd::is_grad_enabled() && input->requires_grad) {
+            auto node = std::make_shared<NarrowNode>(dim, 0, 0, input->shape);
+            node->inputs.push_back({input, true});
+            node->next_nodes.push_back(input->creator);
+            node->output = out;
+            out->creator = node;
+            out->requires_grad = true;
+        }
+        return {out};
+    }
+    int64_t chunk_size = (dim_size + chunks - 1) / chunks;
+    std::vector<int64_t> sizes;
+    sizes.reserve(static_cast<size_t>(chunks));
+    for (int64_t start = 0; start < dim_size; start += chunk_size) {
+        sizes.push_back(std::min(chunk_size, dim_size - start));
+    }
+    return split(input, sizes, dim);
+}
+
 class SqueezeNode : public Node {
 public:
     std::vector<int64_t> input_shape;
@@ -1674,8 +2062,8 @@ public:
 std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
     std::vector<int64_t> new_shape;
     std::vector<int64_t> new_strides;
-    int64_t ndim = a->shape.size();
-    if (dim < 0) {
+    int64_t ndim = static_cast<int64_t>(a->shape.size());
+    if (dim == SQUEEZE_ALL_DIMS) {
         for (int64_t i = 0; i < ndim; ++i) {
             if (a->shape[i] != 1) {
                 new_shape.push_back(a->shape[i]);
@@ -1683,7 +2071,8 @@ std::shared_ptr<Tensor> squeeze(std::shared_ptr<Tensor> a, int64_t dim) {
             }
         }
     } else {
-        if (dim >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for squeeze");
+        if (dim < 0) dim += ndim;
+        if (dim < 0 || dim >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for squeeze");
         for (int64_t i = 0; i < ndim; ++i) {
             if (i != dim || a->shape[i] != 1) {
                 new_shape.push_back(a->shape[i]);
@@ -1771,6 +2160,11 @@ public:
 };
 
 std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float max_val) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = clamp(a_fp32, min_val, max_val);
+        return cast(out_fp32, a->dtype);
+    }
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
@@ -1812,6 +2206,11 @@ public:
 };
 
 std::shared_ptr<Tensor> sin(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = sin(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto out = Tensor::create(a->shape, a->device);
     StorageUseGuard guard({a->storage, out->storage});
     float* src = a->data_ptr();
@@ -1846,6 +2245,11 @@ public:
 };
 
 std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = cos(a_fp32);
+        return cast(out_fp32, a->dtype);
+    }
     auto out = Tensor::create(a->shape, a->device);
     StorageUseGuard guard({a->storage, out->storage});
     float* src = a->data_ptr();

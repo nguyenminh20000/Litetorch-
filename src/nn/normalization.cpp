@@ -5,32 +5,56 @@
 namespace litetorch {
 namespace nn {
 
-BatchNorm2d::BatchNorm2d(int num_features, float eps, float momentum)
-    : num_features(num_features), eps(eps), momentum(momentum) {
-    weight = Tensor::create({num_features}, Device(DeviceType::CPU, 0), true);
-    bias = Tensor::create({num_features}, Device(DeviceType::CPU, 0), true);
-    running_mean = Tensor::create({num_features}, Device(DeviceType::CPU, 0), false);
-    running_var = Tensor::create({num_features}, Device(DeviceType::CPU, 0), false);
-
-    std::fill(weight->data_ptr(), weight->data_ptr() + num_features, 1.0f);
-    std::fill(bias->data_ptr(), bias->data_ptr() + num_features, 0.0f);
-    std::fill(running_mean->data_ptr(), running_mean->data_ptr() + num_features, 0.0f);
-    std::fill(running_var->data_ptr(), running_var->data_ptr() + num_features, 1.0f);
+BatchNorm2d::BatchNorm2d(int num_features, float eps, float momentum, bool affine, bool track_running_stats)
+    : num_features(num_features), eps(eps), momentum(momentum), affine(affine), track_running_stats(track_running_stats) {
+    if (affine) {
+        weight = Tensor::create({num_features}, Device(DeviceType::CPU, 0), true);
+        bias = Tensor::create({num_features}, Device(DeviceType::CPU, 0), true);
+        std::fill(weight->data_ptr(), weight->data_ptr() + num_features, 1.0f);
+        std::fill(bias->data_ptr(), bias->data_ptr() + num_features, 0.0f);
+    }
+    if (track_running_stats) {
+        running_mean = Tensor::create({num_features}, Device(DeviceType::CPU, 0), false);
+        running_var = Tensor::create({num_features}, Device(DeviceType::CPU, 0), false);
+        std::fill(running_mean->data_ptr(), running_mean->data_ptr() + num_features, 0.0f);
+        std::fill(running_var->data_ptr(), running_var->data_ptr() + num_features, 1.0f);
+    }
 }
 
 std::shared_ptr<Tensor> BatchNorm2d::forward(std::shared_ptr<Tensor> input) {
-    return Ops::batch_norm2d(input, running_mean, running_var, weight, bias, training, momentum, eps);
+    std::shared_ptr<Tensor> w = weight;
+    std::shared_ptr<Tensor> b = bias;
+    std::shared_ptr<Tensor> rm = running_mean;
+    std::shared_ptr<Tensor> rv = running_var;
+    bool train = training;
+    if (!affine) {
+        w = Tensor::ones({num_features}, input->device);
+        b = Tensor::zeros({num_features}, input->device);
+    } else if (w && w->device != input->device) {
+        w = w->to(input->device);
+        b = b->to(input->device);
+    }
+    if (!track_running_stats) {
+        rm = Tensor::zeros({num_features}, input->device);
+        rv = Tensor::ones({num_features}, input->device);
+        train = true;
+    } else if (rm && rm->device != input->device) {
+        rm = rm->to(input->device);
+        rv = rv->to(input->device);
+    }
+    return Ops::batch_norm2d(input, rm, rv, w, b, train, momentum, eps);
 }
 
 std::vector<std::shared_ptr<Tensor>> BatchNorm2d::parameters() {
+    if (!affine) return {};
     return { weight, bias };
 }
 
 void BatchNorm2d::to(const Device& device) {
-    weight = weight->to(device);
-    bias = bias->to(device);
-    running_mean = running_mean->to(device);
-    running_var = running_var->to(device);
+    if (weight) weight = weight->to(device);
+    if (bias) bias = bias->to(device);
+    if (running_mean) running_mean = running_mean->to(device);
+    if (running_var) running_var = running_var->to(device);
 }
 
 LayerNorm::LayerNorm(const std::vector<int64_t>& normalized_shape, float eps)

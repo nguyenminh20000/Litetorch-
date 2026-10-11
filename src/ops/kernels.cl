@@ -707,31 +707,49 @@ __kernel void bce_loss_backward(__global const float* input, int in_off,
 }
 __kernel void cross_entropy_loss_forward(__global const float* input, int in_off,
                                          __global const float* target, int tgt_off,
+                                         __global const float* weight, int w_off, int has_weight,
                                          __global float* output, int out_off,
-                                         int N, int C, float inv_n) {
+                                         int N, int C, int ignore_index, float norm_inv, int per_sample) {
     int i = get_global_id(0);
     if (i >= N) return;
-    float max_val = input[in_off + i * C];
-    for (int j = 1; j < C; ++j) {
-        float val = input[in_off + i * C + j];
-        if (val > max_val) max_val = val;
-    }
-    float sum_exp = 0.0f;
-    for (int j = 0; j < C; ++j) {
-        sum_exp += exp(input[in_off + i * C + j] - max_val);
-    }
     int target_idx = (int)target[tgt_off + i];
-    float correct_logit = input[in_off + i * C + target_idx];
-    float loss = -correct_logit + max_val + log(sum_exp);
-    atomic_add_float(&output[out_off], loss * inv_n);
+    float loss = 0.0f;
+    if (target_idx != ignore_index) {
+        float max_val = input[in_off + i * C];
+        for (int j = 1; j < C; ++j) {
+            float val = input[in_off + i * C + j];
+            if (val > max_val) max_val = val;
+        }
+        float sum_exp = 0.0f;
+        for (int j = 0; j < C; ++j) {
+            sum_exp += exp(input[in_off + i * C + j] - max_val);
+        }
+        float correct_logit = input[in_off + i * C + target_idx];
+        loss = -correct_logit + max_val + log(sum_exp);
+        if (has_weight) loss *= weight[w_off + target_idx];
+    }
+    if (per_sample) {
+        output[out_off + i] = loss;
+    } else {
+        atomic_add_float(&output[out_off], loss * norm_inv);
+    }
 }
 __kernel void cross_entropy_loss_backward(__global const float* input, int in_off,
                                           __global const float* target, int tgt_off,
+                                          __global const float* weight, int w_off, int has_weight,
                                           __global const float* grad_output, int gout_off,
                                           __global float* grad_input, int gin_off,
-                                          int N, int C) {
+                                          int N, int C, int ignore_index, float norm_inv, int per_sample) {
     int i = get_global_id(0);
     if (i >= N) return;
+
+    int target_idx = (int)target[tgt_off + i];
+    if (target_idx == ignore_index) {
+        for (int j = 0; j < C; ++j) {
+            grad_input[gin_off + i * C + j] = 0.0f;
+        }
+        return;
+    }
 
     float max_val = input[in_off + i * C];
     for (int j = 1; j < C; ++j) {
@@ -744,12 +762,13 @@ __kernel void cross_entropy_loss_backward(__global const float* input, int in_of
         sum += exp(input[in_off + i * C + j] - max_val);
     }
 
-    int target_idx = (int)target[tgt_off + i];
-    float go = grad_output[gout_off];
+    float go = per_sample ? grad_output[gout_off + i] : grad_output[gout_off];
+    float wt = has_weight ? weight[w_off + target_idx] : 1.0f;
+    float scale = wt * norm_inv * go;
     for (int j = 0; j < C; ++j) {
         float prob = exp(input[in_off + i * C + j] - max_val) / sum;
         float indicator = (j == target_idx) ? 1.0f : 0.0f;
-        grad_input[gin_off + i * C + j] = (prob - indicator) / N * go;
+        grad_input[gin_off + i * C + j] = (prob - indicator) * scale;
     }
 }
 __kernel void sum_forward(__global const float* A, int a_off,
@@ -949,6 +968,17 @@ __kernel void embedding_forward(__global const float* input, int in_off,
         output[out_off + i * embedding_dim + d] = 0.0f;
     }
 }
+__kernel void embedding_zero_padding_rows(__global const float* input, int in_off,
+                                          __global float* out, int out_off,
+                                          int num_indices, int embedding_dim, int padding_idx) {
+    int i = get_global_id(0);
+    if (i >= num_indices) return;
+    if ((int)input[in_off + i] == padding_idx) {
+        for (int d = 0; d < embedding_dim; ++d) {
+            out[out_off + i * embedding_dim + d] = 0.0f;
+        }
+    }
+}
 inline void atomic_add_f(volatile __global float* addr, float val) {
     union { unsigned int u; float f; } old_v, new_v;
     do {
@@ -1008,18 +1038,21 @@ __kernel void sgd_step_kernel(__global float* P, int p_off,
                               __global const float* G, int g_off,
                               __global float* V, int v_off,
                               int has_momentum, float momentum,
+                              float dampening, int nesterov,
                               float lr, float weight_decay, int size) {
     int id = get_global_id(0);
     if (id < size) {
-        float grad_val = G[g_off + id];
+        float d_p = G[g_off + id];
         if (weight_decay != 0.0f) {
-            grad_val += weight_decay * P[p_off + id];
+            d_p += weight_decay * P[p_off + id];
         }
         if (has_momentum) {
-            V[v_off + id] = momentum * V[v_off + id] + grad_val;
-            P[p_off + id] -= lr * V[v_off + id];
+            float buf = momentum * V[v_off + id] + (1.0f - dampening) * d_p;
+            V[v_off + id] = buf;
+            float upd = nesterov ? (d_p + momentum * buf) : buf;
+            P[p_off + id] -= lr * upd;
         } else {
-            P[p_off + id] -= lr * grad_val;
+            P[p_off + id] -= lr * d_p;
         }
     }
 }

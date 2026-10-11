@@ -32,8 +32,10 @@ class EmbeddingNode : public litetorch::Node {
 public:
     int num_embeddings;
     int embedding_dim;
-    EmbeddingNode(int num_embeddings, int embedding_dim)
-        : litetorch::Node("Embedding"), num_embeddings(num_embeddings), embedding_dim(embedding_dim) {}
+    int64_t padding_idx;
+    EmbeddingNode(int num_embeddings, int embedding_dim, int64_t padding_idx = -1)
+        : litetorch::Node("Embedding"), num_embeddings(num_embeddings),
+          embedding_dim(embedding_dim), padding_idx(padding_idx) {}
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
@@ -65,6 +67,11 @@ public:
             rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                 {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &num_indices, &num_embeddings_val, &embedding_dim_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+            if (padding_idx >= 0 && padding_idx < num_embeddings) {
+                std::vector<float> prow(embedding_dim, 0.0f);
+                rt_gpu_write(gw_mem, prow.size() * sizeof(float), prow.data(),
+                             static_cast<size_t>(gw_off + padding_idx * embedding_dim) * sizeof(float));
+            }
         } else {
             float* in_ptr = input_c->data_ptr();
             float* gout_ptr = gout_c->data_ptr();
@@ -81,6 +88,10 @@ public:
                     }
                 }
             }
+            if (padding_idx >= 0 && padding_idx < num_embeddings) {
+                std::fill(gw_ptr + padding_idx * embedding_dim,
+                          gw_ptr + (padding_idx + 1) * embedding_dim, 0.0f);
+            }
         }
         std::vector<std::shared_ptr<Tensor>> res = { nullptr, grad_weight };
         return res;
@@ -88,8 +99,8 @@ public:
 };
 }
 
-Embedding::Embedding(int num_embeddings, int embedding_dim)
-    : num_embeddings(num_embeddings), embedding_dim(embedding_dim) {
+Embedding::Embedding(int num_embeddings, int embedding_dim, int64_t padding_idx)
+    : num_embeddings(num_embeddings), embedding_dim(embedding_dim), padding_idx(padding_idx) {
     weight = Tensor::create({num_embeddings, embedding_dim}, Device(DeviceType::CPU, 0), true);
     std::mt19937& gen = get_generator();
     std::normal_distribution<float> dis(0.0f, 1.0f);
@@ -127,6 +138,14 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
         rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &num_indices, &num_embeddings_val, &embedding_dim_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+        if (padding_idx >= 0 && padding_idx < num_embeddings) {
+            auto zkernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_zero_padding_rows");
+            int num_indices_val = num_indices;
+            int padding_idx_val = static_cast<int>(padding_idx);
+            rt_gpu_launch(zkernel, {static_cast<size_t>(num_indices_val)}, {},
+                {&in_mem, &in_off, &out_mem, &out_off, &num_indices_val, &embedding_dim_val, &padding_idx_val},
+                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+        }
     } else {
         float* in_ptr = input_c->data_ptr();
         float* w_ptr = weight_c->data_ptr();
@@ -139,10 +158,17 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
             }
             std::copy(w_ptr + idx * embedding_dim, w_ptr + (idx + 1) * embedding_dim, out_ptr + i * embedding_dim);
         });
+        if (padding_idx >= 0 && padding_idx < num_embeddings) {
+            for (size_t i = 0; i < num_indices; ++i) {
+                if (static_cast<int>(in_ptr[i]) == padding_idx) {
+                    std::fill(out_ptr + i * embedding_dim, out_ptr + (i + 1) * embedding_dim, 0.0f);
+                }
+            }
+        }
     }
 
     if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad)) {
-        auto node = std::make_shared<EmbeddingNode>(num_embeddings, embedding_dim);
+        auto node = std::make_shared<EmbeddingNode>(num_embeddings, embedding_dim, padding_idx);
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
         node->saved_tensors = { input, weight };

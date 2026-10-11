@@ -89,6 +89,11 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> cos, std::shared_ptr<Tensor> sin) {
+    if (x->dtype != DataType::FP32) {
+        auto x_fp32 = cast(x, DataType::FP32);
+        auto out_fp32 = rope(x_fp32, cos, sin);
+        return cast(out_fp32, x->dtype);
+    }
     if (x->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] RoPE input must be a 4D tensor [B, H, T, D]");
     }

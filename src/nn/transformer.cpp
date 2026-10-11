@@ -6,8 +6,8 @@ namespace nn {
 
 TransformerDecoderLayer::TransformerDecoderLayer(int embed_dim, int num_heads, int dim_feedforward)
     : embed_dim(embed_dim), num_heads(num_heads), dim_feedforward(dim_feedforward) {
-    self_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads);
-    multihead_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads);
+    self_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, true);
+    multihead_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, true);
     linear1 = std::make_shared<Linear>(embed_dim, dim_feedforward);
     linear2 = std::make_shared<Linear>(dim_feedforward, embed_dim);
     norm1 = std::make_shared<LayerNorm>(std::vector<int64_t>{embed_dim});
