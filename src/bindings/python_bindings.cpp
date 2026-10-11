@@ -322,6 +322,7 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("max_pool3d", &Ops::max_pool3d, py::arg("input"), py::arg("kernel_size"), py::arg("stride") = -1, py::arg("padding") = 0);
     ops.def("adaptive_avg_pool2d", &Ops::adaptive_avg_pool2d, py::arg("input"), py::arg("output_height"), py::arg("output_width"));
     ops.def("cat", &Ops::cat, py::arg("tensors"), py::arg("dim") = 0);
+    ops.def("chunk", &Ops::chunk, py::arg("input"), py::arg("sizes"), py::arg("dim") = -1);
     ops.def("squeeze", &Ops::squeeze, py::arg("a"), py::arg("dim") = -1);
     ops.def("unsqueeze", &Ops::unsqueeze, py::arg("a"), py::arg("dim"));
     ops.def("cast", &Ops::cast, py::arg("a"), py::arg("target_dtype"));
