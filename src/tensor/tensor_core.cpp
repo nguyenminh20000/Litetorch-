@@ -764,6 +764,27 @@ std::shared_ptr<Tensor> Tensor::view(const std::vector<int64_t>& new_shape) {
     return out;
 }
 
+std::shared_ptr<Tensor> Tensor::as_strided(const std::vector<int64_t>& new_shape, const std::vector<int64_t>& new_strides) {
+    int64_t new_numel = 1;
+    for (auto d : new_shape) new_numel *= d;
+    if (new_numel != static_cast<int64_t>(numel())) {
+        throw std::runtime_error("Shape mismatch in as_strided");
+    }
+    if (new_strides.size() != new_shape.size()) {
+        throw std::runtime_error("[litetorch Error] Strides rank mismatch in as_strided");
+    }
+
+    auto out = std::make_shared<Tensor>(storage, new_shape, new_strides, offset, device, requires_grad);
+    if (requires_grad) {
+        auto node = std::make_shared<ViewNode>(shape);
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->output = out;
+        out->creator = node;
+    }
+    return out;
+}
+
 std::shared_ptr<Tensor> Tensor::reshape(const std::vector<int64_t>& new_shape) {
     if (is_contiguous()) {
         return view(new_shape);

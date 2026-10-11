@@ -181,8 +181,10 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         bool b_t2 = trans_aware_nd && is_transpose_last2_flattenable(b);
         auto a_c = (a_t2 || a->is_contiguous()) ? a : a->contiguous();
         auto b_c = (b_t2 || b->is_contiguous()) ? b : b->contiguous();
-        auto a_flat = a_c->view({batch_size, M, K});
-        auto b_flat = b_c->view({batch_size, K, N});
+        size_t na = a_c->shape.size();
+        size_t nb = b_c->shape.size();
+        auto a_flat = a_c->as_strided({batch_size, M, K}, {a_c->strides[na - 3], a_c->strides[na - 2], a_c->strides[na - 1]});
+        auto b_flat = b_c->as_strided({batch_size, K, N}, {b_c->strides[nb - 3], b_c->strides[nb - 2], b_c->strides[nb - 1]});
         auto out_flat = bmm(a_flat, b_flat);
 
         std::vector<int64_t> out_shape = outer_shape;

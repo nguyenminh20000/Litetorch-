@@ -300,6 +300,7 @@ PYBIND11_MODULE(litetorch, m) {
             return self.view(shape);
         })
         .def("reshape", &Tensor::reshape)
+        .def("as_strided", &Tensor::as_strided, py::arg("shape"), py::arg("strides"))
         .def("permute", &Tensor::permute, py::arg("dims"))
         .def("detach", &Tensor::detach)
         .def("expand", &Tensor::expand, py::arg("shape"))

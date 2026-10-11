@@ -144,7 +144,7 @@ public:
         auto q_3d = q->view({B * H, Tq, D});
         auto k_t = k_rep->transpose(2, 3);
         auto k_t_3d = (k_t->strides[0] == k_t->shape[1] * k_t->strides[1])
-            ? k_t->view({B * H, D, Tk})
+            ? k_t->as_strided({B * H, D, Tk}, {k_t->strides[1], k_t->strides[2], k_t->strides[3]})
             : k_t->contiguous()->view({B * H, D, Tk});
         auto scores_3d = Ops::bmm(q_3d, k_t_3d);
         auto scores_4d = scores_3d->view({B, H, Tq, Tk});
