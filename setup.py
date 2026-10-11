@@ -141,6 +141,31 @@ inc_dirs = [
 ] + [x[0] for x in os.walk(os.path.join(SCRIPT_DIR, "src"))]
 
 class BuildExt(build_ext):
+    def run(self):
+        status_file = os.environ.get("LITETORCH_BUILD_STATUS_FILE", "").strip()
+        try:
+            super().run()
+        except BaseException as e:
+            msg = "[litetorch] BUILD FAILED: %s: %s" % (type(e).__name__, e)
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+            if status_file:
+                try:
+                    with open(status_file, "w") as f:
+                        f.write("rc=1\n%s\n" % msg)
+                except Exception:
+                    pass
+            raise
+        sys.stdout.write("[litetorch] BUILD OK\n")
+        sys.stdout.flush()
+        if status_file:
+            try:
+                with open(status_file, "w") as f:
+                    f.write("rc=0\n")
+            except Exception as e:
+                sys.stderr.write("[litetorch] WARNING: could not write build status file %s: %s\n" % (status_file, e))
+                sys.stderr.flush()
+
     def build_extensions(self):
         self.parallel = os.cpu_count() or 4
         compiler_type = self.compiler.compiler_type
