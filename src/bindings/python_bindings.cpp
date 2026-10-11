@@ -639,6 +639,17 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("base_model", &nn::MedusaEngine::base_model)
         .def_readwrite("medusa_heads", &nn::MedusaEngine::medusa_heads);
 
+    auto init_mod = nn_mod.def_submodule("init", "Weight initialization");
+    init_mod.def("kaiming_uniform_", &nn::init::kaiming_uniform_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("mode") = "fan_in", py::arg("nonlinearity") = "relu");
+    init_mod.def("kaiming_normal_", &nn::init::kaiming_normal_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("mode") = "fan_in", py::arg("nonlinearity") = "relu");
+    init_mod.def("xavier_uniform_", &nn::init::xavier_uniform_, py::arg("tensor"), py::arg("gain") = 1.0f);
+    init_mod.def("xavier_normal_", &nn::init::xavier_normal_, py::arg("tensor"), py::arg("gain") = 1.0f);
+    init_mod.def("normal_", &nn::init::normal_, py::arg("tensor"), py::arg("mean") = 0.0f, py::arg("std") = 1.0f);
+    init_mod.def("uniform_", &nn::init::uniform_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("b") = 1.0f);
+    init_mod.def("zeros_", &nn::init::zeros_, py::arg("tensor"));
+    init_mod.def("ones_", &nn::init::ones_, py::arg("tensor"));
+    init_mod.def("fill_", &nn::init::fill_, py::arg("tensor"), py::arg("value"));
+
     auto optim_mod = m.def_submodule("optim", "LiteTorch Optimizers");
     
     py::class_<optim::Optimizer, std::shared_ptr<optim::Optimizer>>(optim_mod, "Optimizer")
@@ -731,6 +742,27 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("T_max", &optim::CosineAnnealingLR::T_max)
         .def_readwrite("eta_min", &optim::CosineAnnealingLR::eta_min)
         .def_readwrite("last_epoch", &optim::CosineAnnealingLR::last_epoch);
+
+    auto lr_sched_mod = optim_mod.def_submodule("lr_scheduler", "Learning rate schedulers");
+    py::class_<optim::StepLR, std::unique_ptr<optim::StepLR>>(lr_sched_mod, "StepLR")
+        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("step_size"), py::arg("gamma") = 0.1f)
+        .def("step", &optim::StepLR::step)
+        .def_readwrite("step_size", &optim::StepLR::step_size)
+        .def_readwrite("gamma", &optim::StepLR::gamma)
+        .def_readwrite("last_epoch", &optim::StepLR::last_epoch);
+    py::class_<optim::CosineAnnealingLR, std::unique_ptr<optim::CosineAnnealingLR>>(lr_sched_mod, "CosineAnnealingLR")
+        .def(py::init<optim::Optimizer*, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("T_max"), py::arg("eta_min") = 0.0f)
+        .def("step", &optim::CosineAnnealingLR::step)
+        .def_readwrite("T_max", &optim::CosineAnnealingLR::T_max)
+        .def_readwrite("eta_min", &optim::CosineAnnealingLR::eta_min)
+        .def_readwrite("last_epoch", &optim::CosineAnnealingLR::last_epoch);
+    py::class_<optim::LinearWarmup, std::unique_ptr<optim::LinearWarmup>>(lr_sched_mod, "LinearWarmup")
+        .def(py::init<optim::Optimizer*, int, int, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("warmup_steps"), py::arg("total_steps"), py::arg("min_lr") = 0.0f)
+        .def("step", &optim::LinearWarmup::step)
+        .def("get_lr", &optim::LinearWarmup::get_lr)
+        .def_readwrite("warmup_steps", &optim::LinearWarmup::warmup_steps)
+        .def_readwrite("total_steps", &optim::LinearWarmup::total_steps)
+        .def_readwrite("last_step", &optim::LinearWarmup::last_step);
 
     py::class_<optim::GradScaler>(optim_mod, "GradScaler")
         .def(py::init<float, float, float, int>(), py::arg("init_scale") = 65536.0f, py::arg("growth_factor") = 2.0f, py::arg("backoff_factor") = 0.5f, py::arg("growth_interval") = 2000)
@@ -1006,6 +1038,8 @@ PYBIND11_MODULE(litetorch, m) {
     }, py::arg("obj"), py::arg("filepath"));
 
     m.def("manual_seed", &litetorch::manual_seed, py::arg("seed"));
+    m.def("get_rng_state", &litetorch::get_rng_state);
+    m.def("set_rng_state", &litetorch::set_rng_state, py::arg("state"));
 
     m.def("randn", [](const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
         return Tensor::randn(shape, device, requires_grad, dtype);

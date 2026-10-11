@@ -8,10 +8,17 @@ class CheckpointNode : public Node {
 public:
     CheckpointFunction function_;
     std::shared_ptr<Tensor> input_copy_;
+    std::string rng_state_;
+    bool input_requires_grad_ = false;
     bool create_graph_ = false;
 
-    CheckpointNode(CheckpointFunction fn, std::shared_ptr<Tensor> input)
-        : Node("CheckpointNode"), function_(fn), input_copy_(input) {
+    CheckpointNode(CheckpointFunction fn, std::shared_ptr<Tensor> input, const std::string& rng_state)
+        : Node("CheckpointNode"), function_(fn), rng_state_(rng_state) {
+        if (input) {
+            input_copy_ = Tensor::create(input->shape, input->device, false, input->dtype);
+            input_copy_->copy_(input);
+            input_requires_grad_ = input->requires_grad;
+        }
         if (input && input->requires_grad) {
             inputs.push_back({ input, true });
             next_nodes.push_back(input->creator ? input->creator.ptr : nullptr);
@@ -21,7 +28,9 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         if (!input_copy_) return { nullptr };
 
-        std::shared_ptr<Tensor> recomputed_input = Tensor::create(input_copy_->shape, input_copy_->device, input_copy_->requires_grad, input_copy_->dtype);
+        set_rng_state(rng_state_);
+
+        std::shared_ptr<Tensor> recomputed_input = Tensor::create(input_copy_->shape, input_copy_->device, input_requires_grad_, input_copy_->dtype);
         recomputed_input->copy_(input_copy_);
 
         std::shared_ptr<Tensor> recomputed_output = function_(recomputed_input);
@@ -44,6 +53,8 @@ std::shared_ptr<Tensor> checkpoint(CheckpointFunction function, std::shared_ptr<
         return function(input);
     }
 
+    std::string rng_state = get_rng_state();
+
     std::shared_ptr<Tensor> output;
     {
         NoGradGuard guard;
@@ -51,7 +62,7 @@ std::shared_ptr<Tensor> checkpoint(CheckpointFunction function, std::shared_ptr<
     }
 
     if (output) {
-        auto node = std::make_shared<CheckpointNode>(function, input);
+        auto node = std::make_shared<CheckpointNode>(function, input, rng_state);
         output->requires_grad = true;
         output->creator = node;
     }

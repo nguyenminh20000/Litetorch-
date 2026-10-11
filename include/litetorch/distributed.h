@@ -172,12 +172,14 @@ public:
         int world_size = ProcessGroup::get().is_initialized() ? ProcessGroup::get().get_world_size() : 1;
         int num_microbatches = static_cast<int>(microbatches.size());
         std::vector<std::shared_ptr<Tensor>> losses;
+        float grad_scale = num_microbatches > 0 ? 1.0f / num_microbatches : 1.0f;
         if (world_size <= 1 || num_microbatches == 0) {
             for (int i = 0; i < num_microbatches; ++i) {
                 auto out = local_module->forward(microbatches[i]);
                 if (loss_fn) {
                     auto loss = loss_fn(out, i);
-                    loss->backward();
+                    auto scale = Tensor::from_vector({grad_scale}, {}, loss->device, false);
+                    loss->backward(scale);
                     losses.push_back(loss);
                 }
             }
@@ -217,9 +219,11 @@ public:
                     int mb_id = static_cast<int>(losses.size());
                     auto loss = loss_fn(out, mb_id);
                     losses.push_back(loss);
-                    loss->backward();
+                    auto scale = Tensor::from_vector({grad_scale}, {}, loss->device, false);
+                    loss->backward(scale);
                 } else {
-                    out->backward();
+                    auto scale = Tensor::from_vector({grad_scale}, {}, out->device, false);
+                    out->backward(scale);
                 }
             } else {
                 grad_out = Tensor::create(out->shape, out->device);
