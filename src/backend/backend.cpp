@@ -25,9 +25,11 @@ typedef void (*gpu_launch_dynamic_t)(void*, int, int, int, void**, int);
 typedef void (*gpu_matmul_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_matmul_ex_t)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_bmm_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
+typedef void (*gpu_bmm_ex_t)(void*, int64_t, bool, int64_t, int64_t, void*, int64_t, bool, int64_t, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_matmul_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_matmul_half_ex_t)(void*, int64_t, bool, int64_t, void*, int64_t, bool, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_bmm_half_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
+typedef void (*gpu_bmm_half_ex_t)(void*, int64_t, bool, int64_t, int64_t, void*, int64_t, bool, int64_t, int64_t, void*, int64_t, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_matmul_fp8_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t, float, float, float);
 typedef void (*gpu_matmul_bf16_t)(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
 typedef void (*gpu_sum_t)(void*, int64_t, void*, int64_t, int64_t);
@@ -94,9 +96,11 @@ public:
     gpu_matmul_t gpu_matmul_fn = nullptr;
     gpu_matmul_ex_t gpu_matmul_ex_fn = nullptr;
     gpu_bmm_t gpu_bmm_fn = nullptr;
+    gpu_bmm_ex_t gpu_bmm_ex_fn = nullptr;
     gpu_matmul_half_t gpu_matmul_half_fn = nullptr;
     gpu_matmul_half_ex_t gpu_matmul_half_ex_fn = nullptr;
     gpu_bmm_half_t gpu_bmm_half_fn = nullptr;
+    gpu_bmm_half_ex_t gpu_bmm_half_ex_fn = nullptr;
     gpu_matmul_fp8_t gpu_matmul_fp8_fn = nullptr;
     gpu_matmul_bf16_t gpu_matmul_bf16_fn = nullptr;
     gpu_sum_t gpu_sum_fn = nullptr;
@@ -208,9 +212,11 @@ public:
         gpu_matmul_fn = (gpu_matmul_t)dlsym(handle, "gpu_matmul");
         gpu_matmul_ex_fn = (gpu_matmul_ex_t)dlsym(handle, "gpu_matmul_ex");
         gpu_bmm_fn = (gpu_bmm_t)dlsym(handle, "gpu_bmm");
+        gpu_bmm_ex_fn = (gpu_bmm_ex_t)dlsym(handle, "gpu_bmm_ex");
         gpu_matmul_half_fn = (gpu_matmul_half_t)dlsym(handle, "gpu_matmul_half");
         gpu_matmul_half_ex_fn = (gpu_matmul_half_ex_t)dlsym(handle, "gpu_matmul_half_ex");
         gpu_bmm_half_fn = (gpu_bmm_half_t)dlsym(handle, "gpu_bmm_half");
+        gpu_bmm_half_ex_fn = (gpu_bmm_half_ex_t)dlsym(handle, "gpu_bmm_half_ex");
         gpu_matmul_fp8_fn = (gpu_matmul_fp8_t)dlsym(handle, "gpu_matmul_fp8");
         gpu_matmul_bf16_fn = (gpu_matmul_bf16_t)dlsym(handle, "gpu_matmul_bf16");
         gpu_sum_fn = (gpu_sum_t)dlsym(handle, "gpu_sum_forward");
@@ -283,6 +289,12 @@ public:
         else throw std::runtime_error("gpu_native: matmul_ex not supported");
     }
     void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
+    void bmm_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a, void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
+        if (gpu_bmm_ex_fn) gpu_bmm_ex_fn(A, a_off, trans_a, lda, stride_a, B, b_off, trans_b, ldb, stride_b, C, c_off, B_batch, M, N, K);
+        else if (trans_a || trans_b) throw std::runtime_error("gpu_native: bmm_ex not supported (transpose requested)");
+        else if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+        else throw std::runtime_error("gpu_native: bmm_ex not supported");
+    }
     void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_half_fn) gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
     void matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, void* B, int64_t b_off, bool trans_b, int64_t ldb, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
         if (gpu_matmul_half_ex_fn) gpu_matmul_half_ex_fn(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
@@ -291,6 +303,12 @@ public:
         else throw std::runtime_error("gpu_native: matmul_half_ex not supported");
     }
     void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_half_fn) gpu_bmm_half_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
+    void bmm_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a, void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
+        if (gpu_bmm_half_ex_fn) gpu_bmm_half_ex_fn(A, a_off, trans_a, lda, stride_a, B, b_off, trans_b, ldb, stride_b, C, c_off, B_batch, M, N, K);
+        else if (trans_a || trans_b) throw std::runtime_error("gpu_native: bmm_half_ex not supported (transpose requested)");
+        else if (gpu_bmm_half_fn) gpu_bmm_half_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+        else throw std::runtime_error("gpu_native: bmm_half_ex not supported");
+    }
     void matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float a_scale = 1.0f, float b_scale = 1.0f, float d_scale = 1.0f) override {
         if (gpu_matmul_fp8_fn) {
             gpu_matmul_fp8_fn(A, a_off, B, b_off, C, c_off, M, N, K, a_scale, b_scale, d_scale);

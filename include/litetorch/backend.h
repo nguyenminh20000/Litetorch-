@@ -34,6 +34,11 @@ public:
         matmul(A, a_off, B, b_off, C, c_off, M, N, K);
     }
     virtual void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) = 0;
+    virtual void bmm_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a,
+                        void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b,
+                        void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
+        bmm(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+    }
     virtual void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) = 0;
     virtual void matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                                 void* B, int64_t b_off, bool trans_b, int64_t ldb,
@@ -41,6 +46,11 @@ public:
         matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
     }
     virtual void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) = 0;
+    virtual void bmm_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a,
+                             void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b,
+                             void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
+        bmm_half(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+    }
     virtual void matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K, float a_scale = 1.0f, float b_scale = 1.0f, float d_scale = 1.0f) = 0;
     virtual void matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) = 0;
     virtual void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) = 0;

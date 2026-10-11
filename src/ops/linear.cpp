@@ -107,6 +107,16 @@ public:
 
 namespace Ops {
 
+static bool is_transpose_last2_flattenable(const std::shared_ptr<Tensor>& t) {
+    size_t n = t->shape.size();
+    if (n < 3) return false;
+    if (!(t->strides[n - 2] == 1 && t->strides[n - 1] == t->shape[n - 2])) return false;
+    for (size_t i = 0; i + 3 < n; ++i) {
+        if (t->strides[i] != t->shape[i + 1] * t->strides[i + 1]) return false;
+    }
+    return true;
+}
+
 std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     if (amp::AutocastGuard::is_enabled()) {
         auto cast_dtype = amp::AutocastGuard::get_dtype();
@@ -162,8 +172,15 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         int64_t K = a->shape[ndim_a - 1];
         int64_t N = b->shape[ndim_b - 1];
 
-        auto a_c = a->is_contiguous() ? a : a->contiguous();
-        auto b_c = b->is_contiguous() ? b : b->contiguous();
+        bool trans_aware_nd = false;
+        if (a->device.type == DeviceType::GPU) {
+            auto native_nd = BackendDispatcher::get().get_backend();
+            trans_aware_nd = native_nd && native_nd->is_available();
+        }
+        bool a_t2 = trans_aware_nd && is_transpose_last2_flattenable(a);
+        bool b_t2 = trans_aware_nd && is_transpose_last2_flattenable(b);
+        auto a_c = (a_t2 || a->is_contiguous()) ? a : a->contiguous();
+        auto b_c = (b_t2 || b->is_contiguous()) ? b : b->contiguous();
         auto a_flat = a_c->view({batch_size, M, K});
         auto b_flat = b_c->view({batch_size, K, N});
         auto out_flat = bmm(a_flat, b_flat);
@@ -469,12 +486,23 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     if (a->shape[2] != b->shape[1]) {
         throw std::runtime_error("[litetorch Error] Dimension mismatch in bmm");
     }
-    auto a_c = a->is_contiguous() ? a : a->contiguous();
-    auto b_c = b->is_contiguous() ? b : b->contiguous();
+    bool a_trans = (a->strides[1] == 1 && a->strides[2] == a->shape[1]);
+    bool b_trans = (b->strides[1] == 1 && b->strides[2] == b->shape[1]);
+    bool trans_aware = false;
+    if (a->device.type == DeviceType::GPU) {
+        auto native = BackendDispatcher::get().get_backend();
+        trans_aware = native && native->is_available();
+    }
+    auto a_c = (trans_aware && a_trans) ? a : (a->is_contiguous() ? a : a->contiguous());
+    auto b_c = (trans_aware && b_trans) ? b : (b->is_contiguous() ? b : b->contiguous());
     int B = a_c->shape[0];
     int M = a_c->shape[1];
     int K = a_c->shape[2];
     int N = b_c->shape[2];
+    int64_t lda_a = (trans_aware && a_trans) ? a->shape[1] : K;
+    int64_t stride_a = (trans_aware && a_trans) ? a->strides[0] : (int64_t)M * K;
+    int64_t ldb_b = (trans_aware && b_trans) ? b->shape[1] : N;
+    int64_t stride_b = (trans_aware && b_trans) ? b->strides[0] : (int64_t)K * N;
     auto out = Tensor::create({B, M, N}, a_c->device, false, a_c->dtype);
     StorageUseGuard guard({a_c->storage, b_c->storage, out->storage});
     bool run_gpu = false;
@@ -485,10 +513,12 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
+            bool use_a_trans = trans_aware && a_trans;
+            bool use_b_trans = trans_aware && b_trans;
             if (a_c->dtype == DataType::FP16) {
-                native->bmm_half(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, B, M, N, K);
+                native->bmm_half_ex(a_c->gpu_data(), a_c->offset, use_a_trans, lda_a, stride_a, b_c->gpu_data(), b_c->offset, use_b_trans, ldb_b, stride_b, out->gpu_data(), out->offset, B, M, N, K);
             } else {
-                native->bmm(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, B, M, N, K);
+                native->bmm_ex(a_c->gpu_data(), a_c->offset, use_a_trans, lda_a, stride_a, b_c->gpu_data(), b_c->offset, use_b_trans, ldb_b, stride_b, out->gpu_data(), out->offset, B, M, N, K);
             }
         } else {
             void* kernel = nullptr;

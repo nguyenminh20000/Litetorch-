@@ -142,7 +142,10 @@ public:
         }
 
         auto q_3d = q->view({B * H, Tq, D});
-        auto k_t_3d = k_rep->transpose(2, 3)->contiguous()->view({B * H, D, Tk});
+        auto k_t = k_rep->transpose(2, 3);
+        auto k_t_3d = (k_t->strides[0] == k_t->shape[1] * k_t->strides[1])
+            ? k_t->view({B * H, D, Tk})
+            : k_t->contiguous()->view({B * H, D, Tk});
         auto scores_3d = Ops::bmm(q_3d, k_t_3d);
         auto scores_4d = scores_3d->view({B, H, Tq, Tk});
 
@@ -153,12 +156,12 @@ public:
         auto attn_3d = attn->is_contiguous() ? attn->view({B * H, Tq, Tk}) : attn->contiguous()->view({B * H, Tq, Tk});
         auto v_3d = v_rep->is_contiguous() ? v_rep->view({B * H, Tk, D}) : v_rep->contiguous()->view({B * H, Tk, D});
 
-        auto attn_t_3d = attn_3d->transpose(1, 2)->contiguous();
+        auto attn_t_3d = attn_3d->transpose(1, 2);
         auto grad_output_3d = gout_c->is_contiguous() ? gout_c->view({B * H, Tq, D}) : gout_c->contiguous()->view({B * H, Tq, D});
         auto grad_v_3d = Ops::bmm(attn_t_3d, grad_output_3d);
         auto grad_v = grad_v_3d->is_contiguous() ? grad_v_3d->view({B, H, Tk, D}) : grad_v_3d->contiguous()->view({B, H, Tk, D});
 
-        auto v_t_3d = v_3d->transpose(1, 2)->contiguous();
+        auto v_t_3d = v_3d->transpose(1, 2);
         auto grad_attn_3d = Ops::bmm(grad_output_3d, v_t_3d);
         auto grad_attn = grad_attn_3d->is_contiguous() ? grad_attn_3d->view({B, H, Tq, Tk}) : grad_attn_3d->contiguous()->view({B, H, Tq, Tk});
 
@@ -172,7 +175,7 @@ public:
         auto grad_q_3d = Ops::bmm(grad_scores_3d, k_3d);
         auto grad_q = grad_q_3d->is_contiguous() ? grad_q_3d->view({B, H, Tq, D}) : grad_q_3d->contiguous()->view({B, H, Tq, D});
 
-        auto grad_scores_t_3d = grad_scores_3d->transpose(1, 2)->contiguous();
+        auto grad_scores_t_3d = grad_scores_3d->transpose(1, 2);
         auto grad_k_3d = Ops::bmm(grad_scores_t_3d, q_3d);
         auto grad_k = grad_k_3d->is_contiguous() ? grad_k_3d->view({B, H, Tk, D}) : grad_k_3d->contiguous()->view({B, H, Tk, D});
 

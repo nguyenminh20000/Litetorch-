@@ -83,6 +83,35 @@ extern "C" void gpu_bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
 #endif
 }
 
+extern "C" void gpu_bmm_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a,
+                           void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b,
+                           void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
+#ifndef __HIP_PLATFORM_AMD__
+    cublasHandle_t handle = get_cublas_handle(C);
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    float* c_ptr = (float*)C + c_off;
+    cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    long long strideC = (long long)M * N;
+    LT_CUBLAS_CHECK(cublasSgemmStridedBatched(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, stride_b, a_ptr, lda, stride_a, &beta, c_ptr, N, strideC, batch_size));
+#else
+    rocblas_handle handle = get_rocblas_handle();
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    const float* a_ptr = (const float*)A + a_off;
+    const float* b_ptr = (const float*)B + b_off;
+    float* c_ptr = (float*)C + c_off;
+    rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
+    long long strideC = (long long)M * N;
+    LT_CUBLAS_CHECK(rocblas_sgemm_strided_batched(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, stride_b, a_ptr, lda, stride_a, &beta, c_ptr, N, strideC, batch_size));
+#endif
+}
+
 extern "C" void gpu_matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
     gpu_matmul_half_ex(A, a_off, false, K, B, b_off, false, N, C, c_off, M, N, K);
 }
@@ -139,6 +168,37 @@ extern "C" void gpu_bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, voi
     const rocblas_half* b_ptr = (const rocblas_half*)B + b_off;
     rocblas_half* c_ptr = (rocblas_half*)C + c_off;
     LT_CUBLAS_CHECK(rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none, N, M, K, alpha, b_ptr, N, strideB, a_ptr, K, strideA, beta, c_ptr, N, strideC, batch_size));
+#endif
+}
+
+extern "C" void gpu_bmm_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a,
+                                void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b,
+                                void* C, int64_t c_off, int64_t batch_size, int64_t M, int64_t N, int64_t K) {
+    auto_set_device(A);
+#ifndef __HIP_PLATFORM_AMD__
+    cublasHandle_t handle = get_cublas_handle(C);
+    const __half alpha = __float2half(1.0f);
+    const __half beta = __float2half(0.0f);
+    const __half* a_ptr = (const __half*)A + a_off;
+    const __half* b_ptr = (const __half*)B + b_off;
+    __half* c_ptr = (__half*)C + c_off;
+    cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    long long strideC = (long long)M * N;
+    LT_CUBLAS_CHECK(cublasHgemmStridedBatched(handle, opB, opA, N, M, K, &alpha, b_ptr, ldb, stride_b, a_ptr, lda, stride_a, &beta, c_ptr, N, strideC, batch_size));
+#else
+    rocblas_handle handle = get_rocblas_handle();
+    const __half alpha_h = __float2half(1.0f);
+    const __half beta_h = __float2half(0.0f);
+    const rocblas_half* alpha = reinterpret_cast<const rocblas_half*>(&alpha_h);
+    const rocblas_half* beta = reinterpret_cast<const rocblas_half*>(&beta_h);
+    const rocblas_half* a_ptr = (const rocblas_half*)A + a_off;
+    const rocblas_half* b_ptr = (const rocblas_half*)B + b_off;
+    rocblas_half* c_ptr = (rocblas_half*)C + c_off;
+    rocblas_operation opA = trans_a ? rocblas_operation_transpose : rocblas_operation_none;
+    rocblas_operation opB = trans_b ? rocblas_operation_transpose : rocblas_operation_none;
+    long long strideC = (long long)M * N;
+    LT_CUBLAS_CHECK(rocblas_hgemm_strided_batched(handle, opB, opA, N, M, K, alpha, b_ptr, ldb, stride_b, a_ptr, lda, stride_a, beta, c_ptr, N, strideC, batch_size));
 #endif
 }
 
