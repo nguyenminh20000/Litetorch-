@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#include <cstring>
 // === W1-T2 tensor-api: includes ===
 #include <pybind11/numpy.h>
 // === W1-T2 tensor-api ===
@@ -1374,6 +1375,258 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("warmup_steps", &optim::LinearWarmup::warmup_steps)
         .def_readwrite("total_steps", &optim::LinearWarmup::total_steps)
         .def_readwrite("last_step", &optim::LinearWarmup::last_step);
+
+    py::class_<optim::Adagrad, optim::Optimizer, std::shared_ptr<optim::Adagrad>>(optim_mod, "Adagrad")
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.01f, py::arg("lr_decay") = 0.0f, py::arg("weight_decay") = 0.0f, py::arg("eps") = 1e-10f)
+        .def("step", &optim::Adagrad::step)
+        .def("zero_grad", &optim::Adagrad::zero_grad)
+        .def("get_lr", &optim::Adagrad::get_lr)
+        .def("set_lr", &optim::Adagrad::set_lr, py::arg("new_lr"))
+        .def("add_param_group", &optim::Adagrad::add_param_group, py::arg("params"), py::arg("lr"), py::arg("weight_decay") = 0.0f)
+        .def("param_groups", [](optim::Adagrad& o) {
+            py::list groups;
+            for (auto& g : o.param_groups) {
+                py::dict gd;
+                py::list ps;
+                for (auto& p : g.params) ps.append(py::cast(p));
+                gd["params"] = ps;
+                gd["lr"] = g.lr;
+                gd["weight_decay"] = g.weight_decay;
+                groups.append(gd);
+            }
+            return groups;
+        })
+        .def("state_dict", [](optim::Adagrad& o) {
+            py::dict d;
+            d["lr"] = o.lr;
+            d["lr_decay"] = o.lr_decay;
+            d["weight_decay"] = o.weight_decay;
+            d["eps"] = o.eps;
+            py::list states;
+            size_t idx = 0;
+            for (auto& g : o.param_groups) {
+                for (size_t i = 0; i < g.params.size(); ++i, ++idx) {
+                    py::dict s;
+                    s["step"] = o.step_count;
+                    s["sum"] = py::cast(o.sum[idx]);
+                    states.append(s);
+                }
+            }
+            d["state"] = states;
+            py::list groups;
+            for (auto& g : o.param_groups) {
+                py::dict gd;
+                gd["lr"] = g.lr;
+                gd["weight_decay"] = g.weight_decay;
+                gd["num_params"] = static_cast<int>(g.params.size());
+                groups.append(gd);
+            }
+            d["param_groups"] = groups;
+            return d;
+        })
+        .def("load_state_dict", [](optim::Adagrad& o, py::dict d) {
+            py::list groups = d["param_groups"];
+            if (groups.size() != static_cast<py::ssize_t>(o.param_groups.size()))
+                throw std::runtime_error("[litetorch Error] Adagrad.load_state_dict: param_groups size mismatch");
+            for (py::ssize_t gi = 0; gi < groups.size(); ++gi) {
+                py::dict gd = groups[gi];
+                o.param_groups[gi].lr = gd["lr"].cast<float>();
+                o.param_groups[gi].weight_decay = gd["weight_decay"].cast<float>();
+            }
+            o.lr = o.param_groups[0].lr;
+            o.weight_decay = o.param_groups[0].weight_decay;
+            if (d.contains("lr_decay")) o.lr_decay = d["lr_decay"].cast<float>();
+            if (d.contains("eps")) o.eps = d["eps"].cast<float>();
+            py::list states = d["state"];
+            if (states.size() != static_cast<py::ssize_t>(o.sum.size()))
+                throw std::runtime_error("[litetorch Error] Adagrad.load_state_dict: state size mismatch");
+            for (py::ssize_t i = 0; i < states.size(); ++i) {
+                py::dict s = states[i];
+                o.step_count = s["step"].cast<int>();
+                auto src = py::cast<std::shared_ptr<Tensor>>(s["sum"]);
+                auto dst = o.sum[i];
+                if (src->numel() != dst->numel())
+                    throw std::runtime_error("[litetorch Error] Adagrad.load_state_dict: state tensor size mismatch");
+                std::memcpy(dst->data_ptr(), src->data_ptr(), static_cast<size_t>(src->numel()) * sizeof(float));
+            }
+        }, py::arg("state_dict"))
+        .def_readwrite("lr", &optim::Adagrad::lr)
+        .def_readwrite("lr_decay", &optim::Adagrad::lr_decay)
+        .def_readwrite("weight_decay", &optim::Adagrad::weight_decay)
+        .def_readwrite("eps", &optim::Adagrad::eps);
+
+    py::class_<optim::NAdam, optim::Optimizer, std::shared_ptr<optim::NAdam>>(optim_mod, "NAdam")
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, std::pair<float, float>, float, float, float>(), py::arg("params"), py::arg("lr") = 0.002f, py::arg("betas") = std::pair<float, float>(0.9f, 0.999f), py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f, py::arg("momentum_decay") = 0.004f)
+        .def("step", &optim::NAdam::step)
+        .def("zero_grad", &optim::NAdam::zero_grad)
+        .def("get_lr", &optim::NAdam::get_lr)
+        .def("set_lr", &optim::NAdam::set_lr, py::arg("new_lr"))
+        .def("add_param_group", &optim::NAdam::add_param_group, py::arg("params"), py::arg("lr"), py::arg("weight_decay") = 0.0f)
+        .def("param_groups", [](optim::NAdam& o) {
+            py::list groups;
+            for (auto& g : o.param_groups) {
+                py::dict gd;
+                py::list ps;
+                for (auto& p : g.params) ps.append(py::cast(p));
+                gd["params"] = ps;
+                gd["lr"] = g.lr;
+                gd["weight_decay"] = g.weight_decay;
+                groups.append(gd);
+            }
+            return groups;
+        })
+        .def("state_dict", [](optim::NAdam& o) {
+            py::dict d;
+            d["lr"] = o.lr;
+            d["betas"] = py::make_tuple(o.beta1, o.beta2);
+            d["eps"] = o.eps;
+            d["weight_decay"] = o.weight_decay;
+            d["momentum_decay"] = o.momentum_decay;
+            py::list states;
+            size_t idx = 0;
+            for (auto& g : o.param_groups) {
+                for (size_t i = 0; i < g.params.size(); ++i, ++idx) {
+                    py::dict s;
+                    s["step"] = o.step_count;
+                    s["exp_avg"] = py::cast(o.exp_avg[idx]);
+                    s["exp_avg_sq"] = py::cast(o.exp_avg_sq[idx]);
+                    states.append(s);
+                }
+            }
+            d["state"] = states;
+            py::list groups;
+            for (auto& g : o.param_groups) {
+                py::dict gd;
+                gd["lr"] = g.lr;
+                gd["weight_decay"] = g.weight_decay;
+                gd["num_params"] = static_cast<int>(g.params.size());
+                groups.append(gd);
+            }
+            d["param_groups"] = groups;
+            return d;
+        })
+        .def("load_state_dict", [](optim::NAdam& o, py::dict d) {
+            py::list groups = d["param_groups"];
+            if (groups.size() != static_cast<py::ssize_t>(o.param_groups.size()))
+                throw std::runtime_error("[litetorch Error] NAdam.load_state_dict: param_groups size mismatch");
+            for (py::ssize_t gi = 0; gi < groups.size(); ++gi) {
+                py::dict gd = groups[gi];
+                o.param_groups[gi].lr = gd["lr"].cast<float>();
+                o.param_groups[gi].weight_decay = gd["weight_decay"].cast<float>();
+            }
+            o.lr = o.param_groups[0].lr;
+            o.weight_decay = o.param_groups[0].weight_decay;
+            if (d.contains("betas")) {
+                auto b = d["betas"].cast<std::pair<float, float>>();
+                o.beta1 = b.first;
+                o.beta2 = b.second;
+            }
+            if (d.contains("eps")) o.eps = d["eps"].cast<float>();
+            if (d.contains("momentum_decay")) o.momentum_decay = d["momentum_decay"].cast<float>();
+            py::list states = d["state"];
+            if (states.size() != static_cast<py::ssize_t>(o.exp_avg.size()))
+                throw std::runtime_error("[litetorch Error] NAdam.load_state_dict: state size mismatch");
+            for (py::ssize_t i = 0; i < states.size(); ++i) {
+                py::dict s = states[i];
+                o.step_count = s["step"].cast<int>();
+                auto m_src = py::cast<std::shared_ptr<Tensor>>(s["exp_avg"]);
+                auto v_src = py::cast<std::shared_ptr<Tensor>>(s["exp_avg_sq"]);
+                auto m_dst = o.exp_avg[i];
+                auto v_dst = o.exp_avg_sq[i];
+                if (m_src->numel() != m_dst->numel() || v_src->numel() != v_dst->numel())
+                    throw std::runtime_error("[litetorch Error] NAdam.load_state_dict: state tensor size mismatch");
+                std::memcpy(m_dst->data_ptr(), m_src->data_ptr(), static_cast<size_t>(m_src->numel()) * sizeof(float));
+                std::memcpy(v_dst->data_ptr(), v_src->data_ptr(), static_cast<size_t>(v_src->numel()) * sizeof(float));
+            }
+        }, py::arg("state_dict"))
+        .def_readwrite("lr", &optim::NAdam::lr)
+        .def_readwrite("beta1", &optim::NAdam::beta1)
+        .def_readwrite("beta2", &optim::NAdam::beta2)
+        .def_readwrite("eps", &optim::NAdam::eps)
+        .def_readwrite("weight_decay", &optim::NAdam::weight_decay)
+        .def_readwrite("momentum_decay", &optim::NAdam::momentum_decay);
+
+    py::class_<optim::MultiStepLR>(optim_mod, "MultiStepLR")
+        .def(py::init<optim::Optimizer*, std::vector<int>, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("milestones"), py::arg("gamma") = 0.1f)
+        .def("step", &optim::MultiStepLR::step)
+        .def("get_last_lr", &optim::MultiStepLR::get_last_lr)
+        .def("state_dict", [](optim::MultiStepLR& s) {
+            py::dict d;
+            for (auto& kv : s.state_dict()) d[kv.first.c_str()] = kv.second;
+            py::list ms;
+            for (int m : s.milestones) ms.append(m);
+            d["milestones"] = ms;
+            return d;
+        })
+        .def("load_state_dict", [](optim::MultiStepLR& s, py::dict d) {
+            std::map<std::string, double> m;
+            for (auto item : d) {
+                std::string k = py::cast<std::string>(item.first);
+                if (k == "milestones") continue;
+                m[k] = py::cast<double>(item.second);
+            }
+            s.load_state_dict(m);
+            if (d.contains("milestones")) {
+                s.milestones.clear();
+                for (auto v : d["milestones"]) s.milestones.push_back(py::cast<int>(v));
+            }
+        }, py::arg("state_dict"))
+        .def_readwrite("gamma", &optim::MultiStepLR::gamma)
+        .def_readwrite("last_epoch", &optim::MultiStepLR::last_epoch);
+
+    py::class_<optim::ExponentialLR>(optim_mod, "ExponentialLR")
+        .def(py::init<optim::Optimizer*, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("gamma"))
+        .def("step", &optim::ExponentialLR::step)
+        .def("get_last_lr", &optim::ExponentialLR::get_last_lr)
+        .def("state_dict", [](optim::ExponentialLR& s) {
+            py::dict d;
+            for (auto& kv : s.state_dict()) d[kv.first.c_str()] = kv.second;
+            return d;
+        })
+        .def("load_state_dict", [](optim::ExponentialLR& s, py::dict d) {
+            std::map<std::string, double> m;
+            for (auto item : d) {
+                m[py::cast<std::string>(item.first)] = py::cast<double>(item.second);
+            }
+            s.load_state_dict(m);
+        }, py::arg("state_dict"))
+        .def_readwrite("gamma", &optim::ExponentialLR::gamma)
+        .def_readwrite("last_epoch", &optim::ExponentialLR::last_epoch);
+
+    py::class_<optim::ReduceLROnPlateau>(optim_mod, "ReduceLROnPlateau")
+        .def(py::init<optim::Optimizer*, std::string, float, int, float, std::string, int, float, float>(), py::keep_alive<1, 2>(), py::arg("optimizer"), py::arg("mode") = "min", py::arg("factor") = 0.1f, py::arg("patience") = 10, py::arg("threshold") = 1e-4f, py::arg("threshold_mode") = "rel", py::arg("cooldown") = 0, py::arg("min_lr") = 0.0f, py::arg("eps") = 1e-8f)
+        .def("step", &optim::ReduceLROnPlateau::step, py::arg("metric"))
+        .def("get_last_lr", &optim::ReduceLROnPlateau::get_last_lr)
+        .def("state_dict", [](optim::ReduceLROnPlateau& s) {
+            py::dict d;
+            for (auto& kv : s.state_dict()) d[kv.first.c_str()] = kv.second;
+            d["mode"] = s.mode;
+            d["threshold_mode"] = s.threshold_mode;
+            return d;
+        })
+        .def("load_state_dict", [](optim::ReduceLROnPlateau& s, py::dict d) {
+            std::map<std::string, double> m;
+            for (auto item : d) {
+                std::string k = py::cast<std::string>(item.first);
+                if (k == "mode" || k == "threshold_mode") continue;
+                m[k] = py::cast<double>(item.second);
+            }
+            s.load_state_dict(m);
+            if (d.contains("mode")) s.mode = py::cast<std::string>(d["mode"]);
+            if (d.contains("threshold_mode")) s.threshold_mode = py::cast<std::string>(d["threshold_mode"]);
+        }, py::arg("state_dict"))
+        .def_readwrite("patience", &optim::ReduceLROnPlateau::patience)
+        .def_readwrite("last_epoch", &optim::ReduceLROnPlateau::last_epoch);
+
+    lr_sched_mod.def("MultiStepLR", [](optim::Optimizer* opt, std::vector<int> milestones, float gamma) {
+        return std::unique_ptr<optim::MultiStepLR>(new optim::MultiStepLR(opt, milestones, gamma));
+    }, py::keep_alive<0, 1>(), py::arg("optimizer"), py::arg("milestones"), py::arg("gamma") = 0.1f);
+    lr_sched_mod.def("ExponentialLR", [](optim::Optimizer* opt, float gamma) {
+        return std::unique_ptr<optim::ExponentialLR>(new optim::ExponentialLR(opt, gamma));
+    }, py::keep_alive<0, 1>(), py::arg("optimizer"), py::arg("gamma"));
+    lr_sched_mod.def("ReduceLROnPlateau", [](optim::Optimizer* opt, std::string mode, float factor, int patience, float threshold, std::string threshold_mode, int cooldown, float min_lr, float eps) {
+        return std::unique_ptr<optim::ReduceLROnPlateau>(new optim::ReduceLROnPlateau(opt, mode, factor, patience, threshold, threshold_mode, cooldown, min_lr, eps));
+    }, py::keep_alive<0, 1>(), py::arg("optimizer"), py::arg("mode") = "min", py::arg("factor") = 0.1f, py::arg("patience") = 10, py::arg("threshold") = 1e-4f, py::arg("threshold_mode") = "rel", py::arg("cooldown") = 0, py::arg("min_lr") = 0.0f, py::arg("eps") = 1e-8f);
 
     py::class_<optim::GradScaler>(optim_mod, "GradScaler")
         .def(py::init<float, float, float, int, bool>(), py::arg("init_scale") = 65536.0f, py::arg("growth_factor") = 2.0f, py::arg("backoff_factor") = 0.5f, py::arg("growth_interval") = 2000, py::arg("enabled") = true)
