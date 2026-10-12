@@ -36,9 +36,12 @@ std::shared_ptr<Tensor> MSELoss::forward(std::shared_ptr<Tensor> input, std::sha
     return out;
 }
 
-CrossEntropyLoss::CrossEntropyLoss(std::shared_ptr<Tensor> weight, int64_t ignore_index, const std::string& reduction)
-    : weight(weight), ignore_index(ignore_index), reduction(reduction) {
+CrossEntropyLoss::CrossEntropyLoss(std::shared_ptr<Tensor> weight, int64_t ignore_index, const std::string& reduction, float label_smoothing)
+    : weight(weight), ignore_index(ignore_index), reduction(reduction), label_smoothing(label_smoothing) {
     check_reduction(reduction);
+    if (label_smoothing < 0.0f || label_smoothing > 1.0f) {
+        throw std::invalid_argument("[litetorch Error] CrossEntropyLoss label_smoothing must be in [0, 1]");
+    }
 }
 
 std::shared_ptr<Tensor> CrossEntropyLoss::forward(std::shared_ptr<Tensor>) {
@@ -46,7 +49,7 @@ std::shared_ptr<Tensor> CrossEntropyLoss::forward(std::shared_ptr<Tensor>) {
 }
 
 std::shared_ptr<Tensor> CrossEntropyLoss::forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
-    return Ops::cross_entropy_loss(input, target, weight, ignore_index, reduction);
+    return Ops::cross_entropy_loss(input, target, weight, ignore_index, reduction, label_smoothing);
 }
 
 BCELoss::BCELoss(const std::string& reduction) : reduction(reduction) {
@@ -85,6 +88,33 @@ std::shared_ptr<Tensor> L1Loss::forward(std::shared_ptr<Tensor> input, std::shar
     auto out = Ops::l1_loss(input, target);
     if (reduction == "sum") return apply_sum_reduction(out, input->numel());
     return out;
+}
+
+NLLLoss::NLLLoss(std::shared_ptr<Tensor> weight, int64_t ignore_index, const std::string& reduction)
+    : weight(weight), ignore_index(ignore_index), reduction(reduction) {
+    check_reduction(reduction);
+}
+
+std::shared_ptr<Tensor> NLLLoss::forward(std::shared_ptr<Tensor>) {
+    throw std::runtime_error("NLLLoss requires both input and target");
+}
+
+std::shared_ptr<Tensor> NLLLoss::forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+    return Ops::nll_loss(input, target, weight, ignore_index, reduction);
+}
+
+BCEWithLogitsLoss::BCEWithLogitsLoss(std::shared_ptr<Tensor> weight, const std::string& reduction,
+                                     std::shared_ptr<Tensor> pos_weight)
+    : weight(weight), reduction(reduction), pos_weight(pos_weight) {
+    check_reduction(reduction);
+}
+
+std::shared_ptr<Tensor> BCEWithLogitsLoss::forward(std::shared_ptr<Tensor>) {
+    throw std::runtime_error("BCEWithLogitsLoss requires both input and target");
+}
+
+std::shared_ptr<Tensor> BCEWithLogitsLoss::forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+    return Ops::bce_with_logits_loss(input, target, weight, reduction, pos_weight);
 }
 
 }

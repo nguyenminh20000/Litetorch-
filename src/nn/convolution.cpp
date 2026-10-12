@@ -136,5 +136,46 @@ void Conv3d::to(const Device& device) {
     if (bias) bias = bias->to(device);
 }
 
+Conv1d::Conv1d(int in_channels, int out_channels, int kernel_size, int stride, int padding, bool has_bias)
+    : kernel_size(kernel_size), stride(stride), padding(padding) {
+    if (in_channels <= 0 || out_channels <= 0) {
+        throw std::runtime_error("[litetorch Error] Conv1d in_channels and out_channels must be positive");
+    }
+    if (kernel_size <= 0 || stride <= 0 || padding < 0) {
+        throw std::runtime_error("[litetorch Error] Conv1d requires kernel_size > 0, stride > 0 and padding >= 0");
+    }
+    weight = Tensor::create({out_channels, in_channels, kernel_size}, Device(DeviceType::CPU, 0), true);
+    kaiming_uniform(weight, std::sqrt(5.0f));
+
+    if (has_bias) {
+        bias = Tensor::create({out_channels}, Device(DeviceType::CPU, 0), true);
+        float fan_in = in_channels * kernel_size;
+        float bound = 1.0f / std::sqrt(fan_in);
+        std::mt19937& gen = get_generator();
+        std::uniform_real_distribution<float> dis(-bound, bound);
+        float* data = bias->data_ptr();
+        for (size_t i = 0; i < bias->numel(); ++i) {
+            data[i] = dis(gen);
+        }
+    }
+}
+
+std::shared_ptr<Tensor> Conv1d::forward(std::shared_ptr<Tensor> input) {
+    if (weight->device != input->device) {
+        throw std::runtime_error("[litetorch Error] Conv1d: param device differs from input device; call .to(device) on the module");
+    }
+    return Ops::conv1d(input, weight, bias, stride, padding);
+}
+
+std::vector<std::shared_ptr<Tensor>> Conv1d::parameters() {
+    if (bias) return { weight, bias };
+    return { weight };
+}
+
+void Conv1d::to(const Device& device) {
+    weight = weight->to(device);
+    if (bias) bias = bias->to(device);
+}
+
 }
 }

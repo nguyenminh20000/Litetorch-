@@ -32,5 +32,15 @@ std::shared_ptr<Tensor> GELU::forward(std::shared_ptr<Tensor> input) {
     return Ops::gelu(input);
 }
 
+std::shared_ptr<Tensor> SiLU::forward(std::shared_ptr<Tensor> input) {
+    return Ops::silu(input);
+}
+
+LogSoftmax::LogSoftmax(int64_t dim) : dim(dim) {}
+
+std::shared_ptr<Tensor> LogSoftmax::forward(std::shared_ptr<Tensor> input) {
+    return Ops::log_softmax(input, dim);
+}
+
 }
 }

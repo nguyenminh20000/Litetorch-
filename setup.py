@@ -167,7 +167,7 @@ class BuildExt(build_ext):
                 sys.stderr.flush()
 
     def build_extensions(self):
-        self.parallel = os.cpu_count() or 4
+        self.parallel = int(os.environ.get("LT_BUILD_JOBS", os.cpu_count() or 4))
         compiler_type = self.compiler.compiler_type
         for ext in self.extensions:
             if compiler_type == "msvc":

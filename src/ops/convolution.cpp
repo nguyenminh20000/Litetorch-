@@ -1087,5 +1087,45 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     return out;
 }
 
+std::shared_ptr<Tensor> conv1d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, int stride, int padding) {
+    if (input->device.type != DeviceType::CPU || weight->device.type != DeviceType::CPU) {
+        throw std::runtime_error("[litetorch Error] Ops::conv1d: only CPU tensors are supported; GPU kernel is deferred to Phase 3");
+    }
+    if (input->shape.size() != 3 || weight->shape.size() != 3) {
+        throw std::runtime_error("[litetorch Error] Conv1d requires 3D input (N, C_in, L) and 3D weight (C_out, C_in, K)");
+    }
+    if (input->dtype != DataType::FP32 || weight->dtype != DataType::FP32 ||
+        (bias && bias->dtype != DataType::FP32)) {
+        throw std::runtime_error("[litetorch Error] Conv1d requires FP32 input, weight and bias");
+    }
+    if (stride <= 0 || padding < 0) {
+        throw std::runtime_error("[litetorch Error] Conv1d requires stride > 0 and padding >= 0");
+    }
+    int64_t N = input->shape[0];
+    int64_t C_in = input->shape[1];
+    int64_t L_in = input->shape[2];
+    int64_t C_out = weight->shape[0];
+    int64_t K = weight->shape[2];
+    if (weight->shape[1] != C_in) {
+        throw std::runtime_error("[litetorch Error] Conv1d channel mismatch: weight has " +
+            std::to_string(weight->shape[1]) + " input channels, input has " + std::to_string(C_in));
+    }
+    if (bias && bias->numel() != static_cast<size_t>(C_out)) {
+        throw std::runtime_error("[litetorch Error] Conv1d bias size mismatch: bias has " +
+            std::to_string(bias->numel()) + " elements, expected " + std::to_string(C_out));
+    }
+    int64_t L_out = (L_in - K + 2 * padding) / stride + 1;
+    if (L_out <= 0) {
+        throw std::runtime_error("[litetorch Error] Conv1d output length non-positive");
+    }
+    auto input_c = input->is_contiguous() ? input : input->contiguous();
+    auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
+    auto in4 = input_c->view({N, C_in, L_in, 1});
+    auto w4 = weight_c->view({C_out, C_in, K, 1});
+    auto out4 = conv2d(in4, w4, bias, stride, padding);
+    auto out4_c = out4->is_contiguous() ? out4 : out4->contiguous();
+    return out4_c->view({N, C_out, L_out});
+}
+
 }
 }

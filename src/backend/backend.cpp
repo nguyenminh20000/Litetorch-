@@ -1,8 +1,12 @@
 #include "litetorch/backend.h"
 #include "litetorch/platform.h"
+#include "litetorch/memory_manager.h"
+#include "litetorch/allocator.h"
+#include "litetorch/tensor.h"
 #include "tpu/tpu_backend.h"
 #include <iostream>
 #include <unordered_set>
+#include <cstdlib>
 
 namespace litetorch {
 
@@ -67,6 +71,7 @@ typedef void* (*gpu_get_compute_stream_t)();
 typedef void (*gpu_sync_stream_t)(void*);
 typedef void (*gpu_set_device_t)(int);
 typedef int (*gpu_get_device_t)();
+typedef int (*gpu_get_device_count_t)();
 typedef void (*gpu_set_tf32_enabled_t)(bool);
 typedef bool (*gpu_is_tf32_enabled_t)();
 typedef void (*gpu_set_fp16_math_enabled_t)(bool);
@@ -78,6 +83,7 @@ public:
     gpu_init_t gpu_init_fn = nullptr;
     gpu_set_device_t gpu_set_device_fn = nullptr;
     gpu_get_device_t gpu_get_device_fn = nullptr;
+    gpu_get_device_count_t gpu_get_device_count_fn = nullptr;
     gpu_allocate_t gpu_allocate_fn = nullptr;
     gpu_free_t gpu_free_fn = nullptr;
     gpu_empty_cache_t gpu_empty_cache_fn = nullptr;
@@ -194,6 +200,7 @@ public:
         gpu_init_fn = (gpu_init_t)dlsym(handle, "gpu_init");
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
         gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
+        gpu_get_device_count_fn = (gpu_get_device_count_t)dlsym(handle, "gpu_get_device_count");
         gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
         gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
         gpu_empty_cache_fn = (gpu_empty_cache_t)dlsym(handle, "gpu_empty_cache");
@@ -404,6 +411,12 @@ public:
         }
     }
     int get_device() override { return gpu_get_device_fn ? gpu_get_device_fn() : 0; }
+    int get_device_count() const {
+        if (gpu_get_device_count_fn) {
+            return gpu_get_device_count_fn();
+        }
+        return is_ok ? 1 : 0;
+    }
     void set_tf32_enabled(bool enabled) override { if (gpu_set_tf32_enabled_fn) gpu_set_tf32_enabled_fn(enabled); }
     bool is_tf32_enabled() const override { return gpu_is_tf32_enabled_fn ? gpu_is_tf32_enabled_fn() : false; }
     void set_fp16_math_enabled(bool enabled) override { if (gpu_set_fp16_math_enabled_fn) gpu_set_fp16_math_enabled_fn(enabled); }
@@ -492,6 +505,49 @@ void BackendDispatcher::set_gpu_backend(std::shared_ptr<DeviceBackend> backend) 
 
 void BackendDispatcher::set_tpu_backend(std::shared_ptr<DeviceBackend> backend) {
     tpu_backend_ = backend;
+}
+
+namespace cuda {
+
+bool is_available() {
+    if (std::getenv("LITETORCH_NO_NATIVE_GPU")) {
+        return false;
+    }
+    auto backend = BackendDispatcher::get().get_backend();
+    return backend && backend->is_available();
+}
+
+int device_count() {
+    auto backend = BackendDispatcher::get().get_backend();
+    if (!backend || !backend->is_available()) {
+        return 0;
+    }
+    auto native = std::dynamic_pointer_cast<NativeGPUBackend>(backend);
+    return native ? native->get_device_count() : 1;
+}
+
+int current_device() {
+    auto backend = BackendDispatcher::get().get_backend();
+    return backend ? backend->get_device() : 0;
+}
+
+void set_device(int device_id) {
+    auto backend = BackendDispatcher::get().get_backend();
+    if (backend) {
+        backend->set_device(device_id);
+    }
+}
+
+size_t memory_reserved() {
+    size_t used = MemoryManager::get().get_gpu_used();
+    size_t cached = CachingAllocator::get().get_cached_gpu_bytes();
+    return used + cached;
+}
+
+void manual_seed_all(unsigned int seed) {
+    manual_seed(seed);
+}
+
 }
 
 }

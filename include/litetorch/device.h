@@ -3,6 +3,7 @@
 
 #include <string>
 #include <iostream>
+#include <cstddef>
 
 namespace litetorch {
 
@@ -42,6 +43,17 @@ struct Device {
 inline std::ostream& operator<<(std::ostream& os, const Device& device) {
     os << device.to_string();
     return os;
+}
+
+namespace cuda {
+
+bool is_available();
+int device_count();
+int current_device();
+void set_device(int device_id);
+size_t memory_reserved();
+void manual_seed_all(unsigned int seed);
+
 }
 
 }

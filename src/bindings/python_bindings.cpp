@@ -1,6 +1,9 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+// === W1-T2 tensor-api: includes ===
+#include <pybind11/numpy.h>
+// === W1-T2 tensor-api ===
 
 #include "litetorch/device.h"
 #include "litetorch/tensor.h"
@@ -27,6 +30,9 @@
 #include "litetorch/allocator.h"
 #include "litetorch/tpu.h"
 #include "litetorch/memory_manager.h"
+
+// === W1-T5 functional: includes ===
+#include "litetorch/functional.h"
 
 namespace py = pybind11;
 using namespace litetorch;
@@ -217,6 +223,14 @@ PYBIND11_MODULE(litetorch, m) {
     cuda_mod.def("memory_allocated", []() -> size_t {
         return litetorch::MemoryManager::get().get_gpu_used();
     });
+    // === W1-T2 tensor-api ===
+    cuda_mod.def("device_count", &litetorch::cuda::device_count);
+    cuda_mod.def("current_device", &litetorch::cuda::current_device);
+    cuda_mod.def("set_device", &litetorch::cuda::set_device, py::arg("device") = 0);
+    cuda_mod.def("memory_reserved", &litetorch::cuda::memory_reserved);
+    cuda_mod.def("manual_seed_all", &litetorch::cuda::manual_seed_all, py::arg("seed"));
+    m.def("equal", &litetorch::tensor_equal, py::arg("a"), py::arg("b"));
+    // === W1-T2 tensor-api ===
     m.def("get_gpu_memory_used", []() -> size_t {
         return litetorch::MemoryManager::get().get_gpu_used();
     });
@@ -353,6 +367,98 @@ PYBIND11_MODULE(litetorch, m) {
         .def("clone", &Tensor::clone)
         .def("to_device_async", &Tensor::to_device_async, py::arg("target_device"))
         .def("cast", &Tensor::cast, py::arg("target_dtype"))
+        // === W1-T2 tensor-api ===
+        .def("cuda", [](Tensor& self, py::object device) {
+            int idx = -1;
+            if (!device.is_none()) {
+                idx = device.cast<int>();
+            }
+            return self.cuda(idx);
+        }, py::arg("device") = py::none())
+        .def("cpu", &Tensor::cpu)
+        .def("dim", &Tensor::dim)
+        .def_property_readonly("ndim", &Tensor::dim)
+        .def("half", &Tensor::half)
+        .def("float", &Tensor::to_float)
+        .def("double", &Tensor::to_double)
+        .def("long", &Tensor::to_int)
+        .def("int", &Tensor::to_int)
+        .def("type_as", &Tensor::type_as, py::arg("other"))
+        .def("numpy", [](Tensor& self) -> py::object {
+            if (self.device.type != DeviceType::CPU) {
+                throw std::runtime_error("[litetorch Error] numpy(): cannot convert non-CPU tensor to numpy; call .cpu() first");
+            }
+            size_t esz = self.storage->element_size();
+            if (self.dtype == DataType::FP32) {
+                std::vector<ssize_t> shape(self.shape.begin(), self.shape.end());
+                std::vector<ssize_t> strides;
+                for (auto s : self.strides) {
+                    strides.push_back(static_cast<ssize_t>(s * esz));
+                }
+                float* ptr = reinterpret_cast<float*>(
+                    reinterpret_cast<char*>(self.storage->get_cpu_ptr()) + self.offset * esz);
+                auto* holder = new std::shared_ptr<StorageImpl>(self.storage);
+                py::capsule base(holder, [](void* p) {
+                    delete static_cast<std::shared_ptr<StorageImpl>*>(p);
+                });
+                return py::array_t<float>(shape, strides, ptr, base);
+            }
+            std::shared_ptr<Tensor> t = self.shared_from_this();
+            if (t->dtype == DataType::BF16) {
+                t = t->cast(DataType::FP32);
+            }
+            if (!t->is_contiguous()) {
+                t = t->contiguous();
+            }
+            std::vector<ssize_t> shape(t->shape.begin(), t->shape.end());
+            size_t n = t->numel();
+            size_t tsz = t->storage->element_size();
+            const char* src = reinterpret_cast<const char*>(t->storage->get_cpu_ptr()) + t->offset * tsz;
+            const char* fmt = nullptr;
+            switch (t->dtype) {
+                case DataType::FP64: fmt = "float64"; break;
+                case DataType::FP32: fmt = "float32"; break;
+                case DataType::FP16: fmt = "float16"; break;
+                case DataType::INT32: fmt = "int32"; break;
+                case DataType::INT16: fmt = "int16"; break;
+                case DataType::INT8: fmt = "int8"; break;
+                default: throw std::runtime_error("[litetorch Error] numpy(): unsupported dtype for copy conversion");
+            }
+            py::array arr(py::dtype(fmt), shape);
+            std::memcpy(arr.mutable_data(), src, n * tsz);
+            return arr;
+        })
+        .def("tolist", [](Tensor& self) -> py::object {
+            std::shared_ptr<Tensor> t = self.shared_from_this();
+            if (t->device.type != DeviceType::CPU) {
+                t = t->to(Device(DeviceType::CPU, 0));
+            }
+            if (!t->is_contiguous()) {
+                t = t->contiguous();
+            }
+            bool as_int = (t->dtype == DataType::INT32 || t->dtype == DataType::INT16 ||
+                           t->dtype == DataType::INT8);
+            std::vector<double> vals = t->flat_doubles();
+            std::function<py::object(size_t, size_t)> build = [&](size_t dim, size_t base) -> py::object {
+                if (dim == t->shape.size()) {
+                    if (as_int) {
+                        return py::int_(static_cast<int64_t>(vals[base]));
+                    }
+                    return py::float_(vals[base]);
+                }
+                py::list lst;
+                size_t stride = 1;
+                for (size_t d = dim + 1; d < t->shape.size(); ++d) {
+                    stride *= static_cast<size_t>(t->shape[d]);
+                }
+                for (int64_t i = 0; i < t->shape[dim]; ++i) {
+                    lst.append(build(dim + 1, base + static_cast<size_t>(i) * stride));
+                }
+                return lst;
+            };
+            return build(0, 0);
+        })
+        // === W1-T2 tensor-api ===
         .def("copy_", &Tensor::copy_)
         .def("add_", &Tensor::add_)
         .def("register_hook", &Tensor::register_hook)
@@ -430,7 +536,8 @@ PYBIND11_MODULE(litetorch, m) {
         py::arg("input"), py::arg("target"),
         py::arg("weight") = nullptr,
         py::arg("ignore_index") = -100,
-        py::arg("reduction") = "mean");
+        py::arg("reduction") = "mean",
+        py::arg("label_smoothing") = 0.0f);
     ops.def("l1_loss", &Ops::l1_loss);
     ops.def("bce_loss", &Ops::bce_loss);
     ops.def("fused_linear_cross_entropy", &Ops::fused_linear_cross_entropy, py::arg("x"), py::arg("weight"), py::arg("target"), py::arg("bias") = nullptr);
@@ -438,6 +545,66 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("rmsnorm", &Ops::rmsnorm, py::arg("input"), py::arg("weight"), py::arg("eps") = 1e-5f);
     ops.def("qkv_extract", &Ops::qkv_extract, py::arg("qkv"), py::arg("num_heads"), py::arg("index"));
     ops.def("rope", &Ops::rope, py::arg("x"), py::arg("cos"), py::arg("sin"));
+
+    // === W1-T1 core-ops ===
+    auto w1_parse_dims = [](py::object dim, int64_t ndim) {
+        std::vector<int64_t> dims;
+        if (py::isinstance<py::int_>(dim)) {
+            dims.push_back(dim.cast<int64_t>());
+        } else {
+            for (auto item : dim.cast<py::sequence>()) dims.push_back(item.cast<int64_t>());
+        }
+        return dims;
+    };
+    ops.def("log2", &Ops::log2, py::arg("a"));
+    ops.def("log10", &Ops::log10, py::arg("a"));
+    ops.def("rsqrt", &Ops::rsqrt, py::arg("a"));
+    ops.def("tan", &Ops::tan, py::arg("a"));
+    ops.def("reciprocal", &Ops::reciprocal, py::arg("a"));
+    ops.def("sign", &Ops::sign, py::arg("a"));
+    ops.def("floor", &Ops::floor, py::arg("a"));
+    ops.def("ceil", &Ops::ceil, py::arg("a"));
+    ops.def("round", &Ops::round, py::arg("a"));
+    ops.def("trunc", &Ops::trunc, py::arg("a"));
+    ops.def("clamp_min", &Ops::clamp_min, py::arg("a"), py::arg("min"));
+    ops.def("clamp_max", &Ops::clamp_max, py::arg("a"), py::arg("max"));
+    ops.def("clamp", [](std::shared_ptr<Tensor> a, py::object min_v, py::object max_v) {
+        bool has_min = !min_v.is_none();
+        bool has_max = !max_v.is_none();
+        if (has_min && has_max) return Ops::clamp(a, min_v.cast<float>(), max_v.cast<float>());
+        if (has_min) return Ops::clamp_min(a, min_v.cast<float>());
+        if (has_max) return Ops::clamp_max(a, max_v.cast<float>());
+        throw std::runtime_error("[litetorch Error] clamp: at least one of min or max must be given");
+    }, py::arg("a"), py::arg("min") = py::none(), py::arg("max") = py::none());
+    ops.def("min", &Ops::min, py::arg("a"));
+    ops.def("amax", [w1_parse_dims](std::shared_ptr<Tensor> a, py::object dim, bool keepdim) {
+        return Ops::amax(a, w1_parse_dims(dim, (int64_t)a->shape.size()), keepdim);
+    }, py::arg("a"), py::arg("dim"), py::arg("keepdim") = false);
+    ops.def("amin", [w1_parse_dims](std::shared_ptr<Tensor> a, py::object dim, bool keepdim) {
+        return Ops::amin(a, w1_parse_dims(dim, (int64_t)a->shape.size()), keepdim);
+    }, py::arg("a"), py::arg("dim"), py::arg("keepdim") = false);
+    ops.def("sum", py::overload_cast<std::shared_ptr<Tensor>, const std::vector<int64_t>&, bool>(&Ops::sum),
+        py::arg("a"), py::arg("dim"), py::arg("keepdim") = false);
+    ops.def("mean", py::overload_cast<std::shared_ptr<Tensor>, const std::vector<int64_t>&, bool>(&Ops::mean),
+        py::arg("a"), py::arg("dim"), py::arg("keepdim") = false);
+    ops.def("max", py::overload_cast<std::shared_ptr<Tensor>, const std::vector<int64_t>&, bool>(&Ops::max),
+        py::arg("a"), py::arg("dim"), py::arg("keepdim") = false);
+    ops.def("allclose", &Ops::allclose, py::arg("a"), py::arg("b"),
+        py::arg("rtol") = 1e-5f, py::arg("atol") = 1e-8f, py::arg("equal_nan") = false);
+    ops.def("isclose", &Ops::isclose, py::arg("a"), py::arg("b"),
+        py::arg("rtol") = 1e-5f, py::arg("atol") = 1e-8f, py::arg("equal_nan") = false);
+    ops.def("triu", &Ops::triu, py::arg("a"), py::arg("diagonal") = 0);
+    ops.def("tril", &Ops::tril, py::arg("a"), py::arg("diagonal") = 0);
+    ops.def("sort", &Ops::sort, py::arg("a"), py::arg("dim") = -1, py::arg("descending") = false);
+    ops.def("argsort", &Ops::argsort, py::arg("a"), py::arg("dim") = -1, py::arg("descending") = false);
+    ops.def("cumsum", &Ops::cumsum, py::arg("a"), py::arg("dim"));
+    ops.def("scatter", &Ops::scatter, py::arg("input"), py::arg("dim"), py::arg("index"), py::arg("src"));
+    ops.def("scatter_add", &Ops::scatter_add, py::arg("input"), py::arg("dim"), py::arg("index"), py::arg("src"));
+    ops.def("flatten", &Ops::flatten, py::arg("a"), py::arg("start_dim") = 0, py::arg("end_dim") = -1);
+    ops.def("repeat", &Ops::repeat, py::arg("a"), py::arg("repeats"));
+    ops.def("narrow", &Ops::narrow, py::arg("a"), py::arg("dim"), py::arg("start"), py::arg("length"));
+    ops.def("t", &Ops::t, py::arg("a"));
+    // === end W1-T1 core-ops ===
     ops.def("flash_attention", &Ops::flash_attention, py::arg("q"), py::arg("k"), py::arg("v"), py::arg("causal") = false);
     ops.def("flash_attention_qkv", &Ops::flash_attention_qkv, py::arg("qkv"), py::arg("num_heads"), py::arg("causal") = false);
     ops.def("paged_attention", &Ops::paged_attention);
@@ -644,6 +811,14 @@ PYBIND11_MODULE(litetorch, m) {
         .def(py::init<int, int, double, bool, int, int, bool>(), py::arg("embed_dim"), py::arg("num_heads"), py::arg("dropout") = 0.0, py::arg("bias") = true, py::arg("kdim") = -1, py::arg("vdim") = -1, py::arg("batch_first") = false)
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiHeadAttention::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiHeadAttention::forward))
+        .def("forward", [](std::shared_ptr<nn::MultiHeadAttention> self, std::shared_ptr<Tensor> query,
+                           std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value,
+                           py::object attn_mask, py::object key_padding_mask, bool need_weights) {
+            std::shared_ptr<Tensor> am = attn_mask.is_none() ? nullptr : attn_mask.cast<std::shared_ptr<Tensor>>();
+            std::shared_ptr<Tensor> kpm = key_padding_mask.is_none() ? nullptr : key_padding_mask.cast<std::shared_ptr<Tensor>>();
+            return self->forward(query, key, value, am, kpm, need_weights);
+        }, py::arg("query"), py::arg("key"), py::arg("value"), py::arg("attn_mask") = py::none(),
+           py::arg("key_padding_mask") = py::none(), py::arg("need_weights") = false)
         .def("parameters", &nn::MultiHeadAttention::parameters)
         .def("to", &nn::MultiHeadAttention::to)
         .def("train", &nn::MultiHeadAttention::train)
@@ -721,6 +896,127 @@ PYBIND11_MODULE(litetorch, m) {
         .def("eval", &nn::Sequential::eval)
         .def("compile", &nn::Sequential::compile);
 
+    // === W1-T3 nn-plumbing ===
+    {
+        py::object Module_ = nn_mod.attr("Module");
+        py::is_method method_tag(Module_);
+        Module_.attr("register_parameter") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& name, std::shared_ptr<Tensor> t) {
+                self->register_parameter(name, t);
+            }, method_tag, py::arg("name"), py::arg("tensor"));
+        Module_.attr("register_buffer") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& name, std::shared_ptr<Tensor> t) {
+                self->register_buffer(name, t);
+            }, method_tag, py::arg("name"), py::arg("tensor"));
+        Module_.attr("add_module") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& name, std::shared_ptr<nn::Module> m) {
+                self->add_module(name, m);
+            }, method_tag, py::arg("name"), py::arg("module"));
+        Module_.attr("named_parameters") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& prefix) {
+                py::list out;
+                for (auto& kv : self->named_parameters(prefix)) out.append(py::make_tuple(kv.first, kv.second));
+                return out;
+            }, method_tag, py::arg("prefix") = "");
+        Module_.attr("named_buffers") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& prefix) {
+                py::list out;
+                for (auto& kv : self->named_buffers(prefix)) out.append(py::make_tuple(kv.first, kv.second));
+                return out;
+            }, method_tag, py::arg("prefix") = "");
+        Module_.attr("buffers") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self) { return self->buffers(); }, method_tag);
+        Module_.attr("named_children") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self) {
+                py::list out;
+                for (auto& kv : self->named_children()) out.append(py::make_tuple(kv.first, kv.second));
+                return out;
+            }, method_tag);
+        Module_.attr("named_modules") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, const std::string& prefix) {
+                py::list out;
+                for (auto& kv : self->named_modules(prefix)) out.append(py::make_tuple(kv.first, kv.second));
+                return out;
+            }, method_tag, py::arg("prefix") = "");
+        Module_.attr("state_dict") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self) {
+                py::dict d;
+                for (auto& kv : self->state_dict()) d[py::str(kv.first)] = kv.second;
+                return d;
+            }, method_tag);
+        Module_.attr("load_state_dict") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, py::dict sd, bool strict) {
+                std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> vec;
+                for (auto kv : sd) vec.push_back({kv.first.cast<std::string>(), kv.second.cast<std::shared_ptr<Tensor>>()});
+                auto res = self->load_state_dict(vec, strict);
+                return py::make_tuple(res.first, res.second);
+            }, method_tag, py::arg("state_dict"), py::arg("strict") = true);
+        Module_.attr("zero_grad") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self) { self->zero_grad(); }, method_tag);
+        Module_.attr("is_training") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self) { return self->training; }, method_tag);
+        Module_.attr("apply") = py::cpp_function(
+            [](std::shared_ptr<nn::Module> self, py::function fn) {
+                self->apply([&fn](std::shared_ptr<nn::Module> m) { fn(m); });
+            }, method_tag, py::arg("fn"));
+    }
+
+    py::class_<nn::Parameter, Tensor, std::shared_ptr<nn::Parameter>>(nn_mod, "Parameter")
+        .def(py::init([](std::shared_ptr<Tensor> data, bool requires_grad) {
+            auto p = std::make_shared<nn::Parameter>(data->shape, data->device, data->dtype);
+            p->copy_(data);
+            p->requires_grad = requires_grad;
+            return p;
+        }), py::arg("data"), py::arg("requires_grad") = true);
+
+    py::class_<nn::Buffer, Tensor, std::shared_ptr<nn::Buffer>>(nn_mod, "Buffer")
+        .def(py::init([](std::shared_ptr<Tensor> data) {
+            auto b = std::make_shared<nn::Buffer>(data->shape, data->device, data->dtype);
+            b->copy_(data);
+            return b;
+        }), py::arg("data"));
+
+    py::class_<nn::ModuleList, nn::Module, std::shared_ptr<nn::ModuleList>>(nn_mod, "ModuleList")
+        .def(py::init<>())
+        .def(py::init<const std::vector<std::shared_ptr<nn::Module>>&>(), py::arg("modules"))
+        .def("append", &nn::ModuleList::append, py::arg("module"))
+        .def("extend", &nn::ModuleList::extend, py::arg("modules"))
+        .def("__len__", &nn::ModuleList::size)
+        .def("__getitem__", [](nn::ModuleList& self, int64_t i) {
+            int64_t n = static_cast<int64_t>(self.size());
+            if (i < 0) i += n;
+            if (i < 0 || i >= n) throw py::index_error();
+            return self.modules[static_cast<size_t>(i)];
+        }, py::arg("index"))
+        .def("__setitem__", [](nn::ModuleList& self, int64_t i, std::shared_ptr<nn::Module> m) {
+            int64_t n = static_cast<int64_t>(self.size());
+            if (i < 0) i += n;
+            if (i < 0 || i >= n) throw py::index_error();
+            self.modules[static_cast<size_t>(i)] = m;
+        }, py::arg("index"), py::arg("module"))
+        .def("__iter__", [](nn::ModuleList& self) {
+            return py::make_iterator(self.modules.begin(), self.modules.end());
+        }, py::keep_alive<0, 1>());
+
+    py::class_<nn::ModuleDict, nn::Module, std::shared_ptr<nn::ModuleDict>>(nn_mod, "ModuleDict")
+        .def(py::init<>())
+        .def("put", &nn::ModuleDict::put, py::arg("key"), py::arg("module"))
+        .def("get", &nn::ModuleDict::get, py::arg("key"))
+        .def("keys", &nn::ModuleDict::keys)
+        .def("__len__", &nn::ModuleDict::size)
+        .def("__getitem__", [](nn::ModuleDict& self, const std::string& key) {
+            auto m = self.get(key);
+            if (!m) throw py::key_error("ModuleDict key not found: '" + key + "'");
+            return m;
+        }, py::arg("key"))
+        .def("__setitem__", &nn::ModuleDict::put, py::arg("key"), py::arg("module"))
+        .def("__delitem__", &nn::ModuleDict::erase, py::arg("key"))
+        .def("__contains__", &nn::ModuleDict::contains, py::arg("key"))
+        .def("__iter__", [](nn::ModuleDict& self) {
+            return py::make_iterator(self.items.begin(), self.items.end());
+        }, py::keep_alive<0, 1>());
+    // === end W1-T3 nn-plumbing ===
+
     py::class_<nn::MSELoss, nn::Module, std::shared_ptr<nn::MSELoss>>(nn_mod, "MSELoss")
         .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MSELoss::forward))
@@ -728,15 +1024,16 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("reduction", &nn::MSELoss::reduction);
 
     py::class_<nn::CrossEntropyLoss, nn::Module, std::shared_ptr<nn::CrossEntropyLoss>>(nn_mod, "CrossEntropyLoss")
-        .def(py::init([](py::object weight, int64_t ignore_index, const std::string& reduction) {
+        .def(py::init([](py::object weight, int64_t ignore_index, const std::string& reduction, float label_smoothing) {
             std::shared_ptr<Tensor> w = weight.is_none() ? nullptr : weight.cast<std::shared_ptr<Tensor>>();
-            return std::make_shared<nn::CrossEntropyLoss>(w, ignore_index, reduction);
-        }), py::arg("weight") = py::none(), py::arg("ignore_index") = -100, py::arg("reduction") = "mean")
+            return std::make_shared<nn::CrossEntropyLoss>(w, ignore_index, reduction, label_smoothing);
+        }), py::arg("weight") = py::none(), py::arg("ignore_index") = -100, py::arg("reduction") = "mean", py::arg("label_smoothing") = 0.0f)
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::CrossEntropyLoss::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CrossEntropyLoss::forward))
         .def_readwrite("weight", &nn::CrossEntropyLoss::weight)
         .def_readwrite("ignore_index", &nn::CrossEntropyLoss::ignore_index)
-        .def_readwrite("reduction", &nn::CrossEntropyLoss::reduction);
+        .def_readwrite("reduction", &nn::CrossEntropyLoss::reduction)
+        .def_readwrite("label_smoothing", &nn::CrossEntropyLoss::label_smoothing);
 
     py::class_<nn::BCELoss, nn::Module, std::shared_ptr<nn::BCELoss>>(nn_mod, "BCELoss")
         .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
@@ -749,6 +1046,103 @@ PYBIND11_MODULE(litetorch, m) {
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::L1Loss::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::L1Loss::forward))
         .def_readwrite("reduction", &nn::L1Loss::reduction);
+
+    // === W1-T4 nn-layers ===
+    ops.def("conv1d", &Ops::conv1d, py::arg("input"), py::arg("weight"), py::arg("bias") = nullptr, py::arg("stride") = 1, py::arg("padding") = 0);
+    ops.def("avg_pool2d", &Ops::avg_pool2d, py::arg("input"), py::arg("kernel_size"), py::arg("stride") = -1, py::arg("padding") = 0);
+    ops.def("nll_loss", &Ops::nll_loss, py::arg("input"), py::arg("target"), py::arg("weight") = nullptr,
+        py::arg("ignore_index") = -100, py::arg("reduction") = "mean");
+    ops.def("bce_with_logits_loss", &Ops::bce_with_logits_loss, py::arg("input"), py::arg("target"),
+        py::arg("weight") = nullptr, py::arg("reduction") = "mean", py::arg("pos_weight") = nullptr);
+
+    py::class_<nn::GroupNorm, nn::Module, std::shared_ptr<nn::GroupNorm>>(nn_mod, "GroupNorm")
+        .def(py::init<int, int, float, bool>(), py::arg("num_groups"), py::arg("num_channels"), py::arg("eps") = 1e-5f, py::arg("affine") = true)
+        .def("forward", &nn::GroupNorm::forward)
+        .def("parameters", &nn::GroupNorm::parameters)
+        .def("to", &nn::GroupNorm::to)
+        .def_readwrite("weight", &nn::GroupNorm::weight)
+        .def_readwrite("bias", &nn::GroupNorm::bias)
+        .def_readwrite("num_groups", &nn::GroupNorm::num_groups)
+        .def_readwrite("num_channels", &nn::GroupNorm::num_channels)
+        .def_readwrite("eps", &nn::GroupNorm::eps)
+        .def_readwrite("affine", &nn::GroupNorm::affine);
+
+    py::class_<nn::BatchNorm1d, nn::Module, std::shared_ptr<nn::BatchNorm1d>>(nn_mod, "BatchNorm1d")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f, py::arg("momentum") = 0.1f, py::arg("affine") = true, py::arg("track_running_stats") = true)
+        .def("forward", &nn::BatchNorm1d::forward)
+        .def("parameters", &nn::BatchNorm1d::parameters)
+        .def("to", &nn::BatchNorm1d::to)
+        .def_readwrite("weight", &nn::BatchNorm1d::weight)
+        .def_readwrite("bias", &nn::BatchNorm1d::bias)
+        .def_readwrite("running_mean", &nn::BatchNorm1d::running_mean)
+        .def_readwrite("running_var", &nn::BatchNorm1d::running_var)
+        .def_readwrite("num_features", &nn::BatchNorm1d::num_features)
+        .def_readwrite("eps", &nn::BatchNorm1d::eps)
+        .def_readwrite("momentum", &nn::BatchNorm1d::momentum)
+        .def_readwrite("affine", &nn::BatchNorm1d::affine)
+        .def_readwrite("track_running_stats", &nn::BatchNorm1d::track_running_stats);
+
+    py::class_<nn::Conv1d, nn::Module, std::shared_ptr<nn::Conv1d>>(nn_mod, "Conv1d")
+        .def(py::init([](int in_channels, int out_channels, py::object kernel_size,
+                         py::object stride, py::object padding, bool has_bias) {
+            auto to_int = [](py::object o) {
+                if (py::isinstance<py::int_>(o)) return o.cast<int>();
+                auto v = o.cast<std::vector<int>>();
+                if (v.size() != 1) throw std::runtime_error("[litetorch Error] Conv1d kernel_size/stride/padding must be an int or single-element tuple");
+                return v[0];
+            };
+            return std::make_shared<nn::Conv1d>(in_channels, out_channels, to_int(kernel_size),
+                                               to_int(stride), to_int(padding), has_bias);
+        }), py::arg("in_channels"), py::arg("out_channels"), py::arg("kernel_size"),
+           py::arg("stride") = 1, py::arg("padding") = 0, py::arg("has_bias") = true)
+        .def("forward", &nn::Conv1d::forward)
+        .def("parameters", &nn::Conv1d::parameters)
+        .def("to", &nn::Conv1d::to)
+        .def_readwrite("weight", &nn::Conv1d::weight)
+        .def_readwrite("bias", &nn::Conv1d::bias)
+        .def_readwrite("kernel_size", &nn::Conv1d::kernel_size)
+        .def_readwrite("stride", &nn::Conv1d::stride)
+        .def_readwrite("padding", &nn::Conv1d::padding);
+
+    py::class_<nn::AvgPool2d, nn::Module, std::shared_ptr<nn::AvgPool2d>>(nn_mod, "AvgPool2d")
+        .def(py::init<int, int, int>(), py::arg("kernel_size"), py::arg("stride") = -1, py::arg("padding") = 0)
+        .def("forward", &nn::AvgPool2d::forward)
+        .def_readwrite("kernel_size", &nn::AvgPool2d::kernel_size)
+        .def_readwrite("stride", &nn::AvgPool2d::stride)
+        .def_readwrite("padding", &nn::AvgPool2d::padding);
+
+    py::class_<nn::NLLLoss, nn::Module, std::shared_ptr<nn::NLLLoss>>(nn_mod, "NLLLoss")
+        .def(py::init([](py::object weight, int64_t ignore_index, const std::string& reduction) {
+            std::shared_ptr<Tensor> w = weight.is_none() ? nullptr : weight.cast<std::shared_ptr<Tensor>>();
+            return std::make_shared<nn::NLLLoss>(w, ignore_index, reduction);
+        }), py::arg("weight") = py::none(), py::arg("ignore_index") = -100, py::arg("reduction") = "mean")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::NLLLoss::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::NLLLoss::forward))
+        .def_readwrite("weight", &nn::NLLLoss::weight)
+        .def_readwrite("ignore_index", &nn::NLLLoss::ignore_index)
+        .def_readwrite("reduction", &nn::NLLLoss::reduction);
+
+    py::class_<nn::BCEWithLogitsLoss, nn::Module, std::shared_ptr<nn::BCEWithLogitsLoss>>(nn_mod, "BCEWithLogitsLoss")
+        .def(py::init([](py::object weight, const std::string& reduction, py::object pos_weight) {
+            std::shared_ptr<Tensor> w = weight.is_none() ? nullptr : weight.cast<std::shared_ptr<Tensor>>();
+            std::shared_ptr<Tensor> pw = pos_weight.is_none() ? nullptr : pos_weight.cast<std::shared_ptr<Tensor>>();
+            return std::make_shared<nn::BCEWithLogitsLoss>(w, reduction, pw);
+        }), py::arg("weight") = py::none(), py::arg("reduction") = "mean", py::arg("pos_weight") = py::none())
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::BCEWithLogitsLoss::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::BCEWithLogitsLoss::forward))
+        .def_readwrite("weight", &nn::BCEWithLogitsLoss::weight)
+        .def_readwrite("reduction", &nn::BCEWithLogitsLoss::reduction)
+        .def_readwrite("pos_weight", &nn::BCEWithLogitsLoss::pos_weight);
+
+    py::class_<nn::SiLU, nn::Module, std::shared_ptr<nn::SiLU>>(nn_mod, "SiLU")
+        .def(py::init<>())
+        .def("forward", &nn::SiLU::forward);
+
+    py::class_<nn::LogSoftmax, nn::Module, std::shared_ptr<nn::LogSoftmax>>(nn_mod, "LogSoftmax")
+        .def(py::init<int64_t>(), py::arg("dim") = -1)
+        .def("forward", &nn::LogSoftmax::forward)
+        .def_readwrite("dim", &nn::LogSoftmax::dim);
+    // === end W1-T4 nn-layers ===
 
     py::class_<nn::GuidedDecoder>(nn_mod, "GuidedDecoder")
         .def(py::init<const std::vector<std::string>&>(), py::arg("vocabulary"))
@@ -815,6 +1209,51 @@ PYBIND11_MODULE(litetorch, m) {
     init_mod.def("zeros_", &nn::init::zeros_, py::arg("tensor"));
     init_mod.def("ones_", &nn::init::ones_, py::arg("tensor"));
     init_mod.def("fill_", &nn::init::fill_, py::arg("tensor"), py::arg("value"));
+
+    // === W1-T5 functional ===
+    auto functional_mod = nn_mod.def_submodule("functional", "LiteTorch nn.functional");
+    functional_mod.def("dropout", &functional::dropout,
+        py::arg("x"), py::arg("p") = 0.5, py::arg("training") = true);
+    functional_mod.def("linear", &functional::linear,
+        py::arg("x"), py::arg("weight"), py::arg("bias") = nullptr);
+    functional_mod.def("pad", &functional::pad,
+        py::arg("x"), py::arg("pad"), py::arg("mode") = "constant", py::arg("value") = 0.0);
+    functional_mod.def("interpolate",
+        [](std::shared_ptr<Tensor> x, py::object size, py::object scale_factor,
+           const std::string& mode, bool align_corners) {
+            std::vector<int64_t> sz;
+            std::vector<double> sf;
+            if (!size.is_none()) {
+                if (py::isinstance<py::int_>(size)) {
+                    sz.push_back(size.cast<int64_t>());
+                } else {
+                    for (auto v : size.cast<py::sequence>()) sz.push_back(v.cast<int64_t>());
+                }
+            }
+            if (!scale_factor.is_none()) {
+                if (py::isinstance<py::float_>(scale_factor) ||
+                    py::isinstance<py::int_>(scale_factor)) {
+                    sf.push_back(scale_factor.cast<double>());
+                } else {
+                    for (auto v : scale_factor.cast<py::sequence>()) sf.push_back(v.cast<double>());
+                }
+            }
+            return functional::interpolate(x, sz, sf, mode, align_corners);
+        },
+        py::arg("x"), py::arg("size") = py::none(), py::arg("scale_factor") = py::none(),
+        py::arg("mode") = "nearest", py::arg("align_corners") = false);
+    functional_mod.def("nll_loss", &functional::nll_loss,
+        py::arg("input"), py::arg("target"), py::arg("weight") = nullptr,
+        py::arg("reduction") = "mean", py::arg("ignore_index") = -100);
+    functional_mod.def("bce_with_logits", &functional::bce_with_logits,
+        py::arg("input"), py::arg("target"), py::arg("reduction") = "mean");
+    functional_mod.def("normalize", &functional::normalize,
+        py::arg("x"), py::arg("p") = 2.0, py::arg("dim") = 1);
+    functional_mod.def("glu", &functional::glu,
+        py::arg("x"), py::arg("dim") = -1);
+    functional_mod.def("elu", &functional::elu,
+        py::arg("x"), py::arg("alpha") = 1.0);
+    // === end W1-T5 functional ===
 
     auto optim_mod = m.def_submodule("optim", "LiteTorch Optimizers");
     
@@ -1235,6 +1674,96 @@ PYBIND11_MODULE(litetorch, m) {
     m.def("arange", [](int64_t start, int64_t end, int64_t step, const Device& device, DataType dtype) {
         return Tensor::arange(start, end, step, device, dtype);
     }, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32);
+
+    // === W1-T1 core-ops ===
+    auto w1_opt_device = [](py::object device) -> Device {
+        return device.is_none() ? Device(DeviceType::CPU, 0) : device.cast<Device>();
+    };
+    auto w1_opt_dtype = [](py::object dtype, DataType dflt) -> DataType {
+        return dtype.is_none() ? dflt : dtype.cast<DataType>();
+    };
+    auto w1_shape_arg = [](py::object shape) {
+        std::vector<int64_t> s;
+        if (py::isinstance<py::int_>(shape)) {
+            s.push_back(shape.cast<int64_t>());
+        } else {
+            for (auto item : shape.cast<py::sequence>()) s.push_back(item.cast<int64_t>());
+        }
+        return s;
+    };
+    m.def("tensor", [w1_opt_device, w1_opt_dtype](py::object data, py::object device, bool requires_grad, py::object dtype) {
+        std::vector<float> flat;
+        std::vector<int64_t> shape;
+        std::function<void(py::handle, size_t)> rec = [&](py::handle obj, size_t depth) {
+            if (py::isinstance<py::sequence>(obj) && !py::isinstance<py::str>(obj)) {
+                auto seq = py::reinterpret_borrow<py::sequence>(obj);
+                size_t n = seq.size();
+                if (depth == shape.size()) shape.push_back((int64_t)n);
+                else if (shape[depth] != (int64_t)n)
+                    throw std::runtime_error("[litetorch Error] tensor(): inconsistent nested sequence sizes");
+                for (auto item : seq) rec(item, depth + 1);
+            } else {
+                double v = py::isinstance<py::bool_>(obj) ? (obj.cast<bool>() ? 1.0 : 0.0) : obj.cast<double>();
+                flat.push_back((float)v);
+            }
+        };
+        rec(data, 0);
+        if (shape.empty()) shape.push_back(1);
+        return Ops::from_data(flat, shape, w1_opt_device(device), requires_grad, w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("data"), py::arg("device") = py::none(), py::arg("requires_grad") = false, py::arg("dtype") = py::none());
+    m.def("empty", [w1_opt_device, w1_opt_dtype, w1_shape_arg](py::object shape, py::object device, bool requires_grad, py::object dtype) {
+        return Ops::empty(w1_shape_arg(shape), w1_opt_device(device), requires_grad, w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("shape"), py::arg("device") = py::none(), py::arg("requires_grad") = false, py::arg("dtype") = py::none());
+    m.def("full", [w1_opt_device, w1_opt_dtype, w1_shape_arg](py::object shape, double fill_value, py::object device, bool requires_grad, py::object dtype) {
+        return Ops::full(w1_shape_arg(shape), (float)fill_value, w1_opt_device(device), requires_grad, w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("shape"), py::arg("fill_value"), py::arg("device") = py::none(), py::arg("requires_grad") = false, py::arg("dtype") = py::none());
+    m.def("linspace", [w1_opt_device, w1_opt_dtype](double start, double end, int64_t steps, py::object device, py::object dtype) {
+        return Ops::linspace((float)start, (float)end, steps, w1_opt_device(device), w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("start"), py::arg("end"), py::arg("steps"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("logspace", [w1_opt_device, w1_opt_dtype](double start, double end, int64_t steps, double base, py::object device, py::object dtype) {
+        return Ops::logspace((float)start, (float)end, steps, (float)base, w1_opt_device(device), w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("start"), py::arg("end"), py::arg("steps"), py::arg("base") = 10.0, py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("eye", [w1_opt_device, w1_opt_dtype](int64_t n, py::object m_arg, py::object device, py::object dtype) {
+        int64_t m = m_arg.is_none() ? -1 : m_arg.cast<int64_t>();
+        return Ops::eye(n, m, w1_opt_device(device), w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("n"), py::arg("m") = py::none(), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("rand", [w1_opt_device, w1_opt_dtype, w1_shape_arg](py::object shape, py::object device, bool requires_grad, py::object dtype) {
+        return Ops::rand(w1_shape_arg(shape), w1_opt_device(device), requires_grad, w1_opt_dtype(dtype, DataType::FP32));
+    }, py::arg("shape"), py::arg("device") = py::none(), py::arg("requires_grad") = false, py::arg("dtype") = py::none());
+    m.def("randint", [w1_opt_device, w1_opt_dtype, w1_shape_arg](int64_t low, int64_t high, py::object shape, py::object device, py::object dtype) {
+        return Ops::randint(low, high, w1_shape_arg(shape), w1_opt_device(device), w1_opt_dtype(dtype, DataType::INT32));
+    }, py::arg("low"), py::arg("high"), py::arg("shape"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("randint", [w1_opt_device, w1_opt_dtype, w1_shape_arg](int64_t high, py::object shape, py::object device, py::object dtype) {
+        return Ops::randint(0, high, w1_shape_arg(shape), w1_opt_device(device), w1_opt_dtype(dtype, DataType::INT32));
+    }, py::arg("high"), py::arg("shape"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("randperm", [w1_opt_device, w1_opt_dtype](int64_t n, py::object device, py::object dtype) {
+        return Ops::randperm(n, w1_opt_device(device), w1_opt_dtype(dtype, DataType::INT32));
+    }, py::arg("n"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("zeros_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::zeros_like(a, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("ones_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::ones_like(a, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("empty_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::empty_like(a, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("full_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, double fill_value, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::full_like(a, (float)fill_value, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("fill_value"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("rand_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::rand_like(a, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    m.def("randn_like", [w1_opt_dtype](std::shared_ptr<Tensor> a, py::object device, py::object dtype) {
+        Device d = device.is_none() ? a->device : device.cast<Device>();
+        return Ops::randn_like(a, d, w1_opt_dtype(dtype, a->dtype));
+    }, py::arg("a"), py::arg("device") = py::none(), py::arg("dtype") = py::none());
+    // === end W1-T1 core-ops ===
 
     m.def("empty_cache", []() {
         CachingAllocator::get().empty_cache();

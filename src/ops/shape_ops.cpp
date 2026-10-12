@@ -7,11 +7,15 @@
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <random>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace litetorch {
+
+std::mt19937& get_generator();
+
 namespace Ops {
 
 namespace {
@@ -597,6 +601,656 @@ std::shared_ptr<Tensor> silu(std::shared_ptr<Tensor> a) {
     }
     return out;
 }
+
+// === W1-T1 core-ops ===
+
+namespace {
+
+void gpu_fail_shape(const char* op) {
+    throw std::runtime_error(std::string("[litetorch Error] ") + op + ": GPU kernel not implemented (fail-loud)");
+}
+
+size_t shape_numel(const std::vector<int64_t>& shape) {
+    size_t n = 1;
+    for (auto s : shape) n *= (size_t)s;
+    return n;
+}
+
+int64_t norm_dim_shape(int64_t dim, int64_t ndim, const char* op) {
+    if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) throw std::runtime_error(std::string("[litetorch Error] ") + op + ": dimension out of range");
+    return dim;
+}
+
+}
+
+std::shared_ptr<Tensor> from_data(const std::vector<float>& data, const std::vector<int64_t>& shape,
+        const Device& device, bool requires_grad, DataType dtype) {
+    if (data.size() != shape_numel(shape))
+        throw std::runtime_error("[litetorch Error] tensor(): data size does not match shape");
+    return Tensor::from_vector(data, shape, device, requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> empty(const std::vector<int64_t>& shape,
+        const Device& device, bool requires_grad, DataType dtype) {
+    return Tensor::create(shape, device, requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> full(const std::vector<int64_t>& shape, float fill_value,
+        const Device& device, bool requires_grad, DataType dtype) {
+    return Tensor::from_vector(std::vector<float>(shape_numel(shape), fill_value), shape, device, requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> linspace(float start, float end, int64_t steps,
+        const Device& device, DataType dtype) {
+    if (steps <= 0) throw std::runtime_error("[litetorch Error] linspace: steps must be positive");
+    std::vector<float> data((size_t)steps);
+    if (steps == 1) {
+        data[0] = start;
+    } else {
+        for (int64_t i = 0; i < steps; ++i)
+            data[(size_t)i] = start + (end - start) * (float)i / (float)(steps - 1);
+    }
+    return Tensor::from_vector(data, {steps}, device, false, dtype);
+}
+
+std::shared_ptr<Tensor> logspace(float start, float end, int64_t steps, float base,
+        const Device& device, DataType dtype) {
+    if (steps <= 0) throw std::runtime_error("[litetorch Error] logspace: steps must be positive");
+    std::vector<float> data((size_t)steps);
+    if (steps == 1) {
+        data[0] = std::pow(base, start);
+    } else {
+        for (int64_t i = 0; i < steps; ++i)
+            data[(size_t)i] = std::pow(base, start + (end - start) * (float)i / (float)(steps - 1));
+    }
+    return Tensor::from_vector(data, {steps}, device, false, dtype);
+}
+
+std::shared_ptr<Tensor> eye(int64_t n, int64_t m, const Device& device, DataType dtype) {
+    if (n <= 0) throw std::runtime_error("[litetorch Error] eye: n must be positive");
+    if (m < 0) m = n;
+    std::vector<float> data((size_t)(n * m), 0.0f);
+    int64_t k = std::min(n, m);
+    for (int64_t i = 0; i < k; ++i) data[(size_t)(i * m + i)] = 1.0f;
+    return Tensor::from_vector(data, {n, m}, device, false, dtype);
+}
+
+std::shared_ptr<Tensor> rand(const std::vector<int64_t>& shape,
+        const Device& device, bool requires_grad, DataType dtype) {
+    std::vector<float> data(shape_numel(shape));
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    auto& gen = get_generator();
+    for (auto& v : data) v = dist(gen);
+    return Tensor::from_vector(data, shape, device, requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> randint(int64_t low, int64_t high, const std::vector<int64_t>& shape,
+        const Device& device, DataType dtype) {
+    if (high <= low) throw std::runtime_error("[litetorch Error] randint: high must be greater than low");
+    std::vector<float> data(shape_numel(shape));
+    std::uniform_int_distribution<int64_t> dist(low, high - 1);
+    auto& gen = get_generator();
+    for (auto& v : data) v = (float)dist(gen);
+    return Tensor::from_vector(data, shape, device, false, dtype);
+}
+
+std::shared_ptr<Tensor> randperm(int64_t n, const Device& device, DataType dtype) {
+    if (n < 0) throw std::runtime_error("[litetorch Error] randperm: n must be non-negative");
+    std::vector<float> data((size_t)n);
+    std::iota(data.begin(), data.end(), 0.0f);
+    std::shuffle(data.begin(), data.end(), get_generator());
+    return Tensor::from_vector(data, {n}, device, false, dtype);
+}
+
+std::shared_ptr<Tensor> zeros_like(std::shared_ptr<Tensor> a, const Device& device, DataType dtype) {
+    return Tensor::zeros(a->shape, device, a->requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> ones_like(std::shared_ptr<Tensor> a, const Device& device, DataType dtype) {
+    return Tensor::ones(a->shape, device, a->requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> empty_like(std::shared_ptr<Tensor> a, const Device& device, DataType dtype) {
+    return Tensor::create(a->shape, device, a->requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> full_like(std::shared_ptr<Tensor> a, float fill_value, const Device& device, DataType dtype) {
+    return full(a->shape, fill_value, device, a->requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> rand_like(std::shared_ptr<Tensor> a, const Device& device, DataType dtype) {
+    return rand(a->shape, device, a->requires_grad, dtype);
+}
+
+std::shared_ptr<Tensor> randn_like(std::shared_ptr<Tensor> a, const Device& device, DataType dtype) {
+    return Tensor::randn(a->shape, device, a->requires_grad, dtype);
+}
+
+class TriuNode : public Node {
+public:
+    int64_t diagonal;
+    TriuNode(int64_t d) : Node("Triu"), diagonal(d) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        return { triu(grad_output, diagonal) };
+    }
+};
+
+class TrilNode : public Node {
+public:
+    int64_t diagonal;
+    TrilNode(int64_t d) : Node("Tril"), diagonal(d) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        return { tril(grad_output, diagonal) };
+    }
+};
+
+namespace {
+
+std::shared_ptr<Tensor> triu_tril_impl(std::shared_ptr<Tensor> a, int64_t diagonal, bool upper, const char* op) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape(op);
+    int64_t ndim = (int64_t)a->shape.size();
+    if (ndim < 2) throw std::runtime_error(std::string("[litetorch Error] ") + op + ": expected at least 2D tensor");
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = upper ? triu(a_fp32, diagonal) : tril(a_fp32, diagonal);
+        return cast(out_fp32, a->dtype);
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    std::vector<float> data = a_c->to_vector();
+    int64_t rows = a_c->shape[(size_t)(ndim - 2)];
+    int64_t cols = a_c->shape[(size_t)(ndim - 1)];
+    int64_t plane = rows * cols;
+    int64_t batch = (int64_t)a_c->numel() / plane;
+    std::vector<float> result(data.size());
+    ThreadPool::get().parallel_for(0, batch, [&](int64_t b) {
+        for (int64_t i = 0; i < rows; ++i) {
+            for (int64_t j = 0; j < cols; ++j) {
+                int64_t k = b * plane + i * cols + j;
+                bool keep = upper ? ((j - i) >= diagonal) : ((j - i) <= diagonal);
+                result[(size_t)k] = keep ? data[(size_t)k] : 0.0f;
+            }
+        }
+    });
+    write_vec(out, result);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        std::shared_ptr<Node> node = upper ? std::static_pointer_cast<Node>(std::make_shared<TriuNode>(diagonal))
+                                           : std::static_pointer_cast<Node>(std::make_shared<TrilNode>(diagonal));
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+}
+
+std::shared_ptr<Tensor> triu(std::shared_ptr<Tensor> a, int64_t diagonal) {
+    return triu_tril_impl(a, diagonal, true, "triu");
+}
+
+std::shared_ptr<Tensor> tril(std::shared_ptr<Tensor> a, int64_t diagonal) {
+    return triu_tril_impl(a, diagonal, false, "tril");
+}
+
+class SortNode : public Node {
+public:
+    int64_t dim;
+    std::shared_ptr<Tensor> indices;
+    std::vector<int64_t> input_shape;
+    SortNode(int64_t d, std::shared_ptr<Tensor> idx, const std::vector<int64_t>& s)
+        : Node("Sort"), dim(d), indices(idx), input_shape(s) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto zeros = Tensor::zeros(input_shape, grad_output->device, false, DataType::FP32);
+        return { scatter_add(zeros, dim, indices, grad_output) };
+    }
+};
+
+namespace {
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> sort_impl(
+        std::shared_ptr<Tensor> a, int64_t dim, bool descending, const char* op) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape(op);
+    int64_t ndim = (int64_t)a->shape.size();
+    if (ndim < 1) throw std::runtime_error(std::string("[litetorch Error] ") + op + ": expected at least 1D tensor");
+    int64_t d = norm_dim_shape(dim, ndim, op);
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto r = sort_impl(a_fp32, dim, descending, op);
+        return { cast(r.first, a->dtype), r.second };
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    std::vector<float> data = a_c->to_vector();
+    auto in_strides = default_strides(a_c->shape);
+    int64_t dim_size = a_c->shape[(size_t)d];
+    size_t n = data.size();
+    std::vector<float> out_vals(n), out_idx(n);
+    int64_t slices = (int64_t)n / dim_size;
+    std::vector<int64_t> rdims;
+    for (int64_t i = 0; i < ndim; ++i) if (i != d) rdims.push_back(i);
+    ThreadPool::get().parallel_for(0, slices, [&](int64_t o) {
+        int64_t rem = o;
+        int64_t base = 0;
+        for (int64_t j = (int64_t)rdims.size() - 1; j >= 0; --j) {
+            int64_t dd = rdims[(size_t)j];
+            int64_t c = rem % a_c->shape[(size_t)dd];
+            rem /= a_c->shape[(size_t)dd];
+            base += c * in_strides[(size_t)dd];
+        }
+        std::vector<int64_t> order((size_t)dim_size);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](int64_t x, int64_t y) {
+            float vx = data[(size_t)(base + x * in_strides[(size_t)d])];
+            float vy = data[(size_t)(base + y * in_strides[(size_t)d])];
+            if (vx != vy) return descending ? (vx > vy) : (vx < vy);
+            return x < y;
+        });
+        int64_t obase = o * dim_size;
+        for (int64_t k = 0; k < dim_size; ++k) {
+            out_vals[(size_t)(obase + k)] = data[(size_t)(base + order[(size_t)k] * in_strides[(size_t)d])];
+            out_idx[(size_t)(obase + k)] = (float)order[(size_t)k];
+        }
+    });
+    auto vals = Tensor::create(a_c->shape, a_c->device);
+    auto idx = Tensor::create(a_c->shape, a_c->device);
+    write_vec(vals, out_vals);
+    write_vec(idx, out_idx);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        auto node = std::make_shared<SortNode>(d, idx, a->shape);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->saved_tensors = { idx };
+        node->output = vals;
+        vals->creator = node;
+        vals->requires_grad = true;
+    }
+    return { vals, idx };
+}
+
+}
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> sort(std::shared_ptr<Tensor> a, int64_t dim, bool descending) {
+    return sort_impl(a, dim, descending, "sort");
+}
+
+std::shared_ptr<Tensor> argsort(std::shared_ptr<Tensor> a, int64_t dim, bool descending) {
+    return sort_impl(a, dim, descending, "argsort").second;
+}
+
+class CumsumNode : public Node {
+public:
+    int64_t dim;
+    CumsumNode(int64_t d) : Node("Cumsum"), dim(d) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto g_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        std::vector<float> gd = g_c->to_vector();
+        int64_t ndim = (int64_t)g_c->shape.size();
+        int64_t outer = 1, inner = 1;
+        for (int64_t i = 0; i < dim; ++i) outer *= g_c->shape[(size_t)i];
+        int64_t dim_size = g_c->shape[(size_t)dim];
+        for (int64_t i = dim + 1; i < ndim; ++i) inner *= g_c->shape[(size_t)i];
+        std::vector<float> gi(gd.size());
+        for (int64_t o = 0; o < outer; ++o) {
+            for (int64_t in = 0; in < inner; ++in) {
+                float acc = 0.0f;
+                for (int64_t k = dim_size - 1; k >= 0; --k) {
+                    acc += gd[(size_t)((o * dim_size + k) * inner + in)];
+                    gi[(size_t)((o * dim_size + k) * inner + in)] = acc;
+                }
+            }
+        }
+        auto out = Tensor::create(g_c->shape, g_c->device);
+        write_vec(out, gi);
+        return { out };
+    }
+};
+
+std::shared_ptr<Tensor> cumsum(std::shared_ptr<Tensor> a, int64_t dim) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape("cumsum");
+    int64_t ndim = (int64_t)a->shape.size();
+    if (ndim < 1) throw std::runtime_error("[litetorch Error] cumsum: expected at least 1D tensor");
+    int64_t d = norm_dim_shape(dim, ndim, "cumsum");
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        return cast(cumsum(a_fp32, dim), a->dtype);
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    std::vector<float> data = a_c->to_vector();
+    int64_t outer = 1, inner = 1;
+    for (int64_t i = 0; i < d; ++i) outer *= a_c->shape[(size_t)i];
+    int64_t dim_size = a_c->shape[(size_t)d];
+    for (int64_t i = d + 1; i < ndim; ++i) inner *= a_c->shape[(size_t)i];
+    std::vector<float> result(data.size());
+    ThreadPool::get().parallel_for(0, outer, [&](int64_t o) {
+        for (int64_t in = 0; in < inner; ++in) {
+            float acc = 0.0f;
+            for (int64_t k = 0; k < dim_size; ++k) {
+                acc += data[(size_t)((o * dim_size + k) * inner + in)];
+                result[(size_t)((o * dim_size + k) * inner + in)] = acc;
+            }
+        }
+    });
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    write_vec(out, result);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        auto node = std::make_shared<CumsumNode>(d);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+class ScatterNode : public Node {
+public:
+    int64_t dim;
+    std::shared_ptr<Tensor> index;
+    std::vector<int64_t> input_shape;
+    ScatterNode(int64_t d, std::shared_ptr<Tensor> idx, const std::vector<int64_t>& s)
+        : Node("Scatter"), dim(d), index(idx), input_shape(s) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto g_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        std::vector<float> gd = g_c->to_vector();
+        std::vector<float> idxd = index->to_vector();
+        int64_t ndim = (int64_t)input_shape.size();
+        auto in_strides = default_strides(input_shape);
+        auto idx_strides = default_strides(index->shape);
+        int64_t dim_size = input_shape[(size_t)dim];
+        std::vector<float> gi(gd.size(), 0.0f);
+        for (size_t i = 0; i < gd.size(); ++i) {
+            size_t rem = i;
+            int64_t pos = 0;
+            for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+                int64_t c = (int64_t)(rem % (size_t)index->shape[(size_t)dd]);
+                rem /= (size_t)index->shape[(size_t)dd];
+                int64_t sc = (dd == dim) ? (int64_t)idxd[i] : c;
+                pos += sc * in_strides[(size_t)dd];
+            }
+            gi[(size_t)pos] = gd[i];
+        }
+        auto grad_input = Tensor::create(input_shape, grad_output->device);
+        write_vec(grad_input, gi);
+        auto grad_src = gather(grad_output, dim, index);
+        return { grad_input, grad_src };
+    }
+};
+
+class ScatterAddNode : public Node {
+public:
+    int64_t dim;
+    std::shared_ptr<Tensor> index;
+    std::vector<int64_t> input_shape;
+    ScatterAddNode(int64_t d, std::shared_ptr<Tensor> idx, const std::vector<int64_t>& s)
+        : Node("ScatterAdd"), dim(d), index(idx), input_shape(s) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto grad_src = gather(grad_output, dim, index);
+        return { grad_output->clone(), grad_src };
+    }
+};
+
+namespace {
+
+std::shared_ptr<Tensor> scatter_impl(std::shared_ptr<Tensor> input, int64_t dim,
+        std::shared_ptr<Tensor> index, std::shared_ptr<Tensor> src, bool add, const char* op) {
+    if (input->device.type == DeviceType::GPU || index->device.type == DeviceType::GPU ||
+            src->device.type == DeviceType::GPU) gpu_fail_shape(op);
+    int64_t ndim = (int64_t)input->shape.size();
+    if (ndim < 1) throw std::runtime_error(std::string("[litetorch Error] ") + op + ": expected at least 1D input");
+    int64_t d = norm_dim_shape(dim, ndim, op);
+    if ((int64_t)index->shape.size() != ndim)
+        throw std::runtime_error(std::string("[litetorch Error] ") + op + ": index ndim must match input ndim");
+    if (index->shape != src->shape)
+        throw std::runtime_error(std::string("[litetorch Error] ") + op + ": index and src shapes must match");
+    if (input->dtype != DataType::FP32 || src->dtype != DataType::FP32) {
+        auto in_fp32 = cast(input, DataType::FP32);
+        auto src_fp32 = cast(src, DataType::FP32);
+        auto out_fp32 = scatter_impl(in_fp32, dim, index, src_fp32, add, op);
+        return (input->dtype == DataType::FP32) ? out_fp32 : cast(out_fp32, input->dtype);
+    }
+    if (input->device != src->device)
+        throw std::runtime_error(std::string("[litetorch Error] ") + op + ": input and src must be on the same device");
+    auto in_c = input->is_contiguous() ? input : input->contiguous();
+    auto src_c = src->is_contiguous() ? src : src->contiguous();
+    auto out = in_c->clone();
+    std::vector<float> out_data = out->to_vector();
+    std::vector<float> idx_data = index->to_vector();
+    std::vector<float> src_data = src_c->to_vector();
+    auto in_strides = default_strides(in_c->shape);
+    auto idx_strides = default_strides(index->shape);
+    int64_t dim_size = in_c->shape[(size_t)d];
+    size_t n = idx_data.size();
+    for (size_t i = 0; i < n; ++i) {
+        int64_t ii = (int64_t)idx_data[i];
+        if (ii < 0) ii += dim_size;
+        if (ii < 0 || ii >= dim_size)
+            throw std::runtime_error(std::string("[litetorch Error] ") + op + ": index out of bounds");
+        size_t rem = i;
+        int64_t pos = 0;
+        for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+            int64_t c = (int64_t)(rem % (size_t)index->shape[(size_t)dd]);
+            rem /= (size_t)index->shape[(size_t)dd];
+            int64_t sc = (dd == d) ? ii : c;
+            pos += sc * in_strides[(size_t)dd];
+        }
+        if (add) out_data[(size_t)pos] += src_data[i];
+        else out_data[(size_t)pos] = src_data[i];
+    }
+    write_vec(out, out_data);
+    if (Autograd::is_grad_enabled() && (input->requires_grad || src->requires_grad)) {
+        std::shared_ptr<Node> node = add
+            ? std::static_pointer_cast<Node>(std::make_shared<ScatterAddNode>(d, index, in_c->shape))
+            : std::static_pointer_cast<Node>(std::make_shared<ScatterNode>(d, index, in_c->shape));
+        node->inputs = { {input, input->requires_grad}, {src, src->requires_grad} };
+        node->next_nodes = { input->creator, src->creator };
+        node->saved_tensors = { index };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+}
+
+std::shared_ptr<Tensor> scatter(std::shared_ptr<Tensor> input, int64_t dim,
+        std::shared_ptr<Tensor> index, std::shared_ptr<Tensor> src) {
+    return scatter_impl(input, dim, index, src, false, "scatter");
+}
+
+std::shared_ptr<Tensor> scatter_add(std::shared_ptr<Tensor> input, int64_t dim,
+        std::shared_ptr<Tensor> index, std::shared_ptr<Tensor> src) {
+    return scatter_impl(input, dim, index, src, true, "scatter_add");
+}
+
+class FlattenNode : public Node {
+public:
+    std::vector<int64_t> input_shape;
+    FlattenNode(const std::vector<int64_t>& s) : Node("Flatten"), input_shape(s) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        return { grad_output->reshape(input_shape) };
+    }
+};
+
+std::shared_ptr<Tensor> flatten(std::shared_ptr<Tensor> a, int64_t start_dim, int64_t end_dim) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape("flatten");
+    int64_t ndim = (int64_t)a->shape.size();
+    int64_t s = norm_dim_shape(start_dim, ndim, "flatten");
+    int64_t e = norm_dim_shape(end_dim, ndim, "flatten");
+    if (s > e) throw std::runtime_error("[litetorch Error] flatten: start_dim must not exceed end_dim");
+    std::vector<int64_t> new_shape;
+    for (int64_t i = 0; i < s; ++i) new_shape.push_back(a->shape[(size_t)i]);
+    int64_t flat = 1;
+    for (int64_t i = s; i <= e; ++i) flat *= a->shape[(size_t)i];
+    new_shape.push_back(flat);
+    for (int64_t i = e + 1; i < ndim; ++i) new_shape.push_back(a->shape[(size_t)i]);
+    auto out = a->reshape(new_shape);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        auto node = std::make_shared<FlattenNode>(a->shape);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+class RepeatNode : public Node {
+public:
+    std::vector<int64_t> in_shape;
+    std::vector<int64_t> repeats;
+    RepeatNode(const std::vector<int64_t>& s, const std::vector<int64_t>& r)
+        : Node("Repeat"), in_shape(s), repeats(r) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto g_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        std::vector<float> gd = g_c->to_vector();
+        size_t n_in = shape_numel(in_shape);
+        std::vector<float> gi(n_in, 0.0f);
+        auto in_strides = default_strides(in_shape);
+        auto out_strides = default_strides(g_c->shape);
+        int64_t ndim = (int64_t)in_shape.size();
+        for (size_t i = 0; i < gd.size(); ++i) {
+            size_t rem = i;
+            int64_t pos = 0;
+            for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+                int64_t c = (int64_t)(rem % (size_t)g_c->shape[(size_t)dd]);
+                rem /= (size_t)g_c->shape[(size_t)dd];
+                pos += (c % in_shape[(size_t)dd]) * in_strides[(size_t)dd];
+            }
+            gi[(size_t)pos] += gd[i];
+        }
+        auto out = Tensor::create(in_shape, g_c->device);
+        write_vec(out, gi);
+        return { out };
+    }
+};
+
+std::shared_ptr<Tensor> repeat(std::shared_ptr<Tensor> a, const std::vector<int64_t>& repeats) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape("repeat");
+    std::vector<int64_t> sh = a->shape;
+    std::vector<int64_t> rep = repeats;
+    if (rep.size() < sh.size())
+        throw std::runtime_error("[litetorch Error] repeat: repeats must have at least as many dims as input");
+    while (sh.size() < rep.size()) sh.insert(sh.begin(), 1);
+    for (auto r : rep) if (r <= 0) throw std::runtime_error("[litetorch Error] repeat: repeats must be positive");
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        return cast(repeat(a_fp32, repeats), a->dtype);
+    }
+    int64_t ndim = (int64_t)sh.size();
+    std::vector<int64_t> out_shape((size_t)ndim);
+    for (int64_t i = 0; i < ndim; ++i) out_shape[(size_t)i] = sh[(size_t)i] * rep[(size_t)i];
+    std::vector<float> data = a->to_vector();
+    size_t n_out = shape_numel(out_shape);
+    std::vector<float> result(n_out);
+    auto in_strides = default_strides(sh);
+    auto out_strides = default_strides(out_shape);
+    ThreadPool::get().parallel_for(0, (int64_t)n_out, [&](int64_t i) {
+        size_t rem = (size_t)i;
+        int64_t pos = 0;
+        for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+            int64_t c = (int64_t)(rem % (size_t)out_shape[(size_t)dd]);
+            rem /= (size_t)out_shape[(size_t)dd];
+            pos += (c % sh[(size_t)dd]) * in_strides[(size_t)dd];
+        }
+        result[(size_t)i] = data[(size_t)pos];
+    });
+    auto out = Tensor::create(out_shape, a->device);
+    write_vec(out, result);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        auto node = std::make_shared<RepeatNode>(sh, rep);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+class NarrowNode : public Node {
+public:
+    int64_t dim, start, length;
+    std::vector<int64_t> input_shape;
+    NarrowNode(int64_t d, int64_t s, int64_t l, const std::vector<int64_t>& ish)
+        : Node("Narrow"), dim(d), start(s), length(l), input_shape(ish) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto g_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        std::vector<float> gd = g_c->to_vector();
+        std::vector<float> gi(shape_numel(input_shape), 0.0f);
+        int64_t ndim = (int64_t)input_shape.size();
+        auto in_strides = default_strides(input_shape);
+        auto g_strides = default_strides(g_c->shape);
+        for (size_t i = 0; i < gd.size(); ++i) {
+            size_t rem = i;
+            int64_t pos = 0;
+            for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+                int64_t c = (int64_t)(rem % (size_t)g_c->shape[(size_t)dd]);
+                rem /= (size_t)g_c->shape[(size_t)dd];
+                int64_t sc = (dd == dim) ? (c + start) : c;
+                pos += sc * in_strides[(size_t)dd];
+            }
+            gi[(size_t)pos] = gd[i];
+        }
+        auto out = Tensor::create(input_shape, g_c->device);
+        write_vec(out, gi);
+        return { out };
+    }
+};
+
+std::shared_ptr<Tensor> narrow(std::shared_ptr<Tensor> a, int64_t dim, int64_t start, int64_t length) {
+    if (a->device.type == DeviceType::GPU) gpu_fail_shape("narrow");
+    int64_t ndim = (int64_t)a->shape.size();
+    int64_t d = norm_dim_shape(dim, ndim, "narrow");
+    if (start < 0 || length < 0 || start + length > a->shape[(size_t)d])
+        throw std::runtime_error("[litetorch Error] narrow: invalid start/length");
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        return cast(narrow(a_fp32, dim, start, length), a->dtype);
+    }
+    auto out = a->slice(d, start, start + length);
+    if (Autograd::is_grad_enabled() && a->requires_grad) {
+        auto node = std::make_shared<NarrowNode>(d, start, length, a->shape);
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> t(std::shared_ptr<Tensor> a) {
+    int64_t ndim = (int64_t)a->shape.size();
+    if (ndim > 2) throw std::runtime_error("[litetorch Error] t: expected 0D, 1D or 2D tensor");
+    if (ndim < 2) return a;
+    return permute(a, {1, 0});
+}
+
+// === end W1-T1 core-ops ===
 
 }
 }

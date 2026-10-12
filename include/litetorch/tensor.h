@@ -133,6 +133,16 @@ public:
     std::shared_ptr<Tensor> to(DataType target_dtype);
     std::shared_ptr<Tensor> to(const Device& target_device, DataType target_dtype);
     std::shared_ptr<Tensor> to_device_async(const Device& target_device);
+    std::shared_ptr<Tensor> cuda(int device_index = -1);
+    std::shared_ptr<Tensor> cpu();
+    int64_t dim() const;
+    std::shared_ptr<Tensor> half();
+    std::shared_ptr<Tensor> to_float();
+    std::shared_ptr<Tensor> to_double();
+    std::shared_ptr<Tensor> to_long();
+    std::shared_ptr<Tensor> to_int();
+    std::shared_ptr<Tensor> type_as(std::shared_ptr<Tensor> other);
+    std::vector<double> flat_doubles() const;
     std::shared_ptr<Tensor> cast(DataType target_dtype);
     std::shared_ptr<Tensor> clone();
     void copy_(std::shared_ptr<Tensor> src);
@@ -188,6 +198,7 @@ inline std::vector<int64_t> default_strides(const std::vector<int64_t>& shape) {
 void manual_seed(unsigned int seed);
 std::string get_rng_state();
 void set_rng_state(const std::string& state);
+bool tensor_equal(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b);
 
 }
 

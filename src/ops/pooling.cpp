@@ -179,6 +179,56 @@ public:
     }
 };
 
+class AvgPool2dNode : public Node {
+public:
+    AvgPool2dNode(int kernel_size, int stride, int padding)
+        : Node("AvgPool2d"), kernel_size(kernel_size), stride(stride), padding(padding) {}
+    int kernel_size;
+    int stride;
+    int padding;
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto out_shared = output.lock();
+        if (!out_shared) return { nullptr };
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        int N = input_c->shape[0];
+        int C = input_c->shape[1];
+        int H_in = input_c->shape[2];
+        int W_in = input_c->shape[3];
+        int H_out = gout_c->shape[2];
+        int W_out = gout_c->shape[3];
+        StorageUseGuard guard({input_c->storage, gout_c->storage, grad_input->storage});
+        float inv_area = 1.0f / (kernel_size * kernel_size);
+        float* gout_ptr = gout_c->data_ptr();
+        float* gin_ptr = grad_input->data_ptr();
+        std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
+        ThreadPool::get().parallel_for(0, N * C, [&](int64_t thread_idx) {
+            int b = thread_idx / C;
+            int c = thread_idx % C;
+            for (int ho = 0; ho < H_out; ++ho) {
+                for (int wo = 0; wo < W_out; ++wo) {
+                    int out_idx = ((b * C + c) * H_out + ho) * W_out + wo;
+                    float g = gout_ptr[out_idx] * inv_area;
+                    for (int ky = 0; ky < kernel_size; ++ky) {
+                        int y = ho * stride - padding + ky;
+                        if (y < 0 || y >= H_in) continue;
+                        for (int kx = 0; kx < kernel_size; ++kx) {
+                            int x = wo * stride - padding + kx;
+                            if (x < 0 || x >= W_in) continue;
+                            gin_ptr[((b * C + c) * H_in + y) * W_in + x] += g;
+                        }
+                    }
+                }
+            }
+        });
+        return { grad_input };
+    }
+};
+
 class AdaptiveAvgPool2dNode : public Node {
 public:
     AdaptiveAvgPool2dNode() : Node("AdaptiveAvgPool2d") {}
@@ -499,6 +549,70 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
     
     if (Autograd::is_grad_enabled() && (input->requires_grad)) {
         auto node = std::make_shared<AdaptiveAvgPool2dNode>();
+        node->inputs = { {input, true} };
+        node->next_nodes = { input->creator };
+        node->saved_tensors = { input };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> avg_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride, int padding) {
+    if (input->dtype != DataType::FP32) {
+        auto out_fp32 = avg_pool2d(cast(input, DataType::FP32), kernel_size, stride, padding);
+        return cast(out_fp32, input->dtype);
+    }
+    if (stride == -1) stride = kernel_size;
+    if (input->shape.size() != 4) {
+        throw std::runtime_error("[litetorch Error] AvgPool2d requires 4D input");
+    }
+    if (kernel_size <= 0 || stride <= 0) {
+        throw std::runtime_error("[litetorch Error] AvgPool2d requires kernel_size > 0 and stride > 0");
+    }
+    if (padding < 0 || padding > kernel_size / 2) {
+        throw std::runtime_error("[litetorch Error] AvgPool2d requires 0 <= padding <= kernel_size / 2");
+    }
+    if (input->device.type == DeviceType::GPU) {
+        throw std::runtime_error("[litetorch Error] Ops::avg_pool2d: GPU kernel not implemented; use CPU tensors (deferred to Phase 3)");
+    }
+    auto input_c = input->is_contiguous() ? input : input->contiguous();
+    int N = input_c->shape[0];
+    int C = input_c->shape[1];
+    int H_in = input_c->shape[2];
+    int W_in = input_c->shape[3];
+    int H_out = (H_in - kernel_size + 2 * padding) / stride + 1;
+    int W_out = (W_in - kernel_size + 2 * padding) / stride + 1;
+    if (H_out <= 0 || W_out <= 0) {
+        throw std::runtime_error("[litetorch Error] AvgPool2d output dimensions must be positive");
+    }
+    auto out = Tensor::create({N, C, H_out, W_out}, input_c->device);
+    StorageUseGuard guard({input_c->storage, out->storage});
+    float* in_ptr = input_c->data_ptr();
+    float* out_ptr = out->data_ptr();
+    float inv_area = 1.0f / (kernel_size * kernel_size);
+    ThreadPool::get().parallel_for(0, N * C, [&](int64_t thread_idx) {
+        int b = thread_idx / C;
+        int c = thread_idx % C;
+        for (int ho = 0; ho < H_out; ++ho) {
+            for (int wo = 0; wo < W_out; ++wo) {
+                float sum = 0.0f;
+                for (int ky = 0; ky < kernel_size; ++ky) {
+                    int y = ho * stride - padding + ky;
+                    if (y < 0 || y >= H_in) continue;
+                    for (int kx = 0; kx < kernel_size; ++kx) {
+                        int x = wo * stride - padding + kx;
+                        if (x < 0 || x >= W_in) continue;
+                        sum += in_ptr[((b * C + c) * H_in + y) * W_in + x];
+                    }
+                }
+                out_ptr[((b * C + c) * H_out + ho) * W_out + wo] = sum * inv_area;
+            }
+        }
+    });
+    if (Autograd::is_grad_enabled() && (input->requires_grad)) {
+        auto node = std::make_shared<AvgPool2dNode>(kernel_size, stride, padding);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { input };

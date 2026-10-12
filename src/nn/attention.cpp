@@ -1,6 +1,7 @@
 #include "litetorch/nn.h"
 #include "litetorch/ops.h"
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace litetorch {
@@ -9,6 +10,61 @@ namespace nn {
 namespace {
 std::shared_ptr<Tensor> ensure_contiguous(std::shared_ptr<Tensor> t) {
     return t->is_contiguous() ? t : t->contiguous();
+}
+
+std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
+                                            std::shared_ptr<Tensor> key_padding_mask,
+                                            int64_t B, int64_t H, int64_t Tq, int64_t Tk,
+                                            const Device& device) {
+    const float NEG_INF = -std::numeric_limits<float>::infinity();
+    int64_t BH = B * H;
+    auto mask = Tensor::create({BH, Tq, Tk}, device, false, DataType::FP32);
+    float* mptr = mask->data_ptr();
+    std::fill(mptr, mptr + mask->numel(), 0.0f);
+    if (attn_mask) {
+        if (attn_mask->device.type != DeviceType::CPU) {
+            throw std::runtime_error("[litetorch Error] MultiHeadAttention: attn_mask must be a CPU tensor");
+        }
+        auto mc = attn_mask->is_contiguous() ? attn_mask : attn_mask->contiguous();
+        auto& sh = mc->shape;
+        bool is_2d = (sh.size() == 2 && sh[0] == Tq && sh[1] == Tk);
+        bool is_3d = (sh.size() == 3 && sh[0] == BH && sh[1] == Tq && sh[2] == Tk);
+        if (!is_2d && !is_3d) {
+            throw std::runtime_error("[litetorch Error] MultiHeadAttention: attn_mask must have shape (Tq, Tk) or (B*num_heads, Tq, Tk)");
+        }
+        bool is_float = (mc->dtype == DataType::FP32 || mc->dtype == DataType::FP64);
+        auto vals = mc->to_vector();
+        for (int64_t bh = 0; bh < BH; ++bh) {
+            for (int64_t i = 0; i < Tq; ++i) {
+                for (int64_t j = 0; j < Tk; ++j) {
+                    float v = vals[is_2d ? (i * Tk + j) : ((bh * Tq + i) * Tk + j)];
+                    float add = is_float ? v : (v != 0.0f ? NEG_INF : 0.0f);
+                    mptr[(bh * Tq + i) * Tk + j] += add;
+                }
+            }
+        }
+    }
+    if (key_padding_mask) {
+        if (key_padding_mask->device.type != DeviceType::CPU) {
+            throw std::runtime_error("[litetorch Error] MultiHeadAttention: key_padding_mask must be a CPU tensor");
+        }
+        auto mc = key_padding_mask->is_contiguous() ? key_padding_mask : key_padding_mask->contiguous();
+        auto& sh = mc->shape;
+        if (!(sh.size() == 2 && sh[0] == B && sh[1] == Tk)) {
+            throw std::runtime_error("[litetorch Error] MultiHeadAttention: key_padding_mask must have shape (B, Tk)");
+        }
+        auto vals = mc->to_vector();
+        for (int64_t b = 0; b < B; ++b) {
+            for (int64_t j = 0; j < Tk; ++j) {
+                if (vals[b * Tk + j] == 0.0f) continue;
+                for (int64_t h = 0; h < H; ++h) {
+                    float* col = mptr + ((b * H + h) * Tq) * Tk + j;
+                    for (int64_t i = 0; i < Tq; ++i) col[i * Tk] = NEG_INF;
+                }
+            }
+        }
+    }
+    return mask;
 }
 }
 
@@ -42,6 +98,12 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> inpu
 }
 
 std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> query, std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value) {
+    return forward(query, key, value, nullptr, nullptr, false).first;
+}
+
+std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> MultiHeadAttention::forward(
+    std::shared_ptr<Tensor> query, std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value,
+    std::shared_ptr<Tensor> attn_mask, std::shared_ptr<Tensor> key_padding_mask, bool need_weights) {
     if (!batch_first) {
         query = ensure_contiguous(query->transpose(0, 1));
         key = ensure_contiguous(key->transpose(0, 1));
@@ -71,8 +133,10 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> quer
     }
 
     bool self_attn = (query == key && key == value);
+    bool use_masks = (attn_mask != nullptr) || (key_padding_mask != nullptr);
     std::shared_ptr<Tensor> out_4d;
-    if (qkv_proj && self_attn && dropout_p == 0.0) {
+    std::shared_ptr<Tensor> attn_weights = nullptr;
+    if (qkv_proj && self_attn && dropout_p == 0.0 && !use_masks && !need_weights) {
         auto qkv = qkv_proj->forward(query);
         out_4d = Ops::flash_attention_qkv(ensure_contiguous(qkv), num_heads);
     } else {
@@ -112,7 +176,18 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> quer
         auto scores = Ops::bmm(qbh, kbh_t);
         auto scale = Tensor::from_vector({1.0f / std::sqrt(static_cast<float>(head_dim))}, {1}, scores->device, false, scores->dtype);
         scores = Ops::mul(scores, scale);
+        if (use_masks) {
+            if (scores->device.type != DeviceType::CPU) {
+                throw std::runtime_error("[litetorch Error] MultiHeadAttention: attn_mask/key_padding_mask on GPU is not implemented; use CPU tensors (deferred to Phase 3)");
+            }
+            auto add_mask = build_additive_mask(attn_mask, key_padding_mask, B, num_heads, Tq, Tk, scores->device);
+            auto add_cast = (add_mask->dtype == scores->dtype) ? add_mask : add_mask->cast(scores->dtype);
+            scores = Ops::add(scores, add_cast);
+        }
         auto probs = Ops::softmax(scores, -1);
+        if (need_weights) {
+            attn_weights = ensure_contiguous(probs)->view({B, num_heads, Tq, Tk});
+        }
         if (dropout_p > 0.0) {
             probs = attn_dropout->forward(probs);
         }
@@ -127,7 +202,7 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> quer
     if (!batch_first) {
         proj_out = ensure_contiguous(proj_out->transpose(0, 1));
     }
-    return proj_out;
+    return {proj_out, attn_weights};
 }
 
 std::vector<std::shared_ptr<Tensor>> MultiHeadAttention::parameters() {

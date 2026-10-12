@@ -149,6 +149,26 @@ std::shared_ptr<Tensor> unsqueeze(std::shared_ptr<Tensor> a, int64_t dim);
 std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float max_val);
 std::shared_ptr<Tensor> sin(std::shared_ptr<Tensor> a);
 std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> log2(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> log10(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> rsqrt(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> tan(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> reciprocal(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> sign(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> floor(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> ceil(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> round(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> trunc(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> clamp_min(std::shared_ptr<Tensor> a, float min_val);
+std::shared_ptr<Tensor> clamp_max(std::shared_ptr<Tensor> a, float max_val);
+std::shared_ptr<Tensor> min(std::shared_ptr<Tensor> a);
+std::shared_ptr<Tensor> amax(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim);
+std::shared_ptr<Tensor> amin(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim);
+std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim);
+std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim);
+std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim);
+bool allclose(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, float rtol, float atol, bool equal_nan);
+std::shared_ptr<Tensor> isclose(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, float rtol, float atol, bool equal_nan);
 
 std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std::vector<int64_t>& orig_shape);
 
@@ -2431,6 +2451,335 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a) {
     }
     return out;
 }
+
+// === W1-T1 core-ops ===
+
+namespace {
+
+void gpu_fail(const char* op) {
+    throw std::runtime_error(std::string("[litetorch Error] ") + op + ": GPU kernel not implemented (fail-loud)");
+}
+
+std::shared_ptr<Tensor> unary_fp32_cpu(std::shared_ptr<Tensor> a, const char* op_name,
+        const std::function<float(float)>& fn,
+        const std::function<std::shared_ptr<Node>()>& make_node,
+        bool differentiable) {
+    if (a->device.type == DeviceType::GPU) gpu_fail(op_name);
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = unary_fp32_cpu(a_fp32, op_name, fn, make_node, differentiable);
+        return cast(out_fp32, a->dtype);
+    }
+    auto a_c = a->is_contiguous() ? a : a->contiguous();
+    auto out = Tensor::create(a_c->shape, a_c->device);
+    StorageUseGuard guard({a_c->storage, out->storage});
+    float* src = a_c->data_ptr();
+    float* dst = out->data_ptr();
+    size_t size = out->numel();
+    ThreadPool::get().parallel_for(0, size, [&](int64_t i) { dst[i] = fn(src[i]); });
+    if (out->device.type == DeviceType::TPU) {
+        auto tpu = BackendDispatcher::get().get_tpu_backend();
+        if (tpu) tpu->write(out->gpu_data(), size * sizeof(float), dst);
+    }
+    if (differentiable && Autograd::is_grad_enabled() && a->requires_grad && make_node) {
+        auto node = make_node();
+        node->inputs = { {a, true} };
+        node->next_nodes = { a->creator };
+        node->saved_tensors = { a, out };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> scalar_tensor(float v, const Device& device) {
+    return Tensor::from_vector({v}, {1}, device);
+}
+
+std::vector<int64_t> norm_dims_asc(const std::vector<int64_t>& dims, int64_t ndim, const char* op) {
+    std::vector<int64_t> ds;
+    for (auto d : dims) {
+        int64_t nd = d < 0 ? d + ndim : d;
+        if (nd < 0 || nd >= ndim) throw std::runtime_error(std::string("[litetorch Error] ") + op + ": dimension out of range");
+        ds.push_back(nd);
+    }
+    std::sort(ds.begin(), ds.end());
+    ds.erase(std::unique(ds.begin(), ds.end()), ds.end());
+    return ds;
+}
+
+std::vector<int64_t> bcast_strides_w1(const std::vector<int64_t>& tshape, const std::vector<int64_t>& out_shape) {
+    auto tstr = default_strides(tshape);
+    int64_t diff = (int64_t)out_shape.size() - (int64_t)tshape.size();
+    std::vector<int64_t> s(out_shape.size(), 0);
+    for (size_t i = 0; i < out_shape.size(); ++i) {
+        int64_t td = (int64_t)i - diff;
+        if (td < 0) continue;
+        s[i] = (tshape[(size_t)td] == 1) ? 0 : tstr[(size_t)td];
+    }
+    return s;
+}
+
+}
+
+class Log2Node : public Node {
+public:
+    Log2Node() : Node("Log2") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto denom = mul(input, scalar_tensor(0.6931471805599453f, input->device));
+        return { div(grad_output, denom) };
+    }
+};
+
+class Log10Node : public Node {
+public:
+    Log10Node() : Node("Log10") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto denom = mul(input, scalar_tensor(2.302585092994046f, input->device));
+        return { div(grad_output, denom) };
+    }
+};
+
+class RsqrtNode : public Node {
+public:
+    RsqrtNode() : Node("Rsqrt") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto out = output.lock();
+        if (!out) return { nullptr };
+        auto y3 = mul(mul(out, out), out);
+        return { mul(grad_output, mul(scalar_tensor(-0.5f, out->device), y3)) };
+    }
+};
+
+class TanNode : public Node {
+public:
+    TanNode() : Node("Tan") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto out = output.lock();
+        if (!out) return { nullptr };
+        auto sec2 = add(scalar_tensor(1.0f, out->device), mul(out, out));
+        return { mul(grad_output, sec2) };
+    }
+};
+
+class ReciprocalNode : public Node {
+public:
+    ReciprocalNode() : Node("Reciprocal") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto out = output.lock();
+        if (!out) return { nullptr };
+        return { mul(grad_output, neg(mul(out, out))) };
+    }
+};
+
+class ClampMinNode : public Node {
+public:
+    float min_val;
+    ClampMinNode(float v) : Node("ClampMin"), min_val(v) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto mask = Tensor::create(input_c->shape, input->device);
+        float* in_ptr = input_c->data_ptr();
+        float* m_ptr = mask->data_ptr();
+        for (size_t i = 0; i < input_c->numel(); ++i) m_ptr[i] = (in_ptr[i] >= min_val) ? 1.0f : 0.0f;
+        return { mul(grad_output, mask) };
+    }
+};
+
+class ClampMaxNode : public Node {
+public:
+    float max_val;
+    ClampMaxNode(float v) : Node("ClampMax"), max_val(v) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto input_c = input->is_contiguous() ? input : input->contiguous();
+        auto mask = Tensor::create(input_c->shape, input->device);
+        float* in_ptr = input_c->data_ptr();
+        float* m_ptr = mask->data_ptr();
+        for (size_t i = 0; i < input_c->numel(); ++i) m_ptr[i] = (in_ptr[i] <= max_val) ? 1.0f : 0.0f;
+        return { mul(grad_output, mask) };
+    }
+};
+
+std::shared_ptr<Tensor> log2(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "log2", [](float x) { return std::log2(x); },
+        []() -> std::shared_ptr<Node> { return std::make_shared<Log2Node>(); }, true);
+}
+
+std::shared_ptr<Tensor> log10(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "log10", [](float x) { return std::log10(x); },
+        []() -> std::shared_ptr<Node> { return std::make_shared<Log10Node>(); }, true);
+}
+
+std::shared_ptr<Tensor> rsqrt(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "rsqrt", [](float x) { return 1.0f / std::sqrt(x); },
+        []() -> std::shared_ptr<Node> { return std::make_shared<RsqrtNode>(); }, true);
+}
+
+std::shared_ptr<Tensor> tan(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "tan", [](float x) { return std::tan(x); },
+        []() -> std::shared_ptr<Node> { return std::make_shared<TanNode>(); }, true);
+}
+
+std::shared_ptr<Tensor> reciprocal(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "reciprocal", [](float x) { return 1.0f / x; },
+        []() -> std::shared_ptr<Node> { return std::make_shared<ReciprocalNode>(); }, true);
+}
+
+std::shared_ptr<Tensor> sign(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "sign", [](float x) { return (x > 0.0f) ? 1.0f : ((x < 0.0f) ? -1.0f : 0.0f); },
+        nullptr, false);
+}
+
+std::shared_ptr<Tensor> floor(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "floor", [](float x) { return std::floor(x); }, nullptr, false);
+}
+
+std::shared_ptr<Tensor> ceil(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "ceil", [](float x) { return std::ceil(x); }, nullptr, false);
+}
+
+std::shared_ptr<Tensor> round(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "round", [](float x) { return std::nearbyint(x); }, nullptr, false);
+}
+
+std::shared_ptr<Tensor> trunc(std::shared_ptr<Tensor> a) {
+    return unary_fp32_cpu(a, "trunc", [](float x) { return std::trunc(x); }, nullptr, false);
+}
+
+std::shared_ptr<Tensor> clamp_min(std::shared_ptr<Tensor> a, float min_val) {
+    return unary_fp32_cpu(a, "clamp_min", [min_val](float x) { return x < min_val ? min_val : x; },
+        [min_val]() -> std::shared_ptr<Node> { return std::make_shared<ClampMinNode>(min_val); }, true);
+}
+
+std::shared_ptr<Tensor> clamp_max(std::shared_ptr<Tensor> a, float max_val) {
+    return unary_fp32_cpu(a, "clamp_max", [max_val](float x) { return x > max_val ? max_val : x; },
+        [max_val]() -> std::shared_ptr<Node> { return std::make_shared<ClampMaxNode>(max_val); }, true);
+}
+
+std::shared_ptr<Tensor> min(std::shared_ptr<Tensor> a) {
+    return neg(max(neg(a)));
+}
+
+std::shared_ptr<Tensor> amax(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim) {
+    auto ds = norm_dims_asc(dims, (int64_t)a->shape.size(), "amax");
+    auto out = a;
+    for (auto d : ds) out = max(out, d, true);
+    if (!keepdim) for (auto it = ds.rbegin(); it != ds.rend(); ++it) out = squeeze(out, *it);
+    return out;
+}
+
+std::shared_ptr<Tensor> amin(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim) {
+    return neg(amax(neg(a), dims, keepdim));
+}
+
+std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim) {
+    auto ds = norm_dims_asc(dims, (int64_t)a->shape.size(), "sum");
+    if (ds.empty()) return a;
+    auto out = a;
+    for (auto d : ds) out = sum(out, d, true);
+    if (!keepdim) for (auto it = ds.rbegin(); it != ds.rend(); ++it) out = squeeze(out, *it);
+    return out;
+}
+
+std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim) {
+    auto ds = norm_dims_asc(dims, (int64_t)a->shape.size(), "mean");
+    if (ds.empty()) return a;
+    auto out = a;
+    for (auto d : ds) out = mean(out, d, true);
+    if (!keepdim) for (auto it = ds.rbegin(); it != ds.rend(); ++it) out = squeeze(out, *it);
+    return out;
+}
+
+std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a, const std::vector<int64_t>& dims, bool keepdim) {
+    auto ds = norm_dims_asc(dims, (int64_t)a->shape.size(), "max");
+    if (ds.empty()) return a;
+    auto out = a;
+    for (auto d : ds) out = max(out, d, true);
+    if (!keepdim) for (auto it = ds.rbegin(); it != ds.rend(); ++it) out = squeeze(out, *it);
+    return out;
+}
+
+namespace {
+
+bool close_enough(float x, float y, float rtol, float atol, bool equal_nan) {
+    if (std::isnan(x) || std::isnan(y)) return equal_nan && std::isnan(x) && std::isnan(y);
+    if (std::isinf(x) || std::isinf(y)) return x == y;
+    return std::fabs(x - y) <= atol + rtol * std::fabs(y);
+}
+
+}
+
+bool allclose(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, float rtol, float atol, bool equal_nan) {
+    if (a->device.type == DeviceType::GPU || b->device.type == DeviceType::GPU) gpu_fail("allclose");
+    if (a->device != b->device) b = b->to(a->device);
+    auto shape = broadcast_shapes(a->shape, b->shape);
+    auto sa = bcast_strides_w1(a->shape, shape);
+    auto sb = bcast_strides_w1(b->shape, shape);
+    std::vector<float> da = a->to_vector();
+    std::vector<float> db = b->to_vector();
+    size_t n = 1;
+    for (auto s : shape) n *= (size_t)s;
+    std::vector<int64_t> coord(shape.size(), 0);
+    for (size_t i = 0; i < n; ++i) {
+        size_t rem = i;
+        int64_t ia = 0, ib = 0;
+        for (int64_t d = (int64_t)shape.size() - 1; d >= 0; --d) {
+            int64_t c = (int64_t)(rem % (size_t)shape[(size_t)d]);
+            rem /= (size_t)shape[(size_t)d];
+            ia += c * sa[(size_t)d];
+            ib += c * sb[(size_t)d];
+        }
+        if (!close_enough(da[(size_t)ia], db[(size_t)ib], rtol, atol, equal_nan)) return false;
+    }
+    return true;
+}
+
+std::shared_ptr<Tensor> isclose(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, float rtol, float atol, bool equal_nan) {
+    if (a->device.type == DeviceType::GPU || b->device.type == DeviceType::GPU) gpu_fail("isclose");
+    if (a->device != b->device) b = b->to(a->device);
+    auto shape = broadcast_shapes(a->shape, b->shape);
+    auto sa = bcast_strides_w1(a->shape, shape);
+    auto sb = bcast_strides_w1(b->shape, shape);
+    std::vector<float> da = a->to_vector();
+    std::vector<float> db = b->to_vector();
+    size_t n = 1;
+    for (auto s : shape) n *= (size_t)s;
+    auto out = Tensor::create(shape, a->device);
+    float* dst = out->data_ptr();
+    for (size_t i = 0; i < n; ++i) {
+        size_t rem = i;
+        int64_t ia = 0, ib = 0;
+        for (int64_t d = (int64_t)shape.size() - 1; d >= 0; --d) {
+            int64_t c = (int64_t)(rem % (size_t)shape[(size_t)d]);
+            rem /= (size_t)shape[(size_t)d];
+            ia += c * sa[(size_t)d];
+            ib += c * sb[(size_t)d];
+        }
+        dst[i] = close_enough(da[(size_t)ia], db[(size_t)ib], rtol, atol, equal_nan) ? 1.0f : 0.0f;
+    }
+    return out;
+}
+
+// === end W1-T1 core-ops ===
 
 }
 }

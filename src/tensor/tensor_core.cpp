@@ -1677,6 +1677,91 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
     return out;
 }
 
+std::shared_ptr<Tensor> Tensor::cuda(int device_index) {
+    int idx = device_index < 0 ? cuda::current_device() : device_index;
+    return to(Device(DeviceType::GPU, idx));
+}
+
+std::shared_ptr<Tensor> Tensor::cpu() {
+    return to(Device(DeviceType::CPU, 0));
+}
+
+int64_t Tensor::dim() const {
+    return static_cast<int64_t>(shape.size());
+}
+
+std::shared_ptr<Tensor> Tensor::half() { return to(DataType::FP16); }
+std::shared_ptr<Tensor> Tensor::to_float() { return to(DataType::FP32); }
+std::shared_ptr<Tensor> Tensor::to_double() { return to(DataType::FP64); }
+std::shared_ptr<Tensor> Tensor::to_long() { return to(DataType::INT32); }
+std::shared_ptr<Tensor> Tensor::to_int() { return to(DataType::INT32); }
+
+std::shared_ptr<Tensor> Tensor::type_as(std::shared_ptr<Tensor> other) {
+    if (!other) {
+        throw std::runtime_error("[litetorch Error] type_as(): other tensor is null");
+    }
+    return to(other->dtype);
+}
+
+namespace {
+
+double read_as_double(const char* base, DataType dtype, size_t i) {
+    switch (dtype) {
+        case DataType::FP64: return reinterpret_cast<const double*>(base)[i];
+        case DataType::FP32: return reinterpret_cast<const float*>(base)[i];
+        case DataType::FP16: return half_to_float(reinterpret_cast<const uint16_t*>(base)[i]);
+        case DataType::BF16: return bf16_to_float(reinterpret_cast<const uint16_t*>(base)[i]);
+        case DataType::INT32: return static_cast<double>(reinterpret_cast<const int32_t*>(base)[i]);
+        case DataType::INT16: return static_cast<double>(reinterpret_cast<const int16_t*>(base)[i]);
+        case DataType::INT8: return static_cast<double>(reinterpret_cast<const int8_t*>(base)[i]);
+        default: throw std::runtime_error("[litetorch Error] flat_doubles(): unsupported dtype");
+    }
+}
+
+}
+
+std::vector<double> Tensor::flat_doubles() const {
+    if (device.type != DeviceType::CPU) {
+        throw std::runtime_error("[litetorch Error] flat_doubles(): CPU tensor required");
+    }
+    if (!is_contiguous()) {
+        throw std::runtime_error("[litetorch Error] flat_doubles(): contiguous tensor required");
+    }
+    size_t esz = storage->element_size();
+    const char* base = reinterpret_cast<const char*>(storage->get_cpu_ptr()) + offset * esz;
+    std::vector<double> out(numel());
+    for (size_t i = 0; i < numel(); ++i) {
+        out[i] = read_as_double(base, dtype, i);
+    }
+    return out;
+}
+
+bool tensor_equal(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (!a || !b) {
+        throw std::runtime_error("[litetorch Error] equal(): null tensor argument");
+    }
+    if (a->shape != b->shape) {
+        return false;
+    }
+    Device cpu_dev(DeviceType::CPU, 0);
+    auto ac = a->device.type == DeviceType::CPU ? a : a->to(cpu_dev);
+    auto bc = b->device.type == DeviceType::CPU ? b : b->to(cpu_dev);
+    if (!ac->is_contiguous()) {
+        ac = ac->contiguous();
+    }
+    if (!bc->is_contiguous()) {
+        bc = bc->contiguous();
+    }
+    std::vector<double> va = ac->flat_doubles();
+    std::vector<double> vb = bc->flat_doubles();
+    for (size_t i = 0; i < va.size(); ++i) {
+        if (va[i] != vb[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void manual_seed(unsigned int seed) {
     std::lock_guard<std::recursive_mutex> lock(g_seed_mutex);
     g_seed_value = seed;
