@@ -858,7 +858,7 @@ std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<T
         cl_mem out_mem = out->gpu_data(); int out_off = (int)out->offset;
         cl_mem sr_mem = save_inv_rms->gpu_data(); int sr_off = (int)save_inv_rms->offset;
         int n_val = (int)N; int m_val = (int)M; float eps_val = eps;
-        rt_gpu_launch(kernel, {(size_t)N}, {(size_t)256},
+        rt_gpu_launch(kernel, {(size_t)N * 256}, {},
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &sr_mem, &sr_off, &n_val, &m_val, &eps_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     } else {
