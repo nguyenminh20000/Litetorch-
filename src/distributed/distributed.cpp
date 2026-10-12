@@ -2,6 +2,7 @@
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
 #include "litetorch/platform.h"
+#include "litetorch/ops.h"
 #include <iostream>
 #include <fstream>
 #include <chrono>
@@ -9,6 +10,8 @@
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <limits>
+#include <tuple>
 
 #ifndef _WIN32
 #include <sys/socket.h>
@@ -272,7 +275,7 @@ void ProcessGroup::init(int rank, int world_size, const std::string& master_addr
         stop_async_worker_ = false;
         async_worker_ = std::thread([this]() {
             while (true) {
-                std::pair<std::shared_ptr<Tensor>, std::shared_ptr<std::promise<void>>> task;
+                std::tuple<std::shared_ptr<Tensor>, std::shared_ptr<std::promise<void>>, ReduceOp> task;
                 {
                     std::unique_lock<std::mutex> lock(async_mutex_);
                     async_cv_.wait(lock, [this]() {
@@ -285,10 +288,10 @@ void ProcessGroup::init(int rank, int world_size, const std::string& master_addr
                     async_queue_.pop();
                 }
                 try {
-                    all_reduce(task.first);
-                    task.second->set_value();
+                    all_reduce(std::get<0>(task), std::get<2>(task));
+                    std::get<1>(task)->set_value();
                 } catch (...) {
-                    task.second->set_exception(std::current_exception());
+                    std::get<1>(task)->set_exception(std::current_exception());
                 }
             }
         });
@@ -648,17 +651,7 @@ void all_reduce(std::shared_ptr<Tensor> tensor) {
 }
 
 std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor> tensor) {
-    auto promise = std::make_shared<std::promise<void>>();
-    if (!initialized_ || world_size_ <= 1) {
-        promise->set_value();
-        return promise->get_future();
-    }
-    {
-        std::lock_guard<std::mutex> lock(async_mutex_);
-        async_queue_.push({tensor, promise});
-    }
-    async_cv_.notify_one();
-    return promise->get_future();
+    return all_reduce_async(tensor, ReduceOp::SUM);
 }
 
 std::future<void> all_reduce_async(std::shared_ptr<Tensor> tensor) {
@@ -985,6 +978,7 @@ struct ncclUniqueId { char internal[128]; };
 
 void NCCLBridge::init(int rank, int world_size) {
     if (initialized_) return;
+    world_size_ = world_size;
 
 #ifdef _WIN32
     available_ = false;
@@ -1156,6 +1150,10 @@ void NCCLBridge::order_for_stream(void* stream) {
 }
 
 bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
+    return all_reduce(tensor, ReduceOp::SUM);
+}
+
+bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor, ReduceOp op) {
     if (available_ && comm_ && tensor->device.type == DeviceType::GPU) {
         auto work = nccl_contig_in(tensor);
         size_t count = work->numel();
@@ -1167,8 +1165,18 @@ bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
 
         order_for_stream(comm_stream_);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
-        nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, comm_, comm_stream_), "all_reduce");
+        nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, map_reduce_op(op), comm_, comm_stream_), "all_reduce");
         sync_stream_(comm_stream_);
+        if (op == ReduceOp::AVG) {
+            if (work->dtype != DataType::FP32 && work->dtype != DataType::FP16 &&
+                work->dtype != DataType::BF16 && work->dtype != DataType::FP64) {
+                throw std::runtime_error("NCCL all_reduce AVG requires float dtype");
+            }
+            float inv = 1.0f / (float)world_size_;
+            auto denom = Tensor::from_vector(std::vector<float>(count, inv), work->shape, work->device, false, work->dtype);
+            auto scaled = Ops::div(work, denom);
+            work->copy_(scaled);
+        }
         nccl_contig_out(tensor, work);
         return true;
     }
@@ -1308,6 +1316,10 @@ bool NCCLBridge::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tenso
 }
 
 bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full) {
+    return reduce_scatter(shard, full, ReduceOp::SUM);
+}
+
+bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
     if (available_ && initialized_ && reduce_scatter_fn && shard->device.type == DeviceType::GPU) {
         auto full_c = nccl_contig_in(full);
         size_t sendcount = shard->numel();
@@ -1322,8 +1334,21 @@ bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<T
 
         order_for_stream(comm_stream_);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
-        nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, comm_, comm_stream_), "reduce_scatter");
+        nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, map_reduce_op(op), comm_, comm_stream_), "reduce_scatter");
         sync_stream_(comm_stream_);
+        if (op == ReduceOp::AVG) {
+            if (shard->dtype != DataType::FP32 && shard->dtype != DataType::FP16 &&
+                shard->dtype != DataType::BF16 && shard->dtype != DataType::FP64) {
+                throw std::runtime_error("NCCL reduce_scatter AVG requires float dtype");
+            }
+            float inv = 1.0f / (float)world_size_;
+            auto shard_c2 = nccl_contig_in(shard);
+            auto denom = Tensor::from_vector(std::vector<float>(sendcount, inv), shard_c2->shape, shard_c2->device, false, shard_c2->dtype);
+            auto scaled = Ops::div(shard_c2, denom);
+            shard_c2->copy_(scaled);
+            nccl_contig_out(shard, shard_c2);
+            return true;
+        }
         nccl_contig_out(shard, shard_c);
         return true;
     }
@@ -1566,6 +1591,655 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
     if (!current_bucket.empty()) {
         flush_bucket(current_bucket);
     }
+}
+
+static std::shared_ptr<Tensor> dist_contig_in(std::shared_ptr<Tensor> t) {
+    if (t->is_contiguous()) return t;
+    return t->contiguous();
+}
+
+static void dist_contig_out(std::shared_ptr<Tensor> orig, std::shared_ptr<Tensor> tmp) {
+    if (tmp.get() != orig.get()) orig->copy_(tmp);
+}
+
+static void dist_require_reduce_dtype(DataType dtype) {
+    switch (dtype) {
+        case DataType::FP64:
+        case DataType::FP32:
+        case DataType::FP16:
+        case DataType::BF16:
+        case DataType::INT32:
+        case DataType::INT16:
+        case DataType::INT8:
+            return;
+        default:
+            throw std::runtime_error("distributed reduce: unsupported dtype");
+    }
+}
+
+static double dist_decode(DataType dtype, const char* p) {
+    switch (dtype) {
+        case DataType::FP64:
+            return *reinterpret_cast<const double*>(p);
+        case DataType::FP32:
+            return *reinterpret_cast<const float*>(p);
+        case DataType::FP16:
+            return half_to_float(*reinterpret_cast<const uint16_t*>(p));
+        case DataType::BF16: {
+            uint32_t v = static_cast<uint32_t>(*reinterpret_cast<const uint16_t*>(p)) << 16;
+            return *reinterpret_cast<const float*>(&v);
+        }
+        case DataType::INT32:
+            return static_cast<double>(*reinterpret_cast<const int32_t*>(p));
+        case DataType::INT16:
+            return static_cast<double>(*reinterpret_cast<const int16_t*>(p));
+        case DataType::INT8:
+            return static_cast<double>(*reinterpret_cast<const int8_t*>(p));
+        default:
+            throw std::runtime_error("distributed reduce: unsupported dtype");
+    }
+}
+
+static void dist_encode(DataType dtype, char* p, double v) {
+    switch (dtype) {
+        case DataType::FP64:
+            *reinterpret_cast<double*>(p) = v;
+            return;
+        case DataType::FP32:
+            *reinterpret_cast<float*>(p) = static_cast<float>(v);
+            return;
+        case DataType::FP16:
+            *reinterpret_cast<uint16_t*>(p) = float_to_half(static_cast<float>(v));
+            return;
+        case DataType::BF16: {
+            float f = static_cast<float>(v);
+            uint32_t u = *reinterpret_cast<uint32_t*>(&f);
+            *reinterpret_cast<uint16_t*>(p) = static_cast<uint16_t>(u >> 16);
+            return;
+        }
+        case DataType::INT32:
+            *reinterpret_cast<int32_t*>(p) = static_cast<int32_t>(v);
+            return;
+        case DataType::INT16:
+            *reinterpret_cast<int16_t*>(p) = static_cast<int16_t>(v);
+            return;
+        case DataType::INT8:
+            *reinterpret_cast<int8_t*>(p) = static_cast<int8_t>(v);
+            return;
+        default:
+            throw std::runtime_error("distributed reduce: unsupported dtype");
+    }
+}
+
+static double dist_op_init(ReduceOp op) {
+    switch (op) {
+        case ReduceOp::SUM:
+        case ReduceOp::AVG:
+            return 0.0;
+        case ReduceOp::PRODUCT:
+            return 1.0;
+        case ReduceOp::MIN:
+            return std::numeric_limits<double>::infinity();
+        case ReduceOp::MAX:
+            return -std::numeric_limits<double>::infinity();
+    }
+    return 0.0;
+}
+
+static double dist_op_apply(ReduceOp op, double acc, double v) {
+    switch (op) {
+        case ReduceOp::SUM:
+        case ReduceOp::AVG:
+            return acc + v;
+        case ReduceOp::PRODUCT:
+            return acc * v;
+        case ReduceOp::MIN:
+            return v < acc ? v : acc;
+        case ReduceOp::MAX:
+            return v > acc ? v : acc;
+    }
+    return acc;
+}
+
+static double dist_op_finalize(ReduceOp op, double acc, int world_size) {
+    if (op == ReduceOp::AVG && world_size > 0) return acc / static_cast<double>(world_size);
+    return acc;
+}
+
+static void dist_read_bytes(std::shared_ptr<Tensor> t, char* dst, size_t n) {
+    size_t esz = t->storage->element_size();
+    if (t->device.type == DeviceType::GPU) {
+        rt_gpu_read(t->gpu_data(), n, dst, t->offset * esz);
+    } else {
+        std::memcpy(dst, t->data_ptr(), n);
+    }
+}
+
+static void dist_write_bytes(std::shared_ptr<Tensor> t, const char* src, size_t n) {
+    size_t esz = t->storage->element_size();
+    if (t->device.type == DeviceType::GPU) {
+        rt_gpu_write(t->gpu_data(), n, src, t->offset * esz);
+    } else {
+        std::memcpy(t->data_ptr(), src, n);
+    }
+}
+
+void ProcessGroup::barrier_shm() {
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+}
+
+void ProcessGroup::barrier_socket() {
+    Device cpu(DeviceType::CPU);
+    if (rank_ == 0) {
+        for (int i = 1; i < world_size_; ++i) {
+            auto tmp = Tensor::create({1}, cpu, false, DataType::INT32);
+            recv_tensor(tmp, i);
+        }
+        auto ack = Tensor::create({1}, cpu, false, DataType::INT32);
+        for (int i = 1; i < world_size_; ++i) send_tensor(ack, i);
+    } else {
+        auto sync = Tensor::create({1}, cpu, false, DataType::INT32);
+        send_tensor(sync, 0);
+        auto ack = Tensor::create({1}, cpu, false, DataType::INT32);
+        recv_tensor(ack, 0);
+    }
+}
+
+void ProcessGroup::barrier() {
+    if (!initialized_ || world_size_ <= 1) return;
+    if (use_shm_ && shm_ctrl_) {
+        barrier_shm();
+        return;
+    }
+    barrier_socket();
+}
+
+void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    if (!initialized_ || world_size_ <= 1) return;
+    if (op == ReduceOp::SUM) {
+        all_reduce(tensor);
+        return;
+    }
+    if (NCCLBridge::get().all_reduce(tensor, op)) return;
+    if (all_reduce_shm(tensor, op)) return;
+    all_reduce_socket_op(tensor, op);
+}
+
+std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    auto promise = std::make_shared<std::promise<void>>();
+    if (!initialized_ || world_size_ <= 1) {
+        promise->set_value();
+        return promise->get_future();
+    }
+    {
+        std::lock_guard<std::mutex> lock(async_mutex_);
+        async_queue_.emplace(tensor, promise, op);
+    }
+    async_cv_.notify_one();
+    return promise->get_future();
+}
+
+bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    if (op == ReduceOp::SUM) return all_reduce_shm(tensor);
+    if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
+    auto work = dist_contig_in(tensor);
+    dist_require_reduce_dtype(work->dtype);
+    size_t N = work->numel();
+    size_t elem_sz = work->storage->element_size();
+    if (N * elem_sz > shm_buffer_size_) return false;
+    dist_read_bytes(work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    std::vector<char> out(N * elem_sz);
+    for (size_t j = 0; j < N; ++j) {
+        double acc = dist_op_init(op);
+        for (int r = 0; r < world_size_; ++r) {
+            const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
+            acc = dist_op_apply(op, acc, dist_decode(work->dtype, rp));
+        }
+        dist_encode(work->dtype, out.data() + j * elem_sz, dist_op_finalize(op, acc, world_size_));
+    }
+    dist_write_bytes(work, out.data(), N * elem_sz);
+    dist_contig_out(tensor, work);
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+    return true;
+}
+
+void ProcessGroup::all_reduce_socket_op(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    dist_require_reduce_dtype(tensor->dtype);
+    size_t N = tensor->numel();
+    size_t elem_sz = tensor->storage->element_size();
+    std::vector<char> data(N * elem_sz);
+    dist_read_bytes(tensor, data.data(), N * elem_sz);
+    if (rank_ == 0) {
+        std::vector<double> acc(N);
+        for (size_t j = 0; j < N; ++j) {
+            acc[j] = dist_op_apply(op, dist_op_init(op), dist_decode(tensor->dtype, data.data() + j * elem_sz));
+        }
+        std::vector<char> temp(N * elem_sz);
+        for (int i = 1; i < world_size_; ++i) {
+            size_t recvd = 0;
+            while (recvd < N * elem_sz) {
+                ssize_t r = recv(client_fds_[i], temp.data() + recvd, N * elem_sz - recvd, 0);
+                if (r <= 0) throw std::runtime_error("Socket read error in all_reduce");
+                recvd += r;
+            }
+            for (size_t j = 0; j < N; ++j) {
+                acc[j] = dist_op_apply(op, acc[j], dist_decode(tensor->dtype, temp.data() + j * elem_sz));
+            }
+        }
+        for (size_t j = 0; j < N; ++j) {
+            dist_encode(tensor->dtype, data.data() + j * elem_sz, dist_op_finalize(op, acc[j], world_size_));
+        }
+        for (int i = 1; i < world_size_; ++i) {
+            size_t sent = 0;
+            while (sent < N * elem_sz) {
+                ssize_t s = send(client_fds_[i], data.data() + sent, N * elem_sz - sent, 0);
+                if (s <= 0) throw std::runtime_error("Socket write error in all_reduce");
+                sent += s;
+            }
+        }
+    } else {
+        size_t sent = 0;
+        while (sent < N * elem_sz) {
+            ssize_t s = send(peer_fd_, data.data() + sent, N * elem_sz - sent, 0);
+            if (s <= 0) throw std::runtime_error("Socket write error in all_reduce");
+            sent += s;
+        }
+        size_t recvd = 0;
+        while (recvd < N * elem_sz) {
+            ssize_t r = recv(peer_fd_, data.data() + recvd, N * elem_sz - recvd, 0);
+            if (r <= 0) throw std::runtime_error("Socket read error in all_reduce");
+            recvd += r;
+        }
+    }
+    dist_write_bytes(tensor, data.data(), N * elem_sz);
+}
+
+void ProcessGroup::all_to_all(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output) {
+    if (!initialized_ || world_size_ <= 1) {
+        output->copy_(input);
+        return;
+    }
+    if (all_to_all_shm(input, output)) return;
+    all_to_all_socket(input, output);
+}
+
+bool ProcessGroup::all_to_all_shm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output) {
+    if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
+    auto in_work = dist_contig_in(input);
+    size_t N = in_work->numel();
+    size_t elem_sz = in_work->storage->element_size();
+    if (N % (size_t)world_size_ != 0) throw std::runtime_error("all_to_all: numel not divisible by world_size");
+    if (output->numel() != (int64_t)N) throw std::runtime_error("all_to_all: output numel mismatch");
+    size_t S = N / (size_t)world_size_;
+    if (N * elem_sz > shm_buffer_size_) return false;
+    dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    auto out_work = dist_contig_in(output);
+    std::vector<char> out(N * elem_sz);
+    for (int r = 0; r < world_size_; ++r) {
+        const char* src = reinterpret_cast<const char*>(shm_buffers_[r]) + (size_t)rank_ * S * elem_sz;
+        std::memcpy(out.data() + (size_t)r * S * elem_sz, src, S * elem_sz);
+    }
+    dist_write_bytes(out_work, out.data(), N * elem_sz);
+    dist_contig_out(output, out_work);
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+    return true;
+}
+
+void ProcessGroup::all_to_all_socket(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output) {
+    auto in_work = dist_contig_in(input);
+    size_t N = in_work->numel();
+    size_t elem_sz = in_work->storage->element_size();
+    if (N % (size_t)world_size_ != 0) throw std::runtime_error("all_to_all: numel not divisible by world_size");
+    if (output->numel() != (int64_t)N) throw std::runtime_error("all_to_all: output numel mismatch");
+    size_t S = N / (size_t)world_size_;
+    std::vector<char> in_bytes(N * elem_sz);
+    dist_read_bytes(in_work, in_bytes.data(), N * elem_sz);
+    std::vector<char> out_bytes(N * elem_sz);
+    if (rank_ == 0) {
+        std::vector<std::vector<char>> peers(world_size_, std::vector<char>(N * elem_sz));
+        peers[0] = in_bytes;
+        for (int i = 1; i < world_size_; ++i) {
+            auto tmp = Tensor::create({(int64_t)N}, in_work->device, false, in_work->dtype);
+            recv_tensor(tmp, i);
+            auto c = dist_contig_in(tmp);
+            dist_read_bytes(c, peers[i].data(), N * elem_sz);
+        }
+        for (int i = 1; i < world_size_; ++i) {
+            auto ot = Tensor::create({(int64_t)N}, in_work->device, false, in_work->dtype);
+            auto oc = dist_contig_in(ot);
+            std::vector<char> ob(N * elem_sz);
+            for (int r = 0; r < world_size_; ++r) {
+                std::memcpy(ob.data() + (size_t)r * S * elem_sz, peers[r].data() + (size_t)i * S * elem_sz, S * elem_sz);
+            }
+            dist_write_bytes(oc, ob.data(), N * elem_sz);
+            dist_contig_out(ot, oc);
+            send_tensor(ot, i);
+        }
+        for (int r = 0; r < world_size_; ++r) {
+            std::memcpy(out_bytes.data() + (size_t)r * S * elem_sz, peers[r].data(), S * elem_sz);
+        }
+    } else {
+        send_tensor(in_work, 0);
+        auto tmp = Tensor::create({(int64_t)N}, in_work->device, false, in_work->dtype);
+        recv_tensor(tmp, 0);
+        auto c = dist_contig_in(tmp);
+        dist_read_bytes(c, out_bytes.data(), N * elem_sz);
+    }
+    auto out_work = dist_contig_in(output);
+    dist_write_bytes(out_work, out_bytes.data(), N * elem_sz);
+    dist_contig_out(output, out_work);
+}
+
+void ProcessGroup::scatter(std::shared_ptr<Tensor> output, std::shared_ptr<Tensor> input, int src) {
+    if (src < 0 || src >= world_size_) throw std::runtime_error("scatter: src rank out of range");
+    if (!initialized_ || world_size_ <= 1) {
+        output->copy_(input);
+        return;
+    }
+    if (scatter_shm(output, input, src)) return;
+    scatter_socket(output, input, src);
+}
+
+bool ProcessGroup::scatter_shm(std::shared_ptr<Tensor> output, std::shared_ptr<Tensor> input, int src) {
+    if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
+    size_t S = output->numel();
+    size_t elem_sz = output->storage->element_size();
+    size_t N = S * (size_t)world_size_;
+    if (N * elem_sz > shm_buffer_size_) return false;
+    if (rank_ == src) {
+        auto in_work = dist_contig_in(input);
+        if (in_work->numel() != (int64_t)N) throw std::runtime_error("scatter: input numel mismatch");
+        if (in_work->dtype != output->dtype) throw std::runtime_error("scatter: dtype mismatch");
+        dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[src]), N * elem_sz);
+    }
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    auto out_work = dist_contig_in(output);
+    const char* srcp = reinterpret_cast<const char*>(shm_buffers_[src]) + (size_t)rank_ * S * elem_sz;
+    std::vector<char> out(S * elem_sz);
+    std::memcpy(out.data(), srcp, S * elem_sz);
+    dist_write_bytes(out_work, out.data(), S * elem_sz);
+    dist_contig_out(output, out_work);
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+    return true;
+}
+
+void ProcessGroup::scatter_socket(std::shared_ptr<Tensor> output, std::shared_ptr<Tensor> input, int src) {
+    size_t S = output->numel();
+    size_t elem_sz = output->storage->element_size();
+    if (rank_ == src) {
+        auto in_work = dist_contig_in(input);
+        size_t N = in_work->numel();
+        if (N != S * (size_t)world_size_) throw std::runtime_error("scatter: input numel mismatch");
+        std::vector<char> in_bytes(N * elem_sz);
+        dist_read_bytes(in_work, in_bytes.data(), N * elem_sz);
+        auto out_work = dist_contig_in(output);
+        dist_write_bytes(out_work, in_bytes.data() + (size_t)rank_ * S * elem_sz, S * elem_sz);
+        dist_contig_out(output, out_work);
+        for (int i = 0; i < world_size_; ++i) {
+            if (i == src) continue;
+            auto chunk = Tensor::create({(int64_t)S}, in_work->device, false, in_work->dtype);
+            auto cc = dist_contig_in(chunk);
+            dist_write_bytes(cc, in_bytes.data() + (size_t)i * S * elem_sz, S * elem_sz);
+            dist_contig_out(chunk, cc);
+            send_tensor(chunk, i);
+        }
+    } else {
+        auto tmp = Tensor::create({(int64_t)S}, output->device, false, output->dtype);
+        recv_tensor(tmp, src);
+        auto c = dist_contig_in(tmp);
+        std::vector<char> buf(S * elem_sz);
+        dist_read_bytes(c, buf.data(), S * elem_sz);
+        auto out_work = dist_contig_in(output);
+        dist_write_bytes(out_work, buf.data(), S * elem_sz);
+        dist_contig_out(output, out_work);
+    }
+}
+
+void ProcessGroup::gather(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output, int dst) {
+    if (dst < 0 || dst >= world_size_) throw std::runtime_error("gather: dst rank out of range");
+    if (!initialized_ || world_size_ <= 1) {
+        output->copy_(input);
+        return;
+    }
+    if (gather_shm(input, output, dst)) return;
+    gather_socket(input, output, dst);
+}
+
+bool ProcessGroup::gather_shm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output, int dst) {
+    if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
+    auto in_work = dist_contig_in(input);
+    size_t S = in_work->numel();
+    size_t elem_sz = in_work->storage->element_size();
+    size_t N = S * (size_t)world_size_;
+    if (N * elem_sz > shm_buffer_size_) return false;
+    if (rank_ == dst && output->numel() != (int64_t)N) throw std::runtime_error("gather: output numel mismatch");
+    dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), S * elem_sz);
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    if (rank_ == dst) {
+        auto out_work = dist_contig_in(output);
+        std::vector<char> out(N * elem_sz);
+        for (int r = 0; r < world_size_; ++r) {
+            std::memcpy(out.data() + (size_t)r * S * elem_sz, shm_buffers_[r], S * elem_sz);
+        }
+        dist_write_bytes(out_work, out.data(), N * elem_sz);
+        dist_contig_out(output, out_work);
+    }
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+    return true;
+}
+
+void ProcessGroup::gather_socket(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output, int dst) {
+    auto in_work = dist_contig_in(input);
+    size_t S = in_work->numel();
+    size_t elem_sz = in_work->storage->element_size();
+    if (rank_ == dst) {
+        size_t N = S * (size_t)world_size_;
+        if (output->numel() != (int64_t)N) throw std::runtime_error("gather: output numel mismatch");
+        std::vector<char> in_bytes(S * elem_sz);
+        dist_read_bytes(in_work, in_bytes.data(), S * elem_sz);
+        std::vector<char> out(N * elem_sz);
+        std::memcpy(out.data() + (size_t)rank_ * S * elem_sz, in_bytes.data(), S * elem_sz);
+        for (int i = 0; i < world_size_; ++i) {
+            if (i == dst) continue;
+            auto tmp = Tensor::create({(int64_t)S}, in_work->device, false, in_work->dtype);
+            recv_tensor(tmp, i);
+            auto c = dist_contig_in(tmp);
+            dist_read_bytes(c, out.data() + (size_t)i * S * elem_sz, S * elem_sz);
+        }
+        auto out_work = dist_contig_in(output);
+        dist_write_bytes(out_work, out.data(), N * elem_sz);
+        dist_contig_out(output, out_work);
+    } else {
+        send_tensor(in_work, dst);
+    }
+}
+
+void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
+    if (!initialized_ || world_size_ <= 1) {
+        shard->copy_(full);
+        return;
+    }
+    if (op == ReduceOp::SUM) {
+        reduce_scatter(shard, full);
+        return;
+    }
+    if (NCCLBridge::get().reduce_scatter(shard, full, op)) return;
+    if (reduce_scatter_shm(shard, full, op)) return;
+    throw std::runtime_error("reduce_scatter: non-SUM ReduceOp not implemented for socket fallback");
+}
+
+bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
+    if (op == ReduceOp::SUM) return reduce_scatter_shm(shard, full);
+    if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
+    auto full_work = dist_contig_in(full);
+    auto shard_work = dist_contig_in(shard);
+    dist_require_reduce_dtype(full_work->dtype);
+    size_t N = full_work->numel();
+    size_t elem_sz = full_work->storage->element_size();
+    if (N % (size_t)world_size_ != 0) throw std::runtime_error("reduce_scatter: numel not divisible by world_size");
+    size_t S = N / (size_t)world_size_;
+    if (shard_work->numel() != (int64_t)S) throw std::runtime_error("reduce_scatter: shard numel mismatch");
+    if (N * elem_sz > shm_buffer_size_) return false;
+    dist_read_bytes(full_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
+    }
+    std::vector<char> out(S * elem_sz);
+    for (size_t k = 0; k < S; ++k) {
+        size_t j = (size_t)rank_ * S + k;
+        double acc = dist_op_init(op);
+        for (int r = 0; r < world_size_; ++r) {
+            const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
+            acc = dist_op_apply(op, acc, dist_decode(full_work->dtype, rp));
+        }
+        dist_encode(shard_work->dtype, out.data() + k * elem_sz, dist_op_finalize(op, acc, world_size_));
+    }
+    dist_write_bytes(shard_work, out.data(), S * elem_sz);
+    dist_contig_out(shard, shard_work);
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    }
+    return true;
+}
+
+int NCCLBridge::map_reduce_op(ReduceOp op) {
+    switch (op) {
+        case ReduceOp::SUM:
+            return 0;
+        case ReduceOp::PRODUCT:
+            return 1;
+        case ReduceOp::MAX:
+            return 2;
+        case ReduceOp::MIN:
+            return 3;
+        case ReduceOp::AVG:
+            return 0;
+    }
+    return 0;
+}
+
+DistributedDataParallel::DistributedDataParallel(std::shared_ptr<nn::Module> sub_module, ReduceOp op)
+    : module(sub_module), reduce_op(op) {}
+
+std::shared_ptr<Tensor> DistributedDataParallel::forward(std::shared_ptr<Tensor> input) {
+    return module->forward(input);
+}
+
+void DistributedDataParallel::backward(std::shared_ptr<Tensor> loss) {
+    loss->backward();
+    sync_grads();
+}
+
+void DistributedDataParallel::backward(std::shared_ptr<Tensor> loss, std::shared_ptr<Tensor> grad_output) {
+    loss->backward(grad_output);
+    sync_grads();
+}
+
+void DistributedDataParallel::sync_grads() {
+    for (auto& p : module->parameters()) {
+        if (p && p->requires_grad && p->grad) {
+            ProcessGroup::get().all_reduce(p->grad, reduce_op);
+        }
+    }
+}
+
+std::vector<std::shared_ptr<Tensor>> DistributedDataParallel::parameters() {
+    return module->parameters();
+}
+
+std::vector<std::shared_ptr<nn::Module>> DistributedDataParallel::children() {
+    return {module};
+}
+
+void DistributedDataParallel::to(const Device& device) {
+    module->to(device);
+}
+
+void DistributedDataParallel::train() {
+    module->train();
+}
+
+void DistributedDataParallel::eval() {
+    module->eval();
+}
+
+void barrier() {
+    ProcessGroup::get().barrier();
+}
+
+void all_reduce(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    ProcessGroup::get().all_reduce(tensor, op);
+}
+
+std::future<void> all_reduce_async(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+    return ProcessGroup::get().all_reduce_async(tensor, op);
+}
+
+void all_to_all(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output) {
+    ProcessGroup::get().all_to_all(input, output);
+}
+
+void scatter(std::shared_ptr<Tensor> output, std::shared_ptr<Tensor> input, int src) {
+    ProcessGroup::get().scatter(output, input, src);
+}
+
+void gather(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output, int dst) {
+    ProcessGroup::get().gather(input, output, dst);
+}
+
+void reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
+    ProcessGroup::get().reduce_scatter(shard, full, op);
+}
+
+void all_reduce_grads(std::shared_ptr<nn::Module> module, ReduceOp op) {
+    std::vector<std::future<void>> futures;
+    for (auto& p : module->parameters()) {
+        if (p && p->requires_grad && p->grad) {
+            futures.push_back(ProcessGroup::get().all_reduce_async(p->grad, op));
+        }
+    }
+    for (auto& f : futures) f.wait();
 }
 
 }
