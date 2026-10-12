@@ -105,6 +105,12 @@ void topological_sort(Node* root_node, TraversalState& st) {
 
 void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) {
     if (!root_tensor || !root_tensor->creator) return;
+    if (!root_tensor->grad) {
+        if (root_tensor->numel() != 1) {
+            throw std::runtime_error("[litetorch Error] Autograd::backward: grad must be specified for non-scalar tensors");
+        }
+        root_tensor->grad = Tensor::from_vector({1.0f}, root_tensor->shape, root_tensor->device, false, root_tensor->dtype);
+    }
     ActiveTensorsGuard guard;
 
     bool old_create_graph = is_create_graph_;
