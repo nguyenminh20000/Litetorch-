@@ -36,6 +36,10 @@
 
 // === W1-T5 functional: includes ===
 #include "litetorch/functional.h"
+// === W3-T1 linalg: includes ===
+#include "litetorch/linalg.h"
+// === W3-T2 distributions: includes ===
+#include "litetorch/distributions.h"
 
 
 
@@ -1344,6 +1348,299 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("dim", &nn::LogSoftmax::dim);
     // === end W1-T4 nn-layers ===
 
+    // === W3-T4 losses-misc ===
+    py::class_<nn::KLDivLoss, nn::Module, std::shared_ptr<nn::KLDivLoss>>(nn_mod, "KLDivLoss")
+        .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::KLDivLoss::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::KLDivLoss::forward))
+        .def("__call__", [](nn::KLDivLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
+        .def_readwrite("reduction", &nn::KLDivLoss::reduction);
+
+    py::class_<nn::SmoothL1Loss, nn::Module, std::shared_ptr<nn::SmoothL1Loss>>(nn_mod, "SmoothL1Loss")
+        .def(py::init<float, const std::string&>(), py::arg("beta") = 1.0f, py::arg("reduction") = "mean")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::SmoothL1Loss::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::SmoothL1Loss::forward))
+        .def("__call__", [](nn::SmoothL1Loss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
+        .def_readwrite("beta", &nn::SmoothL1Loss::beta)
+        .def_readwrite("reduction", &nn::SmoothL1Loss::reduction);
+
+    py::class_<nn::HuberLoss, nn::Module, std::shared_ptr<nn::HuberLoss>>(nn_mod, "HuberLoss")
+        .def(py::init<float, const std::string&>(), py::arg("delta") = 1.0f, py::arg("reduction") = "mean")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::HuberLoss::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::HuberLoss::forward))
+        .def("__call__", [](nn::HuberLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
+        .def_readwrite("delta", &nn::HuberLoss::delta)
+        .def_readwrite("reduction", &nn::HuberLoss::reduction);
+
+    py::class_<nn::CTCLoss, nn::Module, std::shared_ptr<nn::CTCLoss>>(nn_mod, "CTCLoss")
+        .def(py::init<int, const std::string&, bool>(), py::arg("blank") = 0, py::arg("reduction") = "mean", py::arg("zero_infinity") = false)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::CTCLoss::forward))
+        .def("forward", [](nn::CTCLoss& self, std::shared_ptr<Tensor> log_probs, std::shared_ptr<Tensor> targets,
+                           std::shared_ptr<Tensor> input_lengths, std::shared_ptr<Tensor> target_lengths) {
+            return self.forward(log_probs, targets, input_lengths, target_lengths);
+        }, py::arg("log_probs"), py::arg("targets"), py::arg("input_lengths"), py::arg("target_lengths"))
+        .def("__call__", [](nn::CTCLoss& self, std::shared_ptr<Tensor> log_probs, std::shared_ptr<Tensor> targets,
+                            std::shared_ptr<Tensor> input_lengths, std::shared_ptr<Tensor> target_lengths) {
+            return self.forward(log_probs, targets, input_lengths, target_lengths);
+        })
+        .def_readwrite("blank", &nn::CTCLoss::blank)
+        .def_readwrite("reduction", &nn::CTCLoss::reduction)
+        .def_readwrite("zero_infinity", &nn::CTCLoss::zero_infinity);
+
+    // === W3-T3 recurrent+ ===
+    py::class_<nn::RNNCell, nn::Module, std::shared_ptr<nn::RNNCell>>(nn_mod, "RNNCell")
+        .def(py::init<int, int, bool, const std::string&>(), py::arg("input_size"), py::arg("hidden_size"),
+             py::arg("bias") = true, py::arg("nonlinearity") = "tanh")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::RNNCell::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::RNNCell::forward),
+             py::arg("input"), py::arg("hx"))
+        .def("__call__", [](nn::RNNCell& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx) {
+            return hx ? self.forward(input, hx) : self.forward(input);
+        }, py::arg("input"), py::arg("hx") = nullptr)
+        .def("parameters", &nn::RNNCell::parameters)
+        .def("to", &nn::RNNCell::to)
+        .def_readwrite("weight_ih", &nn::RNNCell::weight_ih)
+        .def_readwrite("weight_hh", &nn::RNNCell::weight_hh)
+        .def_readwrite("bias_ih", &nn::RNNCell::bias_ih)
+        .def_readwrite("bias_hh", &nn::RNNCell::bias_hh);
+
+    py::class_<nn::LSTMCell, nn::Module, std::shared_ptr<nn::LSTMCell>>(nn_mod, "LSTMCell")
+        .def(py::init<int, int, bool>(), py::arg("input_size"), py::arg("hidden_size"), py::arg("bias") = true)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::LSTMCell::forward))
+        .def("forward", [](nn::LSTMCell& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx,
+                           std::shared_ptr<Tensor> cx) { return self.forward(input, hx, cx); },
+             py::arg("input"), py::arg("hx"), py::arg("cx"))
+        .def("parameters", &nn::LSTMCell::parameters)
+        .def("to", &nn::LSTMCell::to)
+        .def_readwrite("weight_ih", &nn::LSTMCell::weight_ih)
+        .def_readwrite("weight_hh", &nn::LSTMCell::weight_hh)
+        .def_readwrite("bias_ih", &nn::LSTMCell::bias_ih)
+        .def_readwrite("bias_hh", &nn::LSTMCell::bias_hh);
+
+    py::class_<nn::GRUCell, nn::Module, std::shared_ptr<nn::GRUCell>>(nn_mod, "GRUCell")
+        .def(py::init<int, int, bool>(), py::arg("input_size"), py::arg("hidden_size"), py::arg("bias") = true)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::GRUCell::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::GRUCell::forward),
+             py::arg("input"), py::arg("hx"))
+        .def("__call__", [](nn::GRUCell& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx) {
+            return hx ? self.forward(input, hx) : self.forward(input);
+        }, py::arg("input"), py::arg("hx") = nullptr)
+        .def("parameters", &nn::GRUCell::parameters)
+        .def("to", &nn::GRUCell::to)
+        .def_readwrite("weight_ih", &nn::GRUCell::weight_ih)
+        .def_readwrite("weight_hh", &nn::GRUCell::weight_hh)
+        .def_readwrite("bias_ih", &nn::GRUCell::bias_ih)
+        .def_readwrite("bias_hh", &nn::GRUCell::bias_hh);
+
+    py::class_<nn::RNN, nn::Module, std::shared_ptr<nn::RNN>>(nn_mod, "RNN")
+        .def(py::init<int, int, int, const std::string&, bool, bool, float, bool>(), py::arg("input_size"),
+             py::arg("hidden_size"), py::arg("num_layers") = 1, py::arg("nonlinearity") = "tanh",
+             py::arg("bias") = true, py::arg("batch_first") = false, py::arg("dropout") = 0.0f,
+             py::arg("bidirectional") = false)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::RNN::forward))
+        .def("forward_full", [](nn::RNN& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0) {
+            auto r = self.forward_full(input, h0);
+            return std::make_pair(r.first, r.second);
+        }, py::arg("input"), py::arg("h0") = nullptr)
+        .def("parameters", &nn::RNN::parameters)
+        .def("to", &nn::RNN::to)
+        .def_readwrite("cells", &nn::RNN::cells);
+
+    py::class_<nn::LSTM, nn::Module, std::shared_ptr<nn::LSTM>>(nn_mod, "LSTM")
+        .def(py::init<int, int, int, bool, bool, float, bool>(), py::arg("input_size"),
+             py::arg("hidden_size"), py::arg("num_layers") = 1, py::arg("bias") = true,
+             py::arg("batch_first") = false, py::arg("dropout") = 0.0f, py::arg("bidirectional") = false)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::LSTM::forward))
+        .def("forward_full", [](nn::LSTM& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0,
+                                std::shared_ptr<Tensor> c0) {
+            auto r = self.forward_full(input, h0, c0);
+            return std::make_tuple(r.first, r.second.first, r.second.second);
+        }, py::arg("input"), py::arg("h0") = nullptr, py::arg("c0") = nullptr)
+        .def("parameters", &nn::LSTM::parameters)
+        .def("to", &nn::LSTM::to)
+        .def_readwrite("cells", &nn::LSTM::cells);
+
+    py::class_<nn::GRU, nn::Module, std::shared_ptr<nn::GRU>>(nn_mod, "GRU")
+        .def(py::init<int, int, int, bool, bool, float, bool>(), py::arg("input_size"),
+             py::arg("hidden_size"), py::arg("num_layers") = 1, py::arg("bias") = true,
+             py::arg("batch_first") = false, py::arg("dropout") = 0.0f, py::arg("bidirectional") = false)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::GRU::forward))
+        .def("forward_full", [](nn::GRU& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0) {
+            auto r = self.forward_full(input, h0);
+            return std::make_pair(r.first, r.second);
+        }, py::arg("input"), py::arg("h0") = nullptr)
+        .def("parameters", &nn::GRU::parameters)
+        .def("to", &nn::GRU::to)
+        .def_readwrite("cells", &nn::GRU::cells);
+
+    py::class_<nn::TransformerEncoderLayer, nn::Module, std::shared_ptr<nn::TransformerEncoderLayer>>(
+        nn_mod, "TransformerEncoderLayer")
+        .def(py::init<int, int, int, float, const std::string&, bool>(), py::arg("d_model"),
+             py::arg("nhead"), py::arg("dim_feedforward") = 2048, py::arg("dropout") = 0.1f,
+             py::arg("activation") = "relu", py::arg("batch_first") = false)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TransformerEncoderLayer::forward))
+        .def("forward", [](nn::TransformerEncoderLayer& self, std::shared_ptr<Tensor> src,
+                           std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
+            return self.forward(src, mask, key_mask);
+        }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
+        .def("parameters", &nn::TransformerEncoderLayer::parameters)
+        .def("to", &nn::TransformerEncoderLayer::to);
+
+    py::class_<nn::TransformerEncoder, nn::Module, std::shared_ptr<nn::TransformerEncoder>>(
+        nn_mod, "TransformerEncoder")
+        .def(py::init<std::shared_ptr<nn::TransformerEncoderLayer>, int, std::shared_ptr<nn::LayerNorm>>(),
+             py::arg("encoder_layer"), py::arg("num_layers"), py::arg("norm") = nullptr)
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TransformerEncoder::forward))
+        .def("forward", [](nn::TransformerEncoder& self, std::shared_ptr<Tensor> src,
+                           std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
+            return self.forward(src, mask, key_mask);
+        }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
+        .def("parameters", &nn::TransformerEncoder::parameters)
+        .def("to", &nn::TransformerEncoder::to);
+
+    py::class_<nn::EmbeddingBag, nn::Module, std::shared_ptr<nn::EmbeddingBag>>(nn_mod, "EmbeddingBag")
+        .def(py::init<int, int, const std::string&>(), py::arg("num_embeddings"),
+             py::arg("embedding_dim"), py::arg("mode") = "mean")
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::EmbeddingBag::forward))
+        .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(
+                 &nn::EmbeddingBag::forward),
+             py::arg("input"), py::arg("offsets"))
+        .def("parameters", &nn::EmbeddingBag::parameters)
+        .def("to", &nn::EmbeddingBag::to)
+        .def_readwrite("weight", &nn::EmbeddingBag::weight);
+
+    py::class_<nn::ConvTranspose1d, nn::Module, std::shared_ptr<nn::ConvTranspose1d>>(nn_mod, "ConvTranspose1d")
+        .def(py::init<int, int, int, int, int, int, int, bool, int>(), py::arg("in_channels"),
+             py::arg("out_channels"), py::arg("kernel_size"), py::arg("stride") = 1,
+             py::arg("padding") = 0, py::arg("output_padding") = 0, py::arg("groups") = 1,
+             py::arg("bias") = true, py::arg("dilation") = 1)
+        .def("forward", &nn::ConvTranspose1d::forward)
+        .def("parameters", &nn::ConvTranspose1d::parameters)
+        .def("to", &nn::ConvTranspose1d::to)
+        .def_readwrite("weight", &nn::ConvTranspose1d::weight)
+        .def_readwrite("bias", &nn::ConvTranspose1d::bias);
+
+    py::class_<nn::ConvTranspose2d, nn::Module, std::shared_ptr<nn::ConvTranspose2d>>(nn_mod, "ConvTranspose2d")
+        .def(py::init<int, int, int, int, int, int, int, bool, int>(), py::arg("in_channels"),
+             py::arg("out_channels"), py::arg("kernel_size"), py::arg("stride") = 1,
+             py::arg("padding") = 0, py::arg("output_padding") = 0, py::arg("groups") = 1,
+             py::arg("bias") = true, py::arg("dilation") = 1)
+        .def("forward", &nn::ConvTranspose2d::forward)
+        .def("parameters", &nn::ConvTranspose2d::parameters)
+        .def("to", &nn::ConvTranspose2d::to)
+        .def_readwrite("weight", &nn::ConvTranspose2d::weight)
+        .def_readwrite("bias", &nn::ConvTranspose2d::bias);
+
+    py::class_<nn::ConvTranspose3d, nn::Module, std::shared_ptr<nn::ConvTranspose3d>>(nn_mod, "ConvTranspose3d")
+        .def(py::init<int, int, int, int, int, int, int, bool, int>(), py::arg("in_channels"),
+             py::arg("out_channels"), py::arg("kernel_size"), py::arg("stride") = 1,
+             py::arg("padding") = 0, py::arg("output_padding") = 0, py::arg("groups") = 1,
+             py::arg("bias") = true, py::arg("dilation") = 1)
+        .def("forward", &nn::ConvTranspose3d::forward)
+        .def("parameters", &nn::ConvTranspose3d::parameters)
+        .def("to", &nn::ConvTranspose3d::to)
+        .def_readwrite("weight", &nn::ConvTranspose3d::weight)
+        .def_readwrite("bias", &nn::ConvTranspose3d::bias);
+
+    py::class_<nn::InstanceNorm1d, nn::Module, std::shared_ptr<nn::InstanceNorm1d>>(nn_mod, "InstanceNorm1d")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f, py::arg("affine") = false, py::arg("track_running_stats") = false)
+        .def("forward", &nn::InstanceNorm1d::forward)
+        .def("parameters", &nn::InstanceNorm1d::parameters)
+        .def("to", &nn::InstanceNorm1d::to)
+        .def_readwrite("weight", &nn::InstanceNorm1d::weight)
+        .def_readwrite("bias", &nn::InstanceNorm1d::bias);
+
+    py::class_<nn::InstanceNorm2d, nn::Module, std::shared_ptr<nn::InstanceNorm2d>>(nn_mod, "InstanceNorm2d")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f, py::arg("affine") = false, py::arg("track_running_stats") = false)
+        .def("forward", &nn::InstanceNorm2d::forward)
+        .def("parameters", &nn::InstanceNorm2d::parameters)
+        .def("to", &nn::InstanceNorm2d::to)
+        .def_readwrite("weight", &nn::InstanceNorm2d::weight)
+        .def_readwrite("bias", &nn::InstanceNorm2d::bias);
+
+    py::class_<nn::InstanceNorm3d, nn::Module, std::shared_ptr<nn::InstanceNorm3d>>(nn_mod, "InstanceNorm3d")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f, py::arg("affine") = false, py::arg("track_running_stats") = false)
+        .def("forward", &nn::InstanceNorm3d::forward)
+        .def("parameters", &nn::InstanceNorm3d::parameters)
+        .def("to", &nn::InstanceNorm3d::to)
+        .def_readwrite("weight", &nn::InstanceNorm3d::weight)
+        .def_readwrite("bias", &nn::InstanceNorm3d::bias);
+
+    py::class_<nn::BatchNorm3d, nn::Module, std::shared_ptr<nn::BatchNorm3d>>(nn_mod, "BatchNorm3d")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f, py::arg("affine") = true, py::arg("track_running_stats") = true)
+        .def("forward", &nn::BatchNorm3d::forward)
+        .def("parameters", &nn::BatchNorm3d::parameters)
+        .def("to", &nn::BatchNorm3d::to)
+        .def_readwrite("weight", &nn::BatchNorm3d::weight)
+        .def_readwrite("bias", &nn::BatchNorm3d::bias)
+        .def_readwrite("running_mean", &nn::BatchNorm3d::running_mean)
+        .def_readwrite("running_var", &nn::BatchNorm3d::running_var);
+
+    py::class_<nn::SyncBatchNorm, nn::Module, std::shared_ptr<nn::SyncBatchNorm>>(nn_mod, "SyncBatchNorm")
+        .def(py::init<int, float, float, bool, bool>(), py::arg("num_features"), py::arg("eps") = 1e-5f,
+             py::arg("momentum") = 0.1f, py::arg("affine") = true, py::arg("track_running_stats") = true)
+        .def("forward", &nn::SyncBatchNorm::forward)
+        .def("parameters", &nn::SyncBatchNorm::parameters)
+        .def("to", &nn::SyncBatchNorm::to)
+        .def_readwrite("weight", &nn::SyncBatchNorm::weight)
+        .def_readwrite("bias", &nn::SyncBatchNorm::bias);
+
+    py::class_<nn::ELU, nn::Module, std::shared_ptr<nn::ELU>>(nn_mod, "ELU")
+        .def(py::init<float>(), py::arg("alpha") = 1.0f)
+        .def("forward", &nn::ELU::forward)
+        .def_readwrite("alpha", &nn::ELU::alpha);
+
+    py::class_<nn::PReLU, nn::Module, std::shared_ptr<nn::PReLU>>(nn_mod, "PReLU")
+        .def(py::init<int, float>(), py::arg("num_parameters") = 1, py::arg("init") = 0.25f)
+        .def("forward", &nn::PReLU::forward)
+        .def("parameters", &nn::PReLU::parameters)
+        .def("to", &nn::PReLU::to)
+        .def_readwrite("weight", &nn::PReLU::weight);
+
+    py::class_<nn::GLU, nn::Module, std::shared_ptr<nn::GLU>>(nn_mod, "GLU")
+        .def(py::init<int64_t>(), py::arg("dim") = -1)
+        .def("forward", &nn::GLU::forward)
+        .def_readwrite("dim", &nn::GLU::dim);
+
+    py::class_<nn::PixelShuffle, nn::Module, std::shared_ptr<nn::PixelShuffle>>(nn_mod, "PixelShuffle")
+        .def(py::init<int>(), py::arg("upscale_factor"))
+        .def("forward", &nn::PixelShuffle::forward)
+        .def_readwrite("upscale_factor", &nn::PixelShuffle::upscale_factor);
+
+    py::class_<nn::PixelUnshuffle, nn::Module, std::shared_ptr<nn::PixelUnshuffle>>(nn_mod, "PixelUnshuffle")
+        .def(py::init<int>(), py::arg("downscale_factor"))
+        .def("forward", &nn::PixelUnshuffle::forward)
+        .def_readwrite("downscale_factor", &nn::PixelUnshuffle::downscale_factor);
+
+    py::class_<nn::Identity, nn::Module, std::shared_ptr<nn::Identity>>(nn_mod, "Identity")
+        .def(py::init<>())
+        .def("forward", &nn::Identity::forward);
+
+    py::class_<nn::Unflatten, nn::Module, std::shared_ptr<nn::Unflatten>>(nn_mod, "Unflatten")
+        .def(py::init<int64_t, const std::vector<int64_t>&>(), py::arg("dim"), py::arg("unflattened_size"))
+        .def("forward", &nn::Unflatten::forward)
+        .def_readwrite("dim", &nn::Unflatten::dim)
+        .def_readwrite("unflattened_size", &nn::Unflatten::unflattened_size);
+    // === end W3-T3 ===
+
+    auto utils_mod = nn_mod.def_submodule("utils", "LiteTorch nn.utils");
+    utils_mod.def("clip_grad_value_", &nn::utils::clip_grad_value_, py::arg("parameters"), py::arg("clip_value"));
+    utils_mod.def("parameters_to_vector", &nn::utils::parameters_to_vector, py::arg("parameters"));
+    utils_mod.def("vector_to_parameters", &nn::utils::vector_to_parameters, py::arg("vec"), py::arg("parameters"));
+    utils_mod.def("weight_norm", &nn::utils::weight_norm, py::arg("v"), py::arg("g"), py::arg("dim") = 0);
+    utils_mod.def("spectral_norm", &nn::utils::spectral_norm, py::arg("weight"), py::arg("n_power_iterations") = 1);
+    // === end W3-T4 losses-misc ===
+
     py::class_<nn::GuidedDecoder>(nn_mod, "GuidedDecoder")
         .def(py::init<const std::vector<std::string>&>(), py::arg("vocabulary"))
         .def("apply_mask", &nn::GuidedDecoder::apply_mask, py::arg("logits"), py::arg("prefix"), py::arg("target_pattern"))
@@ -1409,6 +1706,11 @@ PYBIND11_MODULE(litetorch, m) {
     init_mod.def("zeros_", &nn::init::zeros_, py::arg("tensor"));
     init_mod.def("ones_", &nn::init::ones_, py::arg("tensor"));
     init_mod.def("fill_", &nn::init::fill_, py::arg("tensor"), py::arg("value"));
+    // === W3-T4 losses-misc ===
+    init_mod.def("trunc_normal_", &nn::init::trunc_normal_, py::arg("tensor"), py::arg("mean") = 0.0f,
+        py::arg("std") = 1.0f, py::arg("a") = -2.0f, py::arg("b") = 2.0f);
+    init_mod.def("orthogonal_", &nn::init::orthogonal_, py::arg("tensor"), py::arg("gain") = 1.0f);
+    // === end W3-T4 losses-misc ===
 
     // === W1-T5 functional ===
     auto functional_mod = nn_mod.def_submodule("functional", "LiteTorch nn.functional");
@@ -1454,6 +1756,143 @@ PYBIND11_MODULE(litetorch, m) {
     functional_mod.def("elu", &functional::elu,
         py::arg("x"), py::arg("alpha") = 1.0);
     // === end W1-T5 functional ===
+
+    // === W3-T1 linalg ===
+    auto linalg_mod = m.def_submodule("linalg", "LiteTorch Linear Algebra");
+    linalg_mod.def("inv", &linalg::inv, py::arg("A"));
+    linalg_mod.def("solve", &linalg::solve, py::arg("A"), py::arg("B"));
+    linalg_mod.def("cholesky", &linalg::cholesky, py::arg("A"), py::arg("upper") = false);
+    linalg_mod.def("cholesky_inverse", &linalg::cholesky_inverse, py::arg("A"),
+                  py::arg("upper") = false);
+    linalg_mod.def("qr",
+                   [](std::shared_ptr<Tensor> a, const std::string& mode) {
+                       auto r = linalg::qr(a, mode);
+                       if (mode == "r") return py::cast(r.second);
+                       return py::cast(std::make_tuple(r.first, r.second));
+                   },
+                   py::arg("A"), py::arg("mode") = "reduced");
+    linalg_mod.def("svd",
+                   [](std::shared_ptr<Tensor> a, bool full_matrices) {
+                       auto r = linalg::svd(a, full_matrices);
+                       return std::make_tuple(std::get<0>(r), std::get<1>(r), std::get<2>(r));
+                   },
+                   py::arg("A"), py::arg("full_matrices") = true);
+    linalg_mod.def("eigh",
+                   [](std::shared_ptr<Tensor> a, const std::string& UPLO) {
+                       auto r = linalg::eigh(a, UPLO);
+                       return std::make_tuple(r.first, r.second);
+                   },
+                   py::arg("A"), py::arg("UPLO") = "L");
+    linalg_mod.def("eigvalsh", &linalg::eigvalsh, py::arg("A"), py::arg("UPLO") = "L");
+    linalg_mod.def("det", &linalg::det, py::arg("A"));
+    linalg_mod.def("slogdet",
+                   [](std::shared_ptr<Tensor> a) {
+                       auto r = linalg::slogdet(a);
+                       return std::make_tuple(r.first, r.second);
+                   },
+                   py::arg("A"));
+    linalg_mod.def("vector_norm",
+                   [](std::shared_ptr<Tensor> x, py::object ord) {
+                       double o = 2.0;
+                       if (!ord.is_none()) o = ord.cast<double>();
+                       return linalg::vector_norm(x, o);
+                   },
+                   py::arg("x"), py::arg("ord") = py::none());
+    linalg_mod.def("matrix_norm", &linalg::matrix_norm, py::arg("A"), py::arg("ord") = "fro");
+    linalg_mod.def("norm",
+                   [](std::shared_ptr<Tensor> x, py::object ord, py::object dim) {
+                       if (dim.is_none()) {
+                           double o = 2.0;
+                           if (!ord.is_none()) {
+                               if (py::isinstance<py::str>(ord))
+                                   throw std::runtime_error(
+                                       "[litetorch Error] linalg.norm: string ord needs dim");
+                               o = ord.cast<double>();
+                           }
+                           return linalg::vector_norm(x, o);
+                       }
+                       if (py::isinstance<py::int_>(dim)) {
+                           double o = 2.0;
+                           if (!ord.is_none()) o = ord.cast<double>();
+                           auto xd = x->flat_doubles();
+                           int64_t ndim = (int64_t)x->shape.size();
+                           int64_t d = dim.cast<int64_t>();
+                           d = d < 0 ? d + ndim : d;
+                           int64_t dd = x->shape[(size_t)d];
+                           int64_t stride = 1;
+                           for (int64_t i = d + 1; i < ndim; ++i) stride *= x->shape[(size_t)i];
+                           int64_t outer = (int64_t)xd.size() / (dd * stride);
+                           std::vector<int64_t> os;
+                           for (int64_t i = 0; i < ndim; ++i)
+                               if (i != d) os.push_back(x->shape[(size_t)i]);
+                           std::vector<double> out((size_t)(outer * stride));
+                           for (int64_t o2 = 0; o2 < outer; ++o2)
+                               for (int64_t s = 0; s < stride; ++s) {
+                                   std::vector<double> v((size_t)dd);
+                                   int64_t base = o2 * dd * stride + s;
+                                   for (int64_t i = 0; i < dd; ++i)
+                                       v[(size_t)i] = xd[(size_t)(base + i * stride)];
+                                   double nv;
+                                   if (o == 0.0) {
+                                       nv = 0.0;
+                                       for (auto e : v)
+                                           if (e != 0.0) nv += 1.0;
+                                   } else if (std::isinf(o)) {
+                                       nv = 0.0;
+                                       for (auto e : v) nv = std::max(nv, std::fabs(e));
+                                   } else {
+                                       nv = 0.0;
+                                       for (auto e : v) nv += std::pow(std::fabs(e), o);
+                                       nv = std::pow(nv, 1.0 / o);
+                                   }
+                                   out[(size_t)(o2 * stride + s)] = nv;
+                               }
+                           auto t = Tensor::create(os, Device(DeviceType::CPU, 0), false, x->dtype);
+                           char* bp = reinterpret_cast<char*>(t->storage->get_cpu_ptr());
+                           if (x->dtype == DataType::FP64) {
+                               double* p = reinterpret_cast<double*>(bp);
+                               for (size_t i = 0; i < out.size(); ++i) p[i] = out[i];
+                           } else {
+                               float* p = reinterpret_cast<float*>(bp);
+                               for (size_t i = 0; i < out.size(); ++i)
+                                   p[i] = static_cast<float>(out[i]);
+                           }
+                           return t;
+                       }
+                       std::string o = "fro";
+                       if (!ord.is_none()) o = ord.cast<std::string>();
+                       return linalg::matrix_norm(x, o);
+                   },
+                   py::arg("x"), py::arg("ord") = py::none(), py::arg("dim") = py::none());
+    linalg_mod.def("matrix_rank", &linalg::matrix_rank, py::arg("A"), py::arg("tol") = -1.0,
+                   py::arg("hermitian") = false);
+    linalg_mod.def("pinv", &linalg::pinv, py::arg("A"), py::arg("rcond") = 1e-15);
+    linalg_mod.def("lstsq",
+                   [](std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, double rcond) {
+                       auto r = linalg::lstsq(a, b, rcond);
+                       return std::make_tuple(std::get<0>(r), std::get<1>(r), std::get<2>(r),
+                                              std::get<3>(r));
+                   },
+                   py::arg("A"), py::arg("B"), py::arg("rcond") = -1.0);
+    linalg_mod.def("lu",
+                   [](std::shared_ptr<Tensor> a) {
+                       auto r = linalg::lu(a);
+                       return std::make_tuple(std::get<0>(r), std::get<1>(r), std::get<2>(r));
+                   },
+                   py::arg("A"));
+    linalg_mod.def("cross", &linalg::cross, py::arg("a"), py::arg("b"), py::arg("dim") = -1);
+    linalg_mod.def("vecdot", &linalg::vecdot, py::arg("x"), py::arg("y"), py::arg("dim") = -1);
+    linalg_mod.def("multi_dot", &linalg::multi_dot, py::arg("tensors"));
+    linalg_mod.def("diagonal", &linalg::diagonal, py::arg("A"), py::arg("offset") = 0,
+                   py::arg("dim1") = -2, py::arg("dim2") = -1);
+    linalg_mod.def("trace", &linalg::trace, py::arg("A"));
+    linalg_mod.def("matrix_power", &linalg::matrix_power, py::arg("A"), py::arg("n"));
+    linalg_mod.def("cond", &linalg::cond, py::arg("A"), py::arg("p") = "2");
+    linalg_mod.def("outer", &linalg::outer, py::arg("a"), py::arg("b"));
+    linalg_mod.def("inner", &linalg::inner, py::arg("a"), py::arg("b"));
+    linalg_mod.def("kron", &linalg::kron, py::arg("a"), py::arg("b"));
+    linalg_mod.def("vdot", &linalg::vdot, py::arg("a"), py::arg("b"));
+    // === end W3-T1 linalg ===
 
     auto optim_mod = m.def_submodule("optim", "LiteTorch Optimizers");
     
@@ -2508,4 +2947,70 @@ PYBIND11_MODULE(litetorch, m) {
     autograd_mod.def("retain_grad", [](std::shared_ptr<Tensor> t) { Autograd::retain_grad(t); },
         py::arg("tensor"));
     // === end W2-T4 autograd ===
+
+    // === W3-T2 distributions ===
+    auto distr_mod = m.def_submodule("distributions", "LiteTorch Probability Distributions");
+    {
+        using namespace litetorch::distributions;
+        py::class_<Distribution, std::shared_ptr<Distribution>>(distr_mod, "Distribution")
+            .def("sample", [](std::shared_ptr<Distribution> self, py::object sample_shape) {
+                std::vector<int64_t> ss;
+                if (!sample_shape.is_none())
+                    ss = py::cast<std::vector<int64_t>>(sample_shape);
+                return self->sample(ss);
+            }, py::arg("sample_shape") = py::none())
+            .def("log_prob", [](std::shared_ptr<Distribution> self, std::shared_ptr<Tensor> v) {
+                return self->log_prob(v);
+            }, py::arg("value"))
+            .def("entropy", [](std::shared_ptr<Distribution> self) { return self->entropy(); })
+            .def("mean", [](std::shared_ptr<Distribution> self) { return self->mean(); })
+            .def("variance", [](std::shared_ptr<Distribution> self) { return self->variance(); })
+            .def_property_readonly("batch_shape", [](std::shared_ptr<Distribution> self) {
+                return self->batch_shape();
+            });
+        py::class_<Normal, Distribution, std::shared_ptr<Normal>>(distr_mod, "Normal")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("scale"));
+        py::class_<Uniform, Distribution, std::shared_ptr<Uniform>>(distr_mod, "Uniform")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("low"), py::arg("high"));
+        py::class_<Exponential, Distribution, std::shared_ptr<Exponential>>(distr_mod, "Exponential")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("rate"));
+        py::class_<Laplace, Distribution, std::shared_ptr<Laplace>>(distr_mod, "Laplace")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("scale"));
+        py::class_<Cauchy, Distribution, std::shared_ptr<Cauchy>>(distr_mod, "Cauchy")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("scale"));
+        py::class_<Beta, Distribution, std::shared_ptr<Beta>>(distr_mod, "Beta")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("alpha"), py::arg("beta"));
+        py::class_<Gamma, Distribution, std::shared_ptr<Gamma>>(distr_mod, "Gamma")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("alpha"), py::arg("beta"));
+        py::class_<Dirichlet, Distribution, std::shared_ptr<Dirichlet>>(distr_mod, "Dirichlet")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("concentration"));
+        py::class_<Bernoulli, Distribution, std::shared_ptr<Bernoulli>>(distr_mod, "Bernoulli")
+            .def(py::init<std::shared_ptr<Tensor>, bool>(), py::arg("probs"), py::arg("from_logits") = false);
+        py::class_<Categorical, Distribution, std::shared_ptr<Categorical>>(distr_mod, "Categorical")
+            .def(py::init<std::shared_ptr<Tensor>, bool>(), py::arg("probs"), py::arg("from_logits") = false);
+        py::class_<Poisson, Distribution, std::shared_ptr<Poisson>>(distr_mod, "Poisson")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("rate"));
+        py::class_<Geometric, Distribution, std::shared_ptr<Geometric>>(distr_mod, "Geometric")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("probs"));
+        py::class_<Binomial, Distribution, std::shared_ptr<Binomial>>(distr_mod, "Binomial")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("total_count"), py::arg("probs"));
+        py::class_<NegativeBinomial, Distribution, std::shared_ptr<NegativeBinomial>>(distr_mod, "NegativeBinomial")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("total_count"), py::arg("probs"));
+        py::class_<StudentT, Distribution, std::shared_ptr<StudentT>>(distr_mod, "StudentT")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("df"));
+        py::class_<Chi2, Distribution, std::shared_ptr<Chi2>>(distr_mod, "Chi2")
+            .def(py::init<std::shared_ptr<Tensor>>(), py::arg("df"));
+        py::class_<LogNormal, Distribution, std::shared_ptr<LogNormal>>(distr_mod, "LogNormal")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("scale"));
+        py::class_<Gumbel, Distribution, std::shared_ptr<Gumbel>>(distr_mod, "Gumbel")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("scale"));
+        py::class_<Weibull, Distribution, std::shared_ptr<Weibull>>(distr_mod, "Weibull")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("scale"), py::arg("concentration"));
+        py::class_<MultivariateNormal, Distribution, std::shared_ptr<MultivariateNormal>>(distr_mod, "MultivariateNormal")
+            .def(py::init<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(), py::arg("loc"), py::arg("covariance_matrix"));
+        distr_mod.def("kl_divergence", [](std::shared_ptr<Distribution> p, std::shared_ptr<Distribution> q) {
+            return kl_divergence(p, q);
+        }, py::arg("p"), py::arg("q"));
+    }
+    // === end W3-T2 distributions ===
 }

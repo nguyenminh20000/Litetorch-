@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <string>
 #include <typeindex>
+#include <utility>
 
 namespace litetorch {
 namespace nn {
@@ -593,7 +594,19 @@ std::shared_ptr<Tensor> uniform_(std::shared_ptr<Tensor> tensor, float a = 0.0f,
 std::shared_ptr<Tensor> zeros_(std::shared_ptr<Tensor> tensor);
 std::shared_ptr<Tensor> ones_(std::shared_ptr<Tensor> tensor);
 std::shared_ptr<Tensor> fill_(std::shared_ptr<Tensor> tensor, float value);
+// === W3-T4 ===
+std::shared_ptr<Tensor> trunc_normal_(std::shared_ptr<Tensor> tensor, float mean = 0.0f, float std = 1.0f, float a = -2.0f, float b = 2.0f);
+std::shared_ptr<Tensor> orthogonal_(std::shared_ptr<Tensor> tensor, float gain = 1.0f);
 }
+
+namespace utils {
+void clip_grad_value_(const std::vector<std::shared_ptr<Tensor>>& parameters, float clip_value);
+std::shared_ptr<Tensor> parameters_to_vector(const std::vector<std::shared_ptr<Tensor>>& parameters);
+void vector_to_parameters(std::shared_ptr<Tensor> vec, const std::vector<std::shared_ptr<Tensor>>& parameters);
+std::shared_ptr<Tensor> weight_norm(std::shared_ptr<Tensor> v, std::shared_ptr<Tensor> g, int64_t dim = 0);
+std::shared_ptr<Tensor> spectral_norm(std::shared_ptr<Tensor> weight, int n_power_iterations = 1);
+}
+// === end W3-T4 ===
 
 // === W1-T4 ===
 class GroupNorm : public Module {
@@ -684,6 +697,49 @@ public:
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
 };
 
+// === W3-T4 ===
+class KLDivLoss : public Module {
+public:
+    std::string reduction;
+
+    KLDivLoss(const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class SmoothL1Loss : public Module {
+public:
+    float beta;
+    std::string reduction;
+
+    SmoothL1Loss(float beta = 1.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class HuberLoss : public Module {
+public:
+    float delta;
+    std::string reduction;
+
+    HuberLoss(float delta = 1.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class CTCLoss : public Module {
+public:
+    int blank;
+    std::string reduction;
+    bool zero_infinity;
+
+    CTCLoss(int blank = 0, const std::string& reduction = "mean", bool zero_infinity = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> log_probs, std::shared_ptr<Tensor> targets,
+                                    std::shared_ptr<Tensor> input_lengths, std::shared_ptr<Tensor> target_lengths);
+};
+// === end W3-T4 ===
+
 class LogSoftmax : public Module {
 public:
     int64_t dim;
@@ -691,6 +747,412 @@ public:
     LogSoftmax(int64_t dim = -1);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
 };
+
+// === W3-T3 recurrent+ ===
+
+class RNNCell : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    bool has_bias;
+    std::string nonlinearity;
+    std::shared_ptr<Tensor> weight_ih;
+    std::shared_ptr<Tensor> weight_hh;
+    std::shared_ptr<Tensor> bias_ih;
+    std::shared_ptr<Tensor> bias_hh;
+
+    RNNCell(int input_size, int hidden_size, bool bias = true, const std::string& nonlinearity = "tanh");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class LSTMCell : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    bool has_bias;
+    std::shared_ptr<Tensor> weight_ih;
+    std::shared_ptr<Tensor> weight_hh;
+    std::shared_ptr<Tensor> bias_ih;
+    std::shared_ptr<Tensor> bias_hh;
+
+    LSTMCell(int input_size, int hidden_size, bool bias = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> forward(
+        std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx, std::shared_ptr<Tensor> cx);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class GRUCell : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    bool has_bias;
+    std::shared_ptr<Tensor> weight_ih;
+    std::shared_ptr<Tensor> weight_hh;
+    std::shared_ptr<Tensor> bias_ih;
+    std::shared_ptr<Tensor> bias_hh;
+
+    GRUCell(int input_size, int hidden_size, bool bias = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class RNN : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    int num_layers;
+    bool has_bias;
+    bool batch_first;
+    float dropout_p;
+    bool bidirectional;
+    std::string nonlinearity;
+    std::vector<std::shared_ptr<RNNCell>> cells;
+    std::shared_ptr<Dropout> dropout;
+
+    RNN(int input_size, int hidden_size, int num_layers = 1, const std::string& nonlinearity = "tanh",
+        bool bias = true, bool batch_first = false, float dropout = 0.0f, bool bidirectional = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> forward_full(
+        std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0 = nullptr);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override;
+};
+
+class LSTM : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    int num_layers;
+    bool has_bias;
+    bool batch_first;
+    float dropout_p;
+    bool bidirectional;
+    std::vector<std::shared_ptr<LSTMCell>> cells;
+    std::shared_ptr<Dropout> dropout;
+
+    LSTM(int input_size, int hidden_size, int num_layers = 1, bool bias = true,
+         bool batch_first = false, float dropout = 0.0f, bool bidirectional = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::pair<std::shared_ptr<Tensor>, std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>> forward_full(
+        std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0 = nullptr, std::shared_ptr<Tensor> c0 = nullptr);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override;
+};
+
+class GRU : public Module {
+public:
+    int input_size;
+    int hidden_size;
+    int num_layers;
+    bool has_bias;
+    bool batch_first;
+    float dropout_p;
+    bool bidirectional;
+    std::vector<std::shared_ptr<GRUCell>> cells;
+    std::shared_ptr<Dropout> dropout;
+
+    GRU(int input_size, int hidden_size, int num_layers = 1, bool bias = true,
+        bool batch_first = false, float dropout = 0.0f, bool bidirectional = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> forward_full(
+        std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> h0 = nullptr);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override;
+};
+
+class TransformerEncoderLayer : public Module {
+public:
+    int d_model;
+    int nhead;
+    int dim_feedforward;
+    float dropout_p;
+    std::string activation;
+    bool batch_first;
+    std::shared_ptr<MultiHeadAttention> self_attn;
+    std::shared_ptr<Linear> linear1;
+    std::shared_ptr<Linear> linear2;
+    std::shared_ptr<LayerNorm> norm1;
+    std::shared_ptr<LayerNorm> norm2;
+    std::shared_ptr<Dropout> dropout1;
+    std::shared_ptr<Dropout> dropout2;
+    std::shared_ptr<Dropout> dropout3;
+
+    TransformerEncoderLayer(int d_model, int nhead, int dim_feedforward = 2048, float dropout = 0.1f,
+                            const std::string& activation = "relu", bool batch_first = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> src, std::shared_ptr<Tensor> src_mask,
+                                    std::shared_ptr<Tensor> src_key_padding_mask);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override;
+};
+
+class TransformerEncoder : public Module {
+public:
+    std::shared_ptr<ModuleList> layers;
+    std::shared_ptr<LayerNorm> norm;
+
+    TransformerEncoder(std::shared_ptr<TransformerEncoderLayer> encoder_layer, int num_layers,
+                       std::shared_ptr<LayerNorm> norm = nullptr);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> src, std::shared_ptr<Tensor> mask,
+                                    std::shared_ptr<Tensor> src_key_padding_mask);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override;
+};
+
+class EmbeddingBag : public Module {
+public:
+    int num_embeddings;
+    int embedding_dim;
+    std::string mode;
+    std::shared_ptr<Tensor> weight;
+
+    EmbeddingBag(int num_embeddings, int embedding_dim, const std::string& mode = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> offsets);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class ConvTranspose1d : public Module {
+public:
+    int in_channels;
+    int out_channels;
+    int kernel_size;
+    int stride;
+    int padding;
+    int output_padding;
+    int groups;
+    int dilation;
+    bool has_bias;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+
+    ConvTranspose1d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0,
+                    int output_padding = 0, int groups = 1, bool bias = true, int dilation = 1);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class ConvTranspose2d : public Module {
+public:
+    int in_channels;
+    int out_channels;
+    int kernel_h;
+    int kernel_w;
+    int stride;
+    int padding;
+    int output_padding;
+    int groups;
+    int dilation;
+    bool has_bias;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+
+    ConvTranspose2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0,
+                    int output_padding = 0, int groups = 1, bool bias = true, int dilation = 1);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class ConvTranspose3d : public Module {
+public:
+    int in_channels;
+    int out_channels;
+    int kernel_size;
+    int stride;
+    int padding;
+    int output_padding;
+    int groups;
+    int dilation;
+    bool has_bias;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+
+    ConvTranspose3d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0,
+                    int output_padding = 0, int groups = 1, bool bias = true, int dilation = 1);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class InstanceNorm1d : public Module {
+public:
+    int num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    std::shared_ptr<Tensor> running_mean;
+    std::shared_ptr<Tensor> running_var;
+
+    InstanceNorm1d(int num_features, float eps = 1e-5f, float momentum = 0.1f, bool affine = false,
+                   bool track_running_stats = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class InstanceNorm2d : public Module {
+public:
+    int num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    std::shared_ptr<Tensor> running_mean;
+    std::shared_ptr<Tensor> running_var;
+
+    InstanceNorm2d(int num_features, float eps = 1e-5f, float momentum = 0.1f, bool affine = false,
+                   bool track_running_stats = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class InstanceNorm3d : public Module {
+public:
+    int num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    std::shared_ptr<Tensor> running_mean;
+    std::shared_ptr<Tensor> running_var;
+
+    InstanceNorm3d(int num_features, float eps = 1e-5f, float momentum = 0.1f, bool affine = false,
+                   bool track_running_stats = false);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class BatchNorm3d : public Module {
+public:
+    int num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    std::shared_ptr<Tensor> running_mean;
+    std::shared_ptr<Tensor> running_var;
+
+    BatchNorm3d(int num_features, float eps = 1e-5f, float momentum = 0.1f, bool affine = true,
+                bool track_running_stats = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class SyncBatchNorm : public Module {
+public:
+    int num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    std::shared_ptr<Tensor> running_mean;
+    std::shared_ptr<Tensor> running_var;
+
+    SyncBatchNorm(int num_features, float eps = 1e-5f, float momentum = 0.1f, bool affine = true,
+                  bool track_running_stats = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class ELU : public Module {
+public:
+    float alpha;
+
+    ELU(float alpha = 1.0f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class PReLU : public Module {
+public:
+    int num_parameters;
+    std::shared_ptr<Tensor> weight;
+
+    PReLU(int num_parameters = 1, float init = 0.25f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class GLU : public Module {
+public:
+    int64_t dim;
+
+    GLU(int64_t dim = -1);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class PixelShuffle : public Module {
+public:
+    int upscale_factor;
+
+    PixelShuffle(int upscale_factor);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class PixelUnshuffle : public Module {
+public:
+    int downscale_factor;
+
+    PixelUnshuffle(int downscale_factor);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Identity : public Module {
+public:
+    Identity() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Unflatten : public Module {
+public:
+    int64_t dim;
+    std::vector<int64_t> unflattened_size;
+
+    Unflatten(int64_t dim, const std::vector<int64_t>& unflattened_size);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+// === end W3-T3 ===
 
 }
 
