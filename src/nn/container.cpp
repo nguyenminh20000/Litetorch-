@@ -79,6 +79,60 @@ std::shared_ptr<Tensor> Flatten::forward(std::shared_ptr<Tensor> input) {
     int64_t remaining = input->numel() / batch_size;
     return input->view({batch_size, remaining});
 }
+ModuleList::ModuleList(const std::vector<std::shared_ptr<Module>>& modules) : modules(modules) {}
+
+void ModuleList::append(std::shared_ptr<Module> module) {
+    modules.push_back(module);
+}
+
+void ModuleList::extend(const std::vector<std::shared_ptr<Module>>& ms) {
+    modules.insert(modules.end(), ms.begin(), ms.end());
+}
+
+std::shared_ptr<Module>& ModuleList::operator[](size_t i) {
+    return modules[i];
+}
+
+const std::shared_ptr<Module>& ModuleList::operator[](size_t i) const {
+    return modules[i];
+}
+
+size_t ModuleList::size() const {
+    return modules.size();
+}
+
+std::shared_ptr<Tensor> ModuleList::forward(std::shared_ptr<Tensor>) {
+    throw std::runtime_error("[litetorch Error] ModuleList has no forward; iterate its modules manually");
+}
+
+std::vector<std::shared_ptr<Tensor>> ModuleList::parameters() {
+    std::vector<std::shared_ptr<Tensor>> params;
+    for (auto& module : modules) {
+        auto m_params = module->parameters();
+        params.insert(params.end(), m_params.begin(), m_params.end());
+    }
+    return params;
+}
+
+void ModuleList::to(const Device& device) {
+    for (auto& module : modules) {
+        module->to(device);
+    }
+}
+
+void ModuleList::train() {
+    Module::train();
+    for (auto& module : modules) {
+        module->train();
+    }
+}
+
+void ModuleList::eval() {
+    Module::eval();
+    for (auto& module : modules) {
+        module->eval();
+    }
+}
 
 }
 }
