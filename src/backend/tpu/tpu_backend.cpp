@@ -68,13 +68,13 @@ void TPUBackend::read(void* ptr, size_t size, void* host_ptr, size_t offset) {
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         size_t total = pjrt.buffer_bytes(ptr);
-        if (total > 0 && offset + size <= total && host_ptr) {
+        if (total > 0) {
+            if (!host_ptr || offset + size > total)
+                throw std::runtime_error("[litetorch Error] TPUBackend::read invalid host pointer or offset/size");
             std::vector<char> tmp(total);
-            if (pjrt.read_buffer(ptr, tmp.data(), total)) {
-                std::memcpy(host_ptr, tmp.data() + offset, size);
-                return;
-            }
-        } else if (total > 0) {
+            if (!pjrt.read_buffer(ptr, tmp.data(), total))
+                throw std::runtime_error("[litetorch Error] TPUBackend::read PJRT read failed");
+            std::memcpy(host_ptr, tmp.data() + offset, size);
             return;
         }
     }
@@ -85,17 +85,20 @@ void TPUBackend::write(void* ptr, size_t size, const void* host_ptr, size_t offs
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         size_t total = pjrt.buffer_bytes(ptr);
-        if (total > 0 && offset + size <= total && host_ptr) {
+        if (total > 0) {
+            if (!host_ptr || offset + size > total)
+                throw std::runtime_error("[litetorch Error] TPUBackend::write invalid host pointer or offset/size");
             if (offset == 0 && size == total) {
-                if (pjrt.write_buffer(ptr, host_ptr, size)) return;
-            } else {
-                std::vector<char> tmp(total);
-                if (pjrt.read_buffer(ptr, tmp.data(), total)) {
-                    std::memcpy(tmp.data() + offset, host_ptr, size);
-                    if (pjrt.write_buffer(ptr, tmp.data(), total)) return;
-                }
+                if (!pjrt.write_buffer(ptr, host_ptr, size))
+                    throw std::runtime_error("[litetorch Error] TPUBackend::write PJRT write failed");
+                return;
             }
-        } else if (total > 0) {
+            std::vector<char> tmp(total);
+            if (!pjrt.read_buffer(ptr, tmp.data(), total))
+                throw std::runtime_error("[litetorch Error] TPUBackend::write PJRT read failed");
+            std::memcpy(tmp.data() + offset, host_ptr, size);
+            if (!pjrt.write_buffer(ptr, tmp.data(), total))
+                throw std::runtime_error("[litetorch Error] TPUBackend::write PJRT write failed");
             return;
         }
     }
@@ -116,14 +119,15 @@ void TPUBackend::copy(void* src, void* dst, size_t size, size_t src_offset, size
         size_t stotal = pjrt.buffer_bytes(src);
         size_t dtotal = pjrt.buffer_bytes(dst);
         if (stotal > 0 && dtotal > 0) {
-            if (src_offset + size <= stotal && dst_offset + size <= dtotal) {
-                std::vector<char> sbuf(stotal), dbuf(dtotal);
-                if (pjrt.read_buffer(src, sbuf.data(), stotal) &&
-                    pjrt.read_buffer(dst, dbuf.data(), dtotal)) {
-                    std::memcpy(dbuf.data() + dst_offset, sbuf.data() + src_offset, size);
-                    if (pjrt.write_buffer(dst, dbuf.data(), dtotal)) return;
-                }
-            }
+            if (src_offset + size > stotal || dst_offset + size > dtotal)
+                throw std::runtime_error("[litetorch Error] TPUBackend::copy invalid offset/size");
+            std::vector<char> sbuf(stotal), dbuf(dtotal);
+            if (!pjrt.read_buffer(src, sbuf.data(), stotal) ||
+                !pjrt.read_buffer(dst, dbuf.data(), dtotal))
+                throw std::runtime_error("[litetorch Error] TPUBackend::copy PJRT read failed");
+            std::memcpy(dbuf.data() + dst_offset, sbuf.data() + src_offset, size);
+            if (!pjrt.write_buffer(dst, dbuf.data(), dtotal))
+                throw std::runtime_error("[litetorch Error] TPUBackend::copy PJRT write failed");
             return;
         }
     }
@@ -152,26 +156,29 @@ void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         bool owna = pjrt.owns(A), ownb = pjrt.owns(B), ownc = pjrt.owns(C);
         if (owna || ownb || ownc) {
-            if (owna && ownb && ownc && M > 0 && N > 0 && K > 0) {
-                size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
-                size_t an = ab / sizeof(float), bn = bb / sizeof(float), cn = cb / sizeof(float);
-                size_t need_a = (size_t)a_off + (size_t)M * (size_t)K;
-                size_t need_b = (size_t)b_off + (size_t)K * (size_t)N;
-                size_t need_c = (size_t)c_off + (size_t)M * (size_t)N;
-                if (need_a <= an && need_b <= bn && need_c <= cn) {
-                    std::vector<float> ha(an), hb(bn), hc(cn), out((size_t)M * (size_t)N);
-                    if (pjrt.read_buffer(A, ha.data(), ab) &&
-                        pjrt.read_buffer(B, hb.data(), bb) &&
-                        pjrt.read_buffer(C, hc.data(), cb)) {
-                        const float* ap = ha.data() + a_off;
-                        const float* bp = hb.data() + b_off;
-                        if (!pjrt.matmul(ap, bp, out.data(), M, N, K))
-                            tpu_internal::tpu_systolic_matmul(ap, bp, out.data(), M, N, K);
-                        std::memcpy(hc.data() + c_off, out.data(), (size_t)M * (size_t)N * sizeof(float));
-                        pjrt.write_buffer(C, hc.data(), cb);
-                    }
-                }
-            }
+            if (!(owna && ownb && ownc))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul mixed PJRT/host buffer ownership");
+            if (M <= 0 || N <= 0 || K <= 0)
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul invalid dimensions");
+            size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
+            size_t an = ab / sizeof(float), bn = bb / sizeof(float), cn = cb / sizeof(float);
+            size_t need_a = (size_t)a_off + (size_t)M * (size_t)K;
+            size_t need_b = (size_t)b_off + (size_t)K * (size_t)N;
+            size_t need_c = (size_t)c_off + (size_t)M * (size_t)N;
+            if (need_a > an || need_b > bn || need_c > cn)
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul buffer too small for offsets/dimensions");
+            std::vector<float> ha(an), hb(bn), hc(cn), out((size_t)M * (size_t)N);
+            if (!pjrt.read_buffer(A, ha.data(), ab) ||
+                !pjrt.read_buffer(B, hb.data(), bb) ||
+                !pjrt.read_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul PJRT read failed");
+            const float* ap = ha.data() + a_off;
+            const float* bp = hb.data() + b_off;
+            if (!pjrt.matmul(ap, bp, out.data(), M, N, K))
+                tpu_internal::tpu_systolic_matmul(ap, bp, out.data(), M, N, K);
+            std::memcpy(hc.data() + c_off, out.data(), (size_t)M * (size_t)N * sizeof(float));
+            if (!pjrt.write_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul PJRT write failed");
             return;
         }
     }
@@ -188,18 +195,21 @@ void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {
+            if (!(pjrt.owns(A) && pjrt.owns(B) && pjrt.owns(C)))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul_ex mixed PJRT/host buffer ownership");
             size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
-            if (ab && bb && cb) {
-                std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
-                if (pjrt.read_buffer(A, ha.data(), ab) &&
-                    pjrt.read_buffer(B, hb.data(), bb) &&
-                    pjrt.read_buffer(C, hc.data(), cb)) {
-                    tpu_internal::tpu_systolic_matmul_ex(ha.data() + a_off, trans_a, lda,
-                                                         hb.data() + b_off, trans_b, ldb,
-                                                         hc.data() + c_off, M, N, K);
-                    pjrt.write_buffer(C, hc.data(), cb);
-                }
-            }
+            if (!ab || !bb || !cb)
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul_ex zero-size PJRT buffer");
+            std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
+            if (!pjrt.read_buffer(A, ha.data(), ab) ||
+                !pjrt.read_buffer(B, hb.data(), bb) ||
+                !pjrt.read_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul_ex PJRT read failed");
+            tpu_internal::tpu_systolic_matmul_ex(ha.data() + a_off, trans_a, lda,
+                                                 hb.data() + b_off, trans_b, ldb,
+                                                 hc.data() + c_off, M, N, K);
+            if (!pjrt.write_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::matmul_ex PJRT write failed");
             return;
         }
     }
@@ -214,17 +224,20 @@ void TPUBackend::bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, in
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {
+            if (!(pjrt.owns(A) && pjrt.owns(B) && pjrt.owns(C)))
+                throw std::runtime_error("[litetorch Error] TPUBackend::bmm mixed PJRT/host buffer ownership");
             size_t ab = pjrt.buffer_bytes(A), bb = pjrt.buffer_bytes(B), cb = pjrt.buffer_bytes(C);
-            if (ab && bb && cb) {
-                std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
-                if (pjrt.read_buffer(A, ha.data(), ab) &&
-                    pjrt.read_buffer(B, hb.data(), bb) &&
-                    pjrt.read_buffer(C, hc.data(), cb)) {
-                    tpu_internal::tpu_systolic_bmm(ha.data() + a_off, hb.data() + b_off,
-                                                  hc.data() + c_off, B_batch, M, N, K);
-                    pjrt.write_buffer(C, hc.data(), cb);
-                }
-            }
+            if (!ab || !bb || !cb)
+                throw std::runtime_error("[litetorch Error] TPUBackend::bmm zero-size PJRT buffer");
+            std::vector<float> ha(ab / sizeof(float)), hb(bb / sizeof(float)), hc(cb / sizeof(float));
+            if (!pjrt.read_buffer(A, ha.data(), ab) ||
+                !pjrt.read_buffer(B, hb.data(), bb) ||
+                !pjrt.read_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::bmm PJRT read failed");
+            tpu_internal::tpu_systolic_bmm(ha.data() + a_off, hb.data() + b_off,
+                                          hc.data() + c_off, B_batch, M, N, K);
+            if (!pjrt.write_buffer(C, hc.data(), cb))
+                throw std::runtime_error("[litetorch Error] TPUBackend::bmm PJRT write failed");
             return;
         }
     }
