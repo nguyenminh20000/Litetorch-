@@ -207,8 +207,8 @@ calls = []
 
 def my_collate(batch):
     calls.append(len(batch))
-    xs = lt.ops.cat([lt.ops.unsqueeze(x, 0) for x, y in batch], 0)
-    ys = lt.ops.cat([lt.ops.unsqueeze(y, 0) for x, y in batch], 0)
+    xs = lt.Ops.cat([lt.Ops.unsqueeze(x, 0) for x, y in batch], 0)
+    ys = lt.Ops.cat([lt.Ops.unsqueeze(y, 0) for x, y in batch], 0)
     return xs, ys
 
 

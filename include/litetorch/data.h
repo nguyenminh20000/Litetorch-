@@ -86,11 +86,12 @@ private:
     uint64_t epoch_ = 0;
 };
 
-class BatchSampler {
+class BatchSampler : public Sampler {
 public:
     BatchSampler(std::shared_ptr<Sampler> sampler, size_t batch_size, bool drop_last = false);
     std::vector<std::vector<size_t>> batches();
-    size_t size() const;
+    std::vector<size_t> indices() override;
+    size_t size() const override;
     size_t batch_size() const { return batch_size_; }
     bool drop_last() const { return drop_last_; }
 
@@ -129,7 +130,8 @@ private:
 
     void worker_loop();
     void build_batch(size_t batch_no, size_t gen);
-    void build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices);
+    void build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices,
+                           const CollateFn& collate);
     void build_epoch_cache();
     void refresh_indices();
     size_t compute_num_batches() const;
@@ -148,6 +150,7 @@ private:
     std::atomic<bool> worker_stop{false};
     std::atomic<size_t> next_job_{0};
     std::atomic<size_t> in_flight_{0};
+    std::exception_ptr worker_error_;
     std::map<size_t, PrefetchBatch> out_buffer_;
     size_t out_head_ = 0;
     size_t num_batches_ = 0;

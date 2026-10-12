@@ -2137,7 +2137,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("indices", &data::RandomSampler::indices)
         .def("__len__", &data::RandomSampler::size);
 
-    py::class_<data::BatchSampler, std::shared_ptr<data::BatchSampler>>(data_mod, "BatchSampler")
+    py::class_<data::BatchSampler, data::Sampler, std::shared_ptr<data::BatchSampler>>(data_mod, "BatchSampler")
         .def(py::init<std::shared_ptr<data::Sampler>, size_t, bool>(),
              py::arg("sampler"), py::arg("batch_size"), py::arg("drop_last") = false)
         .def("batches", &data::BatchSampler::batches)

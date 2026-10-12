@@ -165,5 +165,13 @@ size_t BatchSampler::size() const {
     return (n % batch_size_ == 0 || drop_last_) ? full : full + 1;
 }
 
+std::vector<size_t> BatchSampler::indices() {
+    std::vector<size_t> out;
+    for (auto& b : batches()) {
+        out.insert(out.end(), b.begin(), b.end());
+    }
+    return out;
+}
+
 }
 }

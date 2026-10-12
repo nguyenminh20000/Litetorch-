@@ -12,6 +12,21 @@ namespace py = pybind11;
 namespace litetorch {
 
 namespace {
+struct GilHold {
+    PyGILState_STATE state;
+    bool held = false;
+    explicit GilHold(bool want) {
+        if (want) {
+            state = PyGILState_Ensure();
+            held = true;
+        }
+    }
+    ~GilHold() {
+        if (held) PyGILState_Release(state);
+    }
+    GilHold(const GilHold&) = delete;
+    GilHold& operator=(const GilHold&) = delete;
+};
 uint32_t calculate_crc32(const void* data, size_t size, uint32_t initial_crc = 0xFFFFFFFF) {
     static uint32_t table[256];
     static bool table_initialized = false;
@@ -65,6 +80,7 @@ DataLoader::DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size, bool
 
 DataLoader::~DataLoader() {
     stop_workers();
+    worker_error_ = nullptr;
 }
 
 void DataLoader::spawn_workers() {
@@ -114,6 +130,16 @@ size_t DataLoader::compute_num_batches() const {
 
 void DataLoader::reset() {
     std::unique_lock<std::mutex> lock(queue_mutex);
+    generation_id++;
+    {
+        bool release_gil = Py_IsInitialized() && PyGILState_Check();
+        std::unique_ptr<py::gil_scoped_release> rel;
+        if (release_gil) rel = std::make_unique<py::gil_scoped_release>();
+        cv_cond.wait(lock, [this]() {
+            return worker_stop.load() || in_flight_ == 0;
+        });
+    }
+    worker_error_ = nullptr;
     refresh_indices();
     num_batches_ = compute_num_batches();
     current_index = 0;
@@ -122,7 +148,6 @@ void DataLoader::reset() {
     in_flight_ = 0;
     out_buffer_.clear();
     epoch_id++;
-    generation_id++;
     build_epoch_cache();
     cv_cond.notify_all();
 }
@@ -130,9 +155,12 @@ void DataLoader::reset() {
 bool DataLoader::next(std::shared_ptr<Tensor>& batch_x, std::shared_ptr<Tensor>& batch_y) {
     std::unique_lock<std::mutex> lock(queue_mutex);
     cv_cond.wait(lock, [this]() {
-        return worker_stop.load() || out_head_ >= num_batches_ ||
+        return worker_stop.load() || worker_error_ || out_head_ >= num_batches_ ||
                out_buffer_.count(out_head_) > 0;
     });
+    if (worker_error_) {
+        std::rethrow_exception(worker_error_);
+    }
     if (out_head_ >= num_batches_) {
         return false;
     }
@@ -154,6 +182,8 @@ void DataLoader::set_collate_fn(CollateFn fn, bool from_python) {
     std::lock_guard<std::mutex> lock(queue_mutex);
     collate_fn_ = std::move(fn);
     collate_from_python_ = from_python;
+    generation_id++;
+    cv_cond.notify_all();
 }
 
 void DataLoader::worker_loop() {
@@ -170,7 +200,12 @@ void DataLoader::worker_loop() {
         size_t gen = generation_id;
         lock.unlock();
 
-        build_batch(b, gen);
+        try {
+            build_batch(b, gen);
+        } catch (...) {
+            std::lock_guard<std::mutex> elock(queue_mutex);
+            if (!worker_error_) worker_error_ = std::current_exception();
+        }
 
         lock.lock();
         in_flight_--;
@@ -179,22 +214,32 @@ void DataLoader::worker_loop() {
 }
 
 void DataLoader::build_batch(size_t batch_no, size_t gen) {
-    bool need_gil = collate_from_python_ || dataset->is_python_backed();
-    std::unique_ptr<py::gil_scoped_acquire> acq;
-    if (need_gil) acq = std::make_unique<py::gil_scoped_acquire>();
+    CollateFn collate;
+    bool from_python;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        collate = collate_fn_;
+        from_python = collate_from_python_;
+    }
+    GilHold hold(collate || from_python || dataset->is_python_backed());
 
     size_t start = batch_no * batch_size;
     size_t end = std::min(start + batch_size, indices.size());
     std::vector<size_t> batch_indices(indices.begin() + start, indices.begin() + end);
-    build_batch_inner(batch_no, gen, batch_indices);
+    try {
+        build_batch_inner(batch_no, gen, batch_indices, collate);
+    } catch (py::error_already_set&) {
+        throw std::runtime_error("Python exception raised in DataLoader worker");
+    }
 }
 
-void DataLoader::build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices) {
+void DataLoader::build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices,
+                                   const CollateFn& collate) {
     PrefetchBatch batch;
     size_t batch_len = batch_indices.size();
     auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
 
-    if (tensor_dataset && !collate_fn_) {
+    if (tensor_dataset && !collate) {
         auto x_tensor = tensor_dataset->x;
         auto y_tensor = tensor_dataset->y;
 
@@ -242,8 +287,8 @@ void DataLoader::build_batch_inner(size_t batch_no, size_t gen, const std::vecto
         for (size_t idx : batch_indices) {
             items.push_back(dataset->get(idx));
         }
-        if (collate_fn_) {
-            auto pr = collate_fn_(items);
+        if (collate) {
+            auto pr = collate(items);
             batch.x = pr.first;
             batch.y = pr.second;
         } else {
@@ -418,11 +463,20 @@ void DataLoader::load_state(const std::string& filepath) {
     if (loaded_indices.size() != dataset->size()) {
         throw std::runtime_error("[litetorch Error] Dataloader state indices size mismatch with dataset");
     }
+    generation_id++;
+    {
+        bool release_gil = Py_IsInitialized() && PyGILState_Check();
+        std::unique_ptr<py::gil_scoped_release> rel;
+        if (release_gil) rel = std::make_unique<py::gil_scoped_release>();
+        cv_cond.wait(lock, [this]() {
+            return worker_stop.load() || in_flight_ == 0;
+        });
+    }
+    worker_error_ = nullptr;
     indices = std::move(loaded_indices);
     num_batches_ = compute_num_batches();
     shuffle = (shfl != 0);
     epoch_id = static_cast<size_t>(ep_id);
-    generation_id++;
     out_head_ = std::min(static_cast<size_t>(head), num_batches_);
     next_job_ = out_head_;
     in_flight_ = 0;
