@@ -92,6 +92,9 @@ void Adam::step() {
             int size = p->numel();
 
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adam_step_kernel");
+            if (!kernel) {
+                throw std::runtime_error("[litetorch Error] Adam: adam_step_kernel not available");
+            }
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});

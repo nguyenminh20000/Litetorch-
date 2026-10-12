@@ -80,11 +80,12 @@ void AdamW::step() {
                 int size = p->numel();
 
                 auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
-                if (kernel) {
-                    rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                        {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
+                if (!kernel) {
+                    throw std::runtime_error("[litetorch Error] AdamW: adamw_step_kernel not available");
                 }
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
+                    {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
             }
         } else if (p->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
@@ -92,6 +93,8 @@ void AdamW::step() {
                 tpu->adamw_step(p->gpu_data(), p->offset, g_c->gpu_data(), g_c->offset,
                                 m[i]->gpu_data(), m[i]->offset, v[i]->gpu_data(), v[i]->offset,
                                 p->numel(), lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
+            } else {
+                throw std::runtime_error("[litetorch Error] AdamW: TPU backend not available for TPU param");
             }
         } else {
             float* p_ptr = p->data_ptr();

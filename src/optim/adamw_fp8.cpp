@@ -16,8 +16,8 @@ AdamWFP8::AdamWFP8(const std::vector<std::shared_ptr<Tensor>>& params, float lr,
         auto m_tensor = Tensor::create(p->shape, Device(DeviceType::CPU, 0), false, DataType::FP8_E4M3);
         auto v_tensor = Tensor::create(p->shape, Device(DeviceType::CPU, 0), false, DataType::FP8_E4M3);
         
-        std::memset(m_tensor->storage->cpu_data, 0, m_tensor->numel());
-        std::memset(v_tensor->storage->cpu_data, 0, v_tensor->numel());
+        std::memset(m_tensor->storage->get_cpu_ptr(), 0, m_tensor->numel());
+        std::memset(v_tensor->storage->get_cpu_ptr(), 0, v_tensor->numel());
 
         m.push_back(m_tensor);
         v.push_back(v_tensor);
@@ -42,6 +42,13 @@ void AdamWFP8::step() {
             throw std::runtime_error("[litetorch Error] Optimizer parameter must be contiguous");
         }
         auto g_c = g->is_contiguous() ? g : g->contiguous();
+
+        if (p->dtype != DataType::FP32) {
+            throw std::runtime_error("[litetorch Error] AdamWFP8 only supports FP32 params");
+        }
+        if (g_c->dtype != DataType::FP32) {
+            throw std::runtime_error("[litetorch Error] AdamWFP8 only supports FP32 grads");
+        }
 
         auto p_cpu = p->device.type == DeviceType::CPU ? p : p->to(Device(DeviceType::CPU, 0));
         auto g_cpu = g_c->device.type == DeviceType::CPU ? g_c : g_c->to(Device(DeviceType::CPU, 0));

@@ -116,6 +116,9 @@ void AdamW8bit::step() {
         if (p->dtype != DataType::FP32 && p->dtype != DataType::FP16) {
             throw std::runtime_error("[litetorch Error] AdamW8bit only supports FP32 and FP16 params");
         }
+        if (g_c->dtype != DataType::FP32 && g_c->dtype != DataType::FP16) {
+            throw std::runtime_error("[litetorch Error] AdamW8bit only supports FP32 and FP16 grads");
+        }
 
         if (p->device.type == DeviceType::GPU) {
             auto native = BackendDispatcher::get().get_backend();
@@ -155,59 +158,49 @@ void AdamW8bit::step() {
         int8_t* m_ptr = reinterpret_cast<int8_t*>((char*)m_cpu->storage->get_cpu_ptr() + m_cpu->offset);
         uint8_t* v_ptr = reinterpret_cast<uint8_t*>((char*)v_cpu->storage->get_cpu_ptr() + v_cpu->offset);
         DataType dtype = p->dtype;
+        DataType g_dtype = g_cpu->dtype;
         size_t size = p->numel();
         size_t nblocks = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-        std::vector<float> new_m(size);
-        std::vector<float> new_v(size);
-
-        ThreadPool::get().parallel_for(0, size, [&](int64_t j) {
-            size_t b = (size_t)j / BLOCK_SIZE;
-            float grad_val = read_param(g_ptr, g_cpu->dtype, j);
-            float m_val = static_cast<float>(m_ptr[j]) * m_scales[i][b];
-            float v_val = static_cast<float>(v_ptr[j]) * v_scales[i][b];
-
-            m_val = beta1 * m_val + (1.0f - beta1) * grad_val;
-            v_val = beta2 * v_val + (1.0f - beta2) * grad_val * grad_val;
-
-            new_m[j] = m_val;
-            new_v[j] = v_val;
-
-            float m_hat = m_val / bias_correction1;
-            float v_hat = v_val / bias_correction2;
-            float update = m_hat / (std::sqrt(v_hat) + eps);
-
-            float p_val = read_param(p_ptr, dtype, j);
-            float new_p;
-            if (weight_decay != 0.0f) {
-                new_p = p_val - lr * (weight_decay * p_val + update);
-            } else {
-                new_p = p_val - lr * update;
-            }
-            write_param(p_ptr, dtype, j, new_p);
-        });
-
-        std::vector<float> max_m(nblocks, 0.0f), max_v(nblocks, 0.0f);
-        for (size_t j = 0; j < size; ++j) {
-            size_t b = j / BLOCK_SIZE;
-            float a = std::abs(new_m[j]);
-            if (a > max_m[b]) max_m[b] = a;
-            float av = new_v[j];
-            if (av > max_v[b]) max_v[b] = av;
-        }
-
-        for (size_t b = 0; b < nblocks; ++b) {
-            float new_m_scale = max_m[b] > 0.0f ? max_m[b] / 127.0f : m_scales[i][b];
-            float new_v_scale = max_v[b] > 0.0f ? max_v[b] / 255.0f : v_scales[i][b];
-            m_scales[i][b] = new_m_scale;
-            v_scales[i][b] = new_v_scale;
+        ThreadPool::get().parallel_for(0, (int64_t)nblocks, [&](int64_t bb) {
+            size_t b = (size_t)bb;
             size_t start = b * BLOCK_SIZE;
             size_t end = std::min(start + BLOCK_SIZE, size);
-            for (size_t j = start; j < end; ++j) {
-                m_ptr[j] = static_cast<int8_t>(std::round(new_m[j] / new_m_scale));
-                v_ptr[j] = static_cast<uint8_t>(std::round(new_v[j] / new_v_scale));
+            size_t len = end - start;
+            float m_scale = m_scales[i][b];
+            float v_scale = v_scales[i][b];
+            float tmp_m[BLOCK_SIZE];
+            float tmp_v[BLOCK_SIZE];
+            float max_m = 0.0f, max_v = 0.0f;
+            for (size_t k = 0; k < len; ++k) {
+                size_t j = start + k;
+                float grad_val = read_param(g_ptr, g_dtype, j);
+                float m_val = static_cast<float>(m_ptr[j]) * m_scale;
+                float v_val = static_cast<float>(v_ptr[j]) * v_scale;
+                m_val = beta1 * m_val + (1.0f - beta1) * grad_val;
+                v_val = beta2 * v_val + (1.0f - beta2) * grad_val * grad_val;
+                tmp_m[k] = m_val;
+                tmp_v[k] = v_val;
+                float a = std::abs(m_val);
+                if (a > max_m) max_m = a;
+                if (v_val > max_v) max_v = v_val;
+                float m_hat = m_val / bias_correction1;
+                float v_hat = v_val / bias_correction2;
+                float update = m_hat / (std::sqrt(v_hat) + eps);
+                float p_val = read_param(p_ptr, dtype, j);
+                float new_p = weight_decay != 0.0f ? p_val - lr * (weight_decay * p_val + update) : p_val - lr * update;
+                write_param(p_ptr, dtype, j, new_p);
             }
-        }
+            float new_m_scale = max_m > 0.0f ? max_m / 127.0f : m_scale;
+            float new_v_scale = max_v > 0.0f ? max_v / 255.0f : v_scale;
+            m_scales[i][b] = new_m_scale;
+            v_scales[i][b] = new_v_scale;
+            for (size_t k = 0; k < len; ++k) {
+                size_t j = start + k;
+                m_ptr[j] = static_cast<int8_t>(std::round(tmp_m[k] / new_m_scale));
+                v_ptr[j] = static_cast<uint8_t>(std::round(tmp_v[k] / new_v_scale));
+            }
+        });
 
         if (m[i]->device.type != DeviceType::CPU) m[i]->copy_(m_cpu);
         if (v[i]->device.type != DeviceType::CPU) v[i]->copy_(v_cpu);
