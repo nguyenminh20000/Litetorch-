@@ -102,7 +102,7 @@ public:
             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
             DataType rdt = relu_gout_c->dtype;
             relu_masked = Tensor::create(relu_gout_c->shape, relu_gout_c->device, false, rdt);
-            int rsize = relu_out_c->numel();
+            int rsize = static_cast<int>(relu_out_c->numel());
             size_t resz = relu_masked->storage->element_size();
             bool run_gpu = false;
             if (relu_out_c->device.type == DeviceType::GPU && rdt == DataType::FP32) {
@@ -337,8 +337,19 @@ public:
                     }
                 }
                 {
-                    std::vector<float> zeros(grad_input->numel(), 0.0f);
-                    rt_gpu_write(grad_input->gpu_data(), zeros.size() * sizeof(float), zeros.data(), static_cast<size_t>(grad_input->offset) * sizeof(float));
+                    auto zero_kernel = cached_kernel<KernelID::FillZero>();
+                    cl_mem gin_mem = grad_input->gpu_data();
+                    int gin_off = grad_input->offset;
+                    int gin_size = static_cast<int>(grad_input->numel());
+                    if (zero_kernel) {
+                        rt_gpu_launch(zero_kernel, {static_cast<size_t>(gin_size)}, {},
+                            {&gin_mem, &gin_off, &gin_size},
+                            {sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    } else {
+                        std::vector<float> zeros(grad_input->numel(), 0.0f);
+                        rt_gpu_write(gin_mem, zeros.size() * sizeof(float), zeros.data(),
+                                     static_cast<size_t>(gin_off) * sizeof(float));
+                    }
                 }
                 {
                     cl_mem dc_mem = dcol->gpu_data();
@@ -390,7 +401,7 @@ public:
                     if (!kernel_gw) {
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardWeight kernel not available");
                     }
-                    int total_gw = C_out * C_in * KH * KW;
+                    int64_t total_gw = (int64_t)C_out * C_in * KH * KW;
                     rt_gpu_launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                         {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
@@ -400,7 +411,7 @@ public:
                     if (!kernel_gdx) {
                         throw std::runtime_error("[litetorch Error] Conv2dBackwardInput kernel not available");
                     }
-                    int total_gdx = N * C_in * H_in * W_in;
+                    int64_t total_gdx = (int64_t)N * C_in * H_in * W_in;
                     rt_gpu_launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                         {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &H_in, &W_in, &C_out, &H_out, &W_out, &KH, &KW, &stride, &padding},
                         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
@@ -567,7 +578,7 @@ public:
                 if (!kernel_gw) {
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardWeight kernel not available");
                 }
-                int total_gw = C_out * C_in * KD * KH * KW;
+                int64_t total_gw = (int64_t)C_out * C_in * KD * KH * KW;
                 rt_gpu_launch(kernel_gw, {static_cast<size_t>(total_gw)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gw_mem, &gw_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
@@ -578,7 +589,7 @@ public:
                 if (!kernel_gdx) {
                     throw std::runtime_error("[litetorch Error] Conv3dBackwardInput kernel not available");
                 }
-                int total_gdx = N * C_in * D_in * H_in * W_in;
+                int64_t total_gdx = (int64_t)N * C_in * D_in * H_in * W_in;
                 rt_gpu_launch(kernel_gdx, {static_cast<size_t>(total_gdx)}, {},
                     {&gout_mem, &gout_off, &w_mem, &w_off, &gin_mem, &gin_off, &N, &C_in, &D_in, &H_in, &W_in, &C_out, &D_out, &H_out, &W_out, &KD, &KH, &KW, &stride, &padding},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
@@ -716,10 +727,24 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
     int H_in = input->shape[2];
     int W_in = input->shape[3];
     int C_out = weight->shape[0];
+    if (weight->shape[1] != C_in) {
+        throw std::runtime_error("[litetorch Error] Conv2d channel mismatch: weight has " +
+            std::to_string(weight->shape[1]) + " input channels, input has " + std::to_string(C_in));
+    }
+    if (bias && bias->numel() != C_out) {
+        throw std::runtime_error("[litetorch Error] Conv2d bias size mismatch: bias has " +
+            std::to_string(bias->numel()) + " elements, expected " + std::to_string(C_out));
+    }
     int KH = weight->shape[2];
     int KW = weight->shape[3];
     int H_out = (H_in - KH + 2 * padding) / stride + 1;
     int W_out = (W_in - KW + 2 * padding) / stride + 1;
+    if (H_out <= 0 || W_out <= 0) {
+        throw std::runtime_error("[litetorch Error] Conv2d output size non-positive: input [" +
+            std::to_string(H_in) + "x" + std::to_string(W_in) + "], kernel [" +
+            std::to_string(KH) + "x" + std::to_string(KW) + "], padding " +
+            std::to_string(padding) + ", stride " + std::to_string(stride));
+    }
     auto out = Tensor::create({N, C_out, H_out, W_out}, input->device);
 
     auto input_c = input->is_contiguous() ? input : input->contiguous();
@@ -952,12 +977,26 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     int H_in = input->shape[3];
     int W_in = input->shape[4];
     int C_out = weight->shape[0];
+    if (weight->shape[1] != C_in) {
+        throw std::runtime_error("[litetorch Error] Conv3d channel mismatch: weight has " +
+            std::to_string(weight->shape[1]) + " input channels, input has " + std::to_string(C_in));
+    }
+    if (bias && bias->numel() != C_out) {
+        throw std::runtime_error("[litetorch Error] Conv3d bias size mismatch: bias has " +
+            std::to_string(bias->numel()) + " elements, expected " + std::to_string(C_out));
+    }
     int KD = weight->shape[2];
     int KH = weight->shape[3];
     int KW = weight->shape[4];
     int D_out = (D_in - KD + 2 * padding) / stride + 1;
     int H_out = (H_in - KH + 2 * padding) / stride + 1;
     int W_out = (W_in - KW + 2 * padding) / stride + 1;
+    if (D_out <= 0 || H_out <= 0 || W_out <= 0) {
+        throw std::runtime_error("[litetorch Error] Conv3d output size non-positive: input [" +
+            std::to_string(D_in) + "x" + std::to_string(H_in) + "x" + std::to_string(W_in) +
+            "], kernel [" + std::to_string(KD) + "x" + std::to_string(KH) + "x" + std::to_string(KW) +
+            "], padding " + std::to_string(padding) + ", stride " + std::to_string(stride));
+    }
     auto out = Tensor::create({N, C_out, D_out, H_out, W_out}, input->device);
     StorageUseGuard guard({input->storage, weight->storage, bias ? bias->storage : nullptr, out->storage});
 
