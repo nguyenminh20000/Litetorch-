@@ -746,10 +746,16 @@ static const KernelMap& gpu_kernel_map() {
 #endif
         m["maxpool2d_kernel"] = (void*)&maxpool2d_kernel;
         m["maxpool2d_backward_kernel"] = (void*)&maxpool2d_backward_kernel;
+        m["maxpool2d_fp16_kernel"] = (void*)&maxpool2d_fp16_kernel;
+        m["maxpool2d_fp16_backward_kernel"] = (void*)&maxpool2d_fp16_backward_kernel;
         m["adaptive_avg_pool2d_forward_kernel"] = (void*)&adaptive_avg_pool2d_forward_kernel;
         m["adaptive_avg_pool2d_backward_kernel"] = (void*)&adaptive_avg_pool2d_backward_kernel;
+        m["adaptive_avg_pool2d_fp16_forward_kernel"] = (void*)&adaptive_avg_pool2d_fp16_forward_kernel;
+        m["adaptive_avg_pool2d_fp16_backward_kernel"] = (void*)&adaptive_avg_pool2d_fp16_backward_kernel;
         m["maxpool3d_kernel"] = (void*)&maxpool3d_kernel;
         m["maxpool3d_backward_kernel"] = (void*)&maxpool3d_backward_kernel;
+        m["maxpool3d_fp16_kernel"] = (void*)&maxpool3d_fp16_kernel;
+        m["maxpool3d_fp16_backward_kernel"] = (void*)&maxpool3d_fp16_backward_kernel;
         m["softmax_forward_kernel"] = (void*)&softmax_forward_kernel;
         m["softmax_backward_kernel"] = (void*)&softmax_backward_kernel;
         m["softmax_fast_kernel"] = (void*)&softmax_fast_kernel;
