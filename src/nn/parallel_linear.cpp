@@ -3,8 +3,13 @@
 #include "litetorch/autograd.h"
 #include "litetorch/distributed.h"
 #include "nn_utils.h"
+#include <cmath>
+#include <random>
 
 namespace litetorch {
+
+extern std::mt19937& get_generator();
+
 namespace nn {
 namespace {
 

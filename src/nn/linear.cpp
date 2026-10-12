@@ -1,8 +1,13 @@
 #include "litetorch/nn.h"
 #include "litetorch/ops.h"
 #include "nn_utils.h"
+#include <cmath>
+#include <random>
 
 namespace litetorch {
+
+extern std::mt19937& get_generator();
+
 namespace nn {
 
 Linear::Linear(int in_features, int out_features, bool has_bias) {
