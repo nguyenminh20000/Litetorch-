@@ -14,7 +14,7 @@ void MultiStepLR::step() {
     }
 }
 
-float MultiStepLR::get_last_lr() const {
+double MultiStepLR::get_last_lr() const {
     return optimizer->get_lr();
 }
 
@@ -29,7 +29,7 @@ void MultiStepLR::load_state_dict(const std::map<std::string, double>& state) {
     it = state.find("gamma");
     if (it != state.end()) gamma = static_cast<float>(it->second);
     it = state.find("base_lr");
-    if (it != state.end()) base_lr = static_cast<float>(it->second);
+    if (it != state.end()) base_lr = it->second;
 }
 
 }

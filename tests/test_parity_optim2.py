@@ -109,6 +109,7 @@ def test_adagrad_state_roundtrip():
         setgrad(pa, [0.2, -0.1, 0.4])
         oa.step()
     sd = oa.state_dict()
+    pb.copy_(pa)
     ob = lt.optim.Adagrad([pb], lr=0.05)
     ob.load_state_dict(sd)
     ok = True
@@ -169,6 +170,7 @@ def test_nadam_wd_state_roundtrip():
         oa.step()
     sd = oa.state_dict()
     check("nadam_state_dict_keys", "exp_avg" in sd["state"][0] and "exp_avg_sq" in sd["state"][0] and sd["betas"] == (0.9, 0.999))
+    pb.copy_(pa)
     ob = lt.optim.NAdam([pb], lr=0.001, weight_decay=0.01)
     ob.load_state_dict(sd)
     ok = True
@@ -287,6 +289,7 @@ def test_nadam_trains():
     import random
     random.seed(1)
     w = mkp([random.gauss(0, 1) for _ in range(4)], [4])
+    w.requires_grad = True
     x = lt.Tensor.from_vector([0.5, -0.5, 1.0, 0.0], [1, 4], CPU)
     y = lt.Tensor.from_vector([1.0], [1, 1], CPU)
     opt = lt.optim.NAdam([w], lr=0.01)

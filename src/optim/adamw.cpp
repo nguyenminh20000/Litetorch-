@@ -9,7 +9,7 @@
 namespace litetorch {
 namespace optim {
 
-AdamW::AdamW(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float beta1, float beta2, float eps, float weight_decay, bool offload_to_cpu)
+AdamW::AdamW(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float beta1, float beta2, float eps, float weight_decay, bool offload_to_cpu)
     : Optimizer(params), lr(lr), beta1(beta1), beta2(beta2), eps(eps), weight_decay(weight_decay), offload_to_cpu(offload_to_cpu) {
     for (auto& p : params) {
         Device target_device = offload_to_cpu ? Device(DeviceType::CPU, 0) : p->device;
@@ -79,12 +79,13 @@ void AdamW::step() {
                 int v_off = v[i]->offset;
                 int size = p->numel();
 
-                auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
+                float lr_f = static_cast<float>(lr);
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
                 if (!kernel) {
                     throw std::runtime_error("[litetorch Error] AdamW: adamw_step_kernel not available");
                 }
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                    {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
+                    {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr_f, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
             }
         } else if (p->device.type == DeviceType::TPU) {

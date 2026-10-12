@@ -43,8 +43,8 @@ void ReduceLROnPlateau::step(float metric) {
         num_bad_epochs = 0;
     }
     if (num_bad_epochs > patience) {
-        float old_lr = optimizer->get_lr();
-        float new_lr = std::max(old_lr * factor, min_lr);
+        double old_lr = optimizer->get_lr();
+        double new_lr = std::max(old_lr * factor, static_cast<double>(min_lr));
         if (old_lr - new_lr > eps) {
             optimizer->set_lr(new_lr);
         }
@@ -53,7 +53,7 @@ void ReduceLROnPlateau::step(float metric) {
     }
 }
 
-float ReduceLROnPlateau::get_last_lr() const {
+double ReduceLROnPlateau::get_last_lr() const {
     return optimizer->get_lr();
 }
 
@@ -85,7 +85,7 @@ void ReduceLROnPlateau::load_state_dict(const std::map<std::string, double>& sta
     cooldown = static_cast<int>(get("cooldown", 0));
     min_lr = static_cast<float>(get("min_lr", 0.0));
     eps = static_cast<float>(get("eps", 1e-8));
-    base_lr = static_cast<float>(get("base_lr", base_lr));
+    base_lr = get("base_lr", base_lr);
     best = static_cast<float>(get("best", best));
     cooldown_counter = static_cast<int>(get("cooldown_counter", 0));
     num_bad_epochs = static_cast<int>(get("num_bad_epochs", 0));

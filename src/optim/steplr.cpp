@@ -9,7 +9,7 @@ StepLR::StepLR(Optimizer* optimizer, int step_size, float gamma)
 void StepLR::step() {
     last_epoch++;
     if (last_epoch % step_size == 0) {
-        float current_lr = optimizer->get_lr();
+        double current_lr = optimizer->get_lr();
         optimizer->set_lr(current_lr * gamma);
     }
 }

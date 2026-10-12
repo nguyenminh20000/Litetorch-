@@ -8,7 +8,7 @@
 namespace litetorch {
 namespace optim {
 
-RMSprop::RMSprop(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float alpha, float eps, float weight_decay)
+RMSprop::RMSprop(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float alpha, float eps, float weight_decay)
     : Optimizer(params), lr(lr), alpha(alpha), eps(eps), weight_decay(weight_decay) {
     for (auto& p : params) {
         square_avg.push_back(Tensor::zeros(p->shape, p->device));
@@ -39,9 +39,10 @@ void RMSprop::step() {
             int sq_off = square_avg[i]->offset;
             int size = p32->numel();
 
+            float lr_f = static_cast<float>(lr);
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "rmsprop_step_kernel");
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                {&p_mem, &p_off, &g_mem, &g_off, &sq_mem, &sq_off, &alpha, &lr, &eps, &weight_decay, &size},
+                {&p_mem, &p_off, &g_mem, &g_off, &sq_mem, &sq_off, &alpha, &lr_f, &eps, &weight_decay, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
         } else {
             float* p_ptr = p32->data_ptr();

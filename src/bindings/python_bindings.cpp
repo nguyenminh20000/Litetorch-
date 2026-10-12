@@ -1464,7 +1464,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("set_lr", &optim::Optimizer::set_lr, py::arg("new_lr"));
 
     py::class_<optim::SGD, optim::Optimizer, std::shared_ptr<optim::SGD>>(optim_mod, "SGD")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, bool>(), py::arg("params"), py::arg("lr") = 0.01f, py::arg("momentum") = 0.0f, py::arg("dampening") = 0.0f, py::arg("weight_decay") = 0.0f, py::arg("nesterov") = false)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, bool>(), py::arg("params"), py::arg("lr") = 0.01, py::arg("momentum") = 0.0f, py::arg("dampening") = 0.0f, py::arg("weight_decay") = 0.0f, py::arg("nesterov") = false)
         .def("step", &optim::SGD::step)
         .def("zero_grad", &optim::SGD::zero_grad)
         .def("get_lr", &optim::SGD::get_lr)
@@ -1476,7 +1476,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::SGD::weight_decay);
 
     py::class_<optim::Adam, optim::Optimizer, std::shared_ptr<optim::Adam>>(optim_mod, "Adam")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001f, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
         .def("step", &optim::Adam::step)
         .def("zero_grad", &optim::Adam::zero_grad)
         .def("get_lr", &optim::Adam::get_lr)
@@ -1488,7 +1488,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::Adam::weight_decay);
 
     py::class_<optim::AdamW, optim::Optimizer, std::shared_ptr<optim::AdamW>>(optim_mod, "AdamW")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, float, bool>(), py::arg("params"), py::arg("lr") = 0.001f, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.01f, py::arg("offload_to_cpu") = false)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float, bool>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.01f, py::arg("offload_to_cpu") = false)
         .def("step", &optim::AdamW::step)
         .def("zero_grad", &optim::AdamW::zero_grad)
         .def("get_lr", &optim::AdamW::get_lr)
@@ -1500,7 +1500,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::AdamW::weight_decay);
 
     py::class_<optim::AdamW8bit, optim::Optimizer, std::shared_ptr<optim::AdamW8bit>>(optim_mod, "AdamW8bit")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001f, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
         .def("step", &optim::AdamW8bit::step)
         .def("zero_grad", &optim::AdamW8bit::zero_grad)
         .def("get_lr", &optim::AdamW8bit::get_lr)
@@ -1509,7 +1509,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::AdamW8bit::weight_decay);
 
     py::class_<optim::AdamWFP8, optim::Optimizer, std::shared_ptr<optim::AdamWFP8>>(optim_mod, "AdamWFP8")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001f, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
         .def("step", &optim::AdamWFP8::step)
         .def("zero_grad", &optim::AdamWFP8::zero_grad)
         .def("get_lr", &optim::AdamWFP8::get_lr)
@@ -1518,7 +1518,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::AdamWFP8::weight_decay);
 
     py::class_<optim::RMSprop, optim::Optimizer, std::shared_ptr<optim::RMSprop>>(optim_mod, "RMSprop")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.01f, py::arg("alpha") = 0.99f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float>(), py::arg("params"), py::arg("lr") = 0.01, py::arg("alpha") = 0.99f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
         .def("step", &optim::RMSprop::step)
         .def("zero_grad", &optim::RMSprop::zero_grad)
         .def("get_lr", &optim::RMSprop::get_lr)
@@ -1527,7 +1527,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight_decay", &optim::RMSprop::weight_decay);
 
     py::class_<optim::ZeRO3Optimizer, optim::Optimizer, std::shared_ptr<optim::ZeRO3Optimizer>>(optim_mod, "ZeRO3Optimizer")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001f, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
         .def("step", &optim::ZeRO3Optimizer::step)
         .def("zero_grad", &optim::ZeRO3Optimizer::zero_grad)
         .def_readwrite("lr", &optim::ZeRO3Optimizer::lr)
@@ -1566,7 +1566,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("last_step", &optim::LinearWarmup::last_step);
 
     py::class_<optim::Adagrad, optim::Optimizer, std::shared_ptr<optim::Adagrad>>(optim_mod, "Adagrad")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.01f, py::arg("lr_decay") = 0.0f, py::arg("weight_decay") = 0.0f, py::arg("eps") = 1e-10f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float>(), py::arg("params"), py::arg("lr") = 0.01, py::arg("lr_decay") = 0.0f, py::arg("weight_decay") = 0.0f, py::arg("eps") = 1e-10f)
         .def("step", &optim::Adagrad::step)
         .def("zero_grad", &optim::Adagrad::zero_grad)
         .def("get_lr", &optim::Adagrad::get_lr)
@@ -1597,7 +1597,7 @@ PYBIND11_MODULE(litetorch, m) {
                 for (size_t i = 0; i < g.params.size(); ++i, ++idx) {
                     py::dict s;
                     s["step"] = o.step_count;
-                    s["sum"] = py::cast(o.sum[idx]);
+                    s["sum"] = py::cast(o.sum[idx]->clone());
                     states.append(s);
                 }
             }
@@ -1619,7 +1619,7 @@ PYBIND11_MODULE(litetorch, m) {
                 throw std::runtime_error("[litetorch Error] Adagrad.load_state_dict: param_groups size mismatch");
             for (py::ssize_t gi = 0; gi < groups.size(); ++gi) {
                 py::dict gd = groups[gi];
-                o.param_groups[gi].lr = gd["lr"].cast<float>();
+                o.param_groups[gi].lr = gd["lr"].cast<double>();
                 o.param_groups[gi].weight_decay = gd["weight_decay"].cast<float>();
             }
             o.lr = o.param_groups[0].lr;
@@ -1645,7 +1645,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("eps", &optim::Adagrad::eps);
 
     py::class_<optim::NAdam, optim::Optimizer, std::shared_ptr<optim::NAdam>>(optim_mod, "NAdam")
-        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, float, std::pair<float, float>, float, float, float>(), py::arg("params"), py::arg("lr") = 0.002f, py::arg("betas") = std::pair<float, float>(0.9f, 0.999f), py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f, py::arg("momentum_decay") = 0.004f)
+        .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, std::pair<double, double>, float, float, float>(), py::arg("params"), py::arg("lr") = 0.002, py::arg("betas") = std::pair<double, double>(0.9, 0.999), py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f, py::arg("momentum_decay") = 0.004f)
         .def("step", &optim::NAdam::step)
         .def("zero_grad", &optim::NAdam::zero_grad)
         .def("get_lr", &optim::NAdam::get_lr)
@@ -1677,8 +1677,8 @@ PYBIND11_MODULE(litetorch, m) {
                 for (size_t i = 0; i < g.params.size(); ++i, ++idx) {
                     py::dict s;
                     s["step"] = o.step_count;
-                    s["exp_avg"] = py::cast(o.exp_avg[idx]);
-                    s["exp_avg_sq"] = py::cast(o.exp_avg_sq[idx]);
+                    s["exp_avg"] = py::cast(o.exp_avg[idx]->clone());
+                    s["exp_avg_sq"] = py::cast(o.exp_avg_sq[idx]->clone());
                     states.append(s);
                 }
             }
@@ -1700,13 +1700,13 @@ PYBIND11_MODULE(litetorch, m) {
                 throw std::runtime_error("[litetorch Error] NAdam.load_state_dict: param_groups size mismatch");
             for (py::ssize_t gi = 0; gi < groups.size(); ++gi) {
                 py::dict gd = groups[gi];
-                o.param_groups[gi].lr = gd["lr"].cast<float>();
+                o.param_groups[gi].lr = gd["lr"].cast<double>();
                 o.param_groups[gi].weight_decay = gd["weight_decay"].cast<float>();
             }
             o.lr = o.param_groups[0].lr;
             o.weight_decay = o.param_groups[0].weight_decay;
             if (d.contains("betas")) {
-                auto b = d["betas"].cast<std::pair<float, float>>();
+                auto b = d["betas"].cast<std::pair<double, double>>();
                 o.beta1 = b.first;
                 o.beta2 = b.second;
             }
@@ -1805,7 +1805,9 @@ PYBIND11_MODULE(litetorch, m) {
             if (d.contains("threshold_mode")) s.threshold_mode = py::cast<std::string>(d["threshold_mode"]);
         }, py::arg("state_dict"))
         .def_readwrite("patience", &optim::ReduceLROnPlateau::patience)
-        .def_readwrite("last_epoch", &optim::ReduceLROnPlateau::last_epoch);
+        .def_readwrite("last_epoch", &optim::ReduceLROnPlateau::last_epoch)
+        .def_readwrite("mode", &optim::ReduceLROnPlateau::mode)
+        .def_readwrite("best", &optim::ReduceLROnPlateau::best);
 
     lr_sched_mod.def("MultiStepLR", [](optim::Optimizer* opt, std::vector<int> milestones, float gamma) {
         return std::unique_ptr<optim::MultiStepLR>(new optim::MultiStepLR(opt, milestones, gamma));

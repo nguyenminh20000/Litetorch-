@@ -9,7 +9,7 @@
 namespace litetorch {
 namespace optim {
 
-Adam::Adam(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float beta1, float beta2, float eps, float weight_decay)
+Adam::Adam(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float beta1, float beta2, float eps, float weight_decay)
     : Optimizer(params), lr(lr), beta1(beta1), beta2(beta2), eps(eps), weight_decay(weight_decay) {
     for (auto& p : params) {
         m.push_back(Tensor::zeros(p->shape, p->device));
@@ -91,12 +91,13 @@ void Adam::step() {
             int v_off = v[i]->offset;
             int size = p->numel();
 
+            float lr_f = static_cast<float>(lr);
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adam_step_kernel");
             if (!kernel) {
                 throw std::runtime_error("[litetorch Error] Adam: adam_step_kernel not available");
             }
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
+                {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr_f, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
         } else {
             float* p_ptr = p->data_ptr();

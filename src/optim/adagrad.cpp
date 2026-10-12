@@ -6,7 +6,7 @@
 namespace litetorch {
 namespace optim {
 
-Adagrad::Adagrad(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float lr_decay,
+Adagrad::Adagrad(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float lr_decay,
                  float weight_decay, float eps)
     : Optimizer(params), lr(lr), lr_decay(lr_decay), weight_decay(weight_decay), eps(eps) {
     param_groups.push_back({params, lr, weight_decay});
@@ -15,7 +15,7 @@ Adagrad::Adagrad(const std::vector<std::shared_ptr<Tensor>>& params, float lr, f
     }
 }
 
-void Adagrad::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_params, float group_lr,
+void Adagrad::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_params, double group_lr,
                               float group_weight_decay) {
     param_groups.push_back({new_params, group_lr, group_weight_decay});
     for (auto& p : new_params) {
@@ -24,12 +24,12 @@ void Adagrad::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_pa
     }
 }
 
-float Adagrad::get_lr() const {
+double Adagrad::get_lr() const {
     if (!param_groups.empty()) return param_groups[0].lr;
     return lr;
 }
 
-void Adagrad::set_lr(float new_lr) {
+void Adagrad::set_lr(double new_lr) {
     lr = new_lr;
     for (auto& g : param_groups) g.lr = new_lr;
 }
@@ -38,7 +38,7 @@ void Adagrad::step() {
     step_count++;
     size_t state_idx = 0;
     for (auto& group : param_groups) {
-        float group_clr = group.lr / (1.0f + (step_count - 1) * lr_decay);
+        float group_clr = static_cast<float>(group.lr / (1.0 + (step_count - 1) * lr_decay));
         for (size_t i = 0; i < group.params.size(); ++i, ++state_idx) {
             auto p = group.params[i];
             if (!p || !p->grad) continue;

@@ -10,9 +10,9 @@ LinearWarmup::LinearWarmup(Optimizer* optimizer, int warmup_steps, int total_ste
 
 void LinearWarmup::step() {
     last_step++;
-    float new_lr;
+    double new_lr;
     if (last_step <= warmup_steps) {
-        new_lr = base_lr * static_cast<float>(last_step) / static_cast<float>(warmup_steps);
+        new_lr = base_lr * static_cast<double>(last_step) / static_cast<double>(warmup_steps);
     } else {
         int decay_steps = total_steps - warmup_steps;
         if (decay_steps <= 0) {
@@ -22,14 +22,14 @@ void LinearWarmup::step() {
             if (s >= decay_steps) {
                 new_lr = min_lr;
             } else {
-                new_lr = base_lr - (base_lr - min_lr) * static_cast<float>(s) / static_cast<float>(decay_steps);
+                new_lr = base_lr - (base_lr - min_lr) * static_cast<double>(s) / static_cast<double>(decay_steps);
             }
         }
     }
     optimizer->set_lr(new_lr);
 }
 
-float LinearWarmup::get_lr() const {
+double LinearWarmup::get_lr() const {
     return optimizer->get_lr();
 }
 

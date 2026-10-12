@@ -7,7 +7,7 @@
 namespace litetorch {
 namespace optim {
 
-SGD::SGD(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float momentum,
+SGD::SGD(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float momentum,
          float dampening, float weight_decay, bool nesterov)
     : Optimizer(params), lr(lr), momentum(momentum), dampening(dampening),
       nesterov(nesterov), weight_decay(weight_decay) {
@@ -53,8 +53,9 @@ void SGD::step() {
 
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "sgd_step_kernel");
             int nesterov_val = nesterov ? 1 : 0;
+            float lr_f = static_cast<float>(lr);
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                {&p_mem, &p_off, &g_mem, &g_off, &v_mem, &v_off, &has_momentum, &momentum, &dampening, &nesterov_val, &lr, &weight_decay, &size},
+                {&p_mem, &p_off, &g_mem, &g_off, &v_mem, &v_off, &has_momentum, &momentum, &dampening, &nesterov_val, &lr_f, &weight_decay, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float), sizeof(float), sizeof(int), sizeof(float), sizeof(float), sizeof(int)});
         } else {
             float* p_ptr = p32->data_ptr();

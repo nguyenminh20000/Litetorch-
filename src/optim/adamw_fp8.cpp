@@ -10,7 +10,7 @@
 namespace litetorch {
 namespace optim {
 
-AdamWFP8::AdamWFP8(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float beta1, float beta2, float eps, float weight_decay)
+AdamWFP8::AdamWFP8(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float beta1, float beta2, float eps, float weight_decay)
     : Optimizer(params), lr(lr), beta1(beta1), beta2(beta2), eps(eps), weight_decay(weight_decay) {
     for (auto& p : params) {
         auto m_tensor = Tensor::create(p->shape, Device(DeviceType::CPU, 0), false, DataType::FP8_E4M3);

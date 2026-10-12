@@ -6,8 +6,8 @@
 namespace litetorch {
 namespace optim {
 
-NAdam::NAdam(const std::vector<std::shared_ptr<Tensor>>& params, float lr,
-             std::pair<float, float> betas, float eps, float weight_decay, float momentum_decay)
+NAdam::NAdam(const std::vector<std::shared_ptr<Tensor>>& params, double lr,
+             std::pair<double, double> betas, float eps, float weight_decay, float momentum_decay)
     : Optimizer(params), lr(lr), beta1(betas.first), beta2(betas.second), eps(eps),
       weight_decay(weight_decay), momentum_decay(momentum_decay) {
     param_groups.push_back({params, lr, weight_decay});
@@ -17,7 +17,7 @@ NAdam::NAdam(const std::vector<std::shared_ptr<Tensor>>& params, float lr,
     }
 }
 
-void NAdam::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_params, float group_lr,
+void NAdam::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_params, double group_lr,
                             float group_weight_decay) {
     param_groups.push_back({new_params, group_lr, group_weight_decay});
     for (auto& p : new_params) {
@@ -27,32 +27,32 @@ void NAdam::add_param_group(const std::vector<std::shared_ptr<Tensor>>& new_para
     }
 }
 
-float NAdam::get_lr() const {
+double NAdam::get_lr() const {
     if (!param_groups.empty()) return param_groups[0].lr;
     return lr;
 }
 
-void NAdam::set_lr(float new_lr) {
+void NAdam::set_lr(double new_lr) {
     lr = new_lr;
     for (auto& g : param_groups) g.lr = new_lr;
 }
 
 void NAdam::step() {
     step_count++;
-    float bias_correction1 = 1.0f - std::pow(beta1, step_count);
-    float bias_correction2 = 1.0f - std::pow(beta2, step_count);
+    float b1 = static_cast<float>(beta1);
+    float b2 = static_cast<float>(beta2);
+    float bias_correction1 = 1.0f - std::pow(b1, step_count);
+    float bias_correction2 = 1.0f - std::pow(b2, step_count);
     float bias_correction2_sqrt = std::sqrt(bias_correction2);
-    float mu = beta1 * (1.0f - 0.5f * std::pow(0.96f, step_count * momentum_decay));
-    float mu_next = beta1 * (1.0f - 0.5f * std::pow(0.96f, (step_count + 1) * momentum_decay));
+    float mu = b1 * (1.0f - 0.5f * std::pow(0.96f, step_count * momentum_decay));
+    float mu_next = b1 * (1.0f - 0.5f * std::pow(0.96f, (step_count + 1) * momentum_decay));
     float mu_product = mu_next / mu;
     float one_minus_mu = 1.0f - mu;
 
     size_t state_idx = 0;
     for (auto& group : param_groups) {
-        float step_size = group.lr / bias_correction1;
+        float step_size = static_cast<float>(group.lr / bias_correction1);
         float wd = group.weight_decay;
-        float b1 = beta1;
-        float b2 = beta2;
         float e = eps;
         for (size_t i = 0; i < group.params.size(); ++i, ++state_idx) {
             auto p = group.params[i];

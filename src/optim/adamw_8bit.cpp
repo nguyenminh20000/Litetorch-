@@ -75,7 +75,7 @@ inline void write_param(void* ptr, DataType dtype, size_t idx, float val) {
 }
 }
 
-AdamW8bit::AdamW8bit(const std::vector<std::shared_ptr<Tensor>>& params, float lr, float beta1, float beta2, float eps, float weight_decay)
+AdamW8bit::AdamW8bit(const std::vector<std::shared_ptr<Tensor>>& params, double lr, float beta1, float beta2, float eps, float weight_decay)
     : Optimizer(params), lr(lr), beta1(beta1), beta2(beta2), eps(eps), weight_decay(weight_decay) {
     for (auto& p : params) {
         Device dev = p->device.type == DeviceType::CPU ? Device(DeviceType::CPU, 0) : p->device;
