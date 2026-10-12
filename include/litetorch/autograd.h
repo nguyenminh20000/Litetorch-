@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <functional>
 
 namespace litetorch {
 
@@ -88,6 +89,15 @@ public:
     static void set_grad_enabled(bool enabled) { is_grad_enabled_ = enabled; }
     static bool has_active_tensors();
     static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false);
+    static std::vector<std::shared_ptr<Tensor>> grad(
+        const std::vector<std::shared_ptr<Tensor>>& outputs,
+        const std::vector<std::shared_ptr<Tensor>>& inputs,
+        const std::vector<std::shared_ptr<Tensor>>& grad_outputs = {},
+        bool retain_graph = false,
+        bool create_graph = false,
+        bool allow_unused = false);
+    static void retain_grad(std::shared_ptr<Tensor> t);
+    static bool retains_grad(const std::shared_ptr<Tensor>& t);
 };
 
 class NoGradContext {
@@ -110,6 +120,42 @@ public:
         }
     }
 };
+
+class FunctionContext {
+public:
+    FunctionContext() = default;
+    virtual ~FunctionContext() = default;
+    void save_for_backward(const std::vector<std::shared_ptr<Tensor>>& tensors);
+    void save_for_backward(std::shared_ptr<Tensor> t);
+    const SavedTensorsVector& get_saved_tensors() const;
+    std::vector<bool> needs_input_grad() const;
+    void set_needs_input_grad(const std::vector<bool>& v);
+    std::shared_ptr<void> py_state;
+private:
+    SavedTensorsVector saved_tensors_;
+    std::vector<bool> needs_input_grad_;
+};
+
+class Function {
+public:
+    Function() = default;
+    virtual ~Function() = default;
+    virtual std::vector<std::shared_ptr<Tensor>> forward(FunctionContext* ctx,
+        const std::vector<std::shared_ptr<Tensor>>& inputs) = 0;
+    virtual std::vector<std::shared_ptr<Tensor>> backward(FunctionContext* ctx,
+        const std::vector<std::shared_ptr<Tensor>>& grad_outputs) = 0;
+    static std::vector<std::shared_ptr<Tensor>> apply(std::shared_ptr<Function> fn,
+        const std::vector<std::shared_ptr<Tensor>>& inputs);
+};
+
+using AutogradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(
+    const std::vector<std::shared_ptr<Tensor>>&)>;
+bool autograd_gradcheck(const AutogradFunc& func,
+    const std::vector<std::shared_ptr<Tensor>>& inputs,
+    double eps, double atol, double rtol, bool raise_exception, std::string& error_out);
+bool autograd_gradgradcheck(const AutogradFunc& func,
+    const std::vector<std::shared_ptr<Tensor>>& inputs,
+    double eps, double atol, double rtol, bool raise_exception, std::string& error_out);
 
 }
 

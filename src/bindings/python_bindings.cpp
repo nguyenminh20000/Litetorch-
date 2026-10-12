@@ -37,8 +37,96 @@
 // === W1-T5 functional: includes ===
 #include "litetorch/functional.h"
 
+
+
 namespace py = pybind11;
 using namespace litetorch;
+
+// === W2-T4 autograd: trampoline ===
+namespace {
+std::vector<std::shared_ptr<litetorch::Tensor>> w2t4_unpack(py::object o, bool allow_none) {
+    std::vector<std::shared_ptr<litetorch::Tensor>> out;
+    if (py::isinstance<py::tuple>(o) || py::isinstance<py::list>(o)) {
+        for (py::handle h : o) {
+            if (h.is_none()) {
+                if (!allow_none)
+                    throw std::runtime_error("[litetorch Error] autograd.Function: forward() must return Tensors, got None");
+                out.push_back(nullptr);
+                continue;
+            }
+            out.push_back(h.cast<std::shared_ptr<litetorch::Tensor>>());
+        }
+    } else {
+        if (o.is_none()) {
+            if (!allow_none)
+                throw std::runtime_error("[litetorch Error] autograd.Function: forward() must return a Tensor, got None");
+            out.push_back(nullptr);
+        } else {
+            out.push_back(o.cast<std::shared_ptr<litetorch::Tensor>>());
+        }
+    }
+    return out;
+}
+
+struct PyFunction : public litetorch::Function {
+    py::tuple arg_template;
+    py::object py_self;
+    std::vector<std::shared_ptr<litetorch::Tensor>> forward(litetorch::FunctionContext* ctx,
+        const std::vector<std::shared_ptr<litetorch::Tensor>>& inputs) override {
+        py::gil_scoped_acquire gil;
+        py::function f = py::get_override(static_cast<const litetorch::Function*>(this), "forward");
+        if (!f) throw std::runtime_error("[litetorch Error] autograd.Function.forward() must be overridden");
+        py::object py_ctx = py::cast(ctx, py::return_value_policy::reference);
+        ctx->py_state = std::shared_ptr<void>(new py::object(py_ctx), [](void* p) {
+            py::gil_scoped_acquire gil2;
+            delete static_cast<py::object*>(p);
+        });
+        size_t ti = 0;
+        py::tuple args(arg_template.size());
+        for (size_t i = 0; i < (size_t)arg_template.size(); ++i) {
+            if (arg_template[i].is_none()) {
+                if (ti >= inputs.size())
+                    throw std::runtime_error("[litetorch Error] autograd.Function: tensor arg mismatch in forward()");
+                args[i] = py::cast(inputs[ti++]);
+            } else {
+                args[i] = arg_template[i];
+            }
+        }
+        py::object res = f(py_ctx, *args);
+        return w2t4_unpack(res, false);
+    }
+    std::vector<std::shared_ptr<litetorch::Tensor>> backward(litetorch::FunctionContext* ctx,
+        const std::vector<std::shared_ptr<litetorch::Tensor>>& grad_outputs) override {
+        py::gil_scoped_acquire gil;
+        py::function b = py::get_override(static_cast<const litetorch::Function*>(this), "backward");
+        if (!b) throw std::runtime_error("[litetorch Error] autograd.Function.backward() must be overridden");
+        py::object py_ctx;
+        if (ctx->py_state) py_ctx = *static_cast<py::object*>(ctx->py_state.get());
+        else py_ctx = py::cast(ctx, py::return_value_policy::reference);
+        py::tuple g(grad_outputs.size());
+        for (size_t i = 0; i < grad_outputs.size(); ++i) {
+            if (grad_outputs[i]) g[i] = py::cast(grad_outputs[i]);
+            else g[i] = py::none();
+        }
+        py::object res = b(py_ctx, *g);
+        auto full = w2t4_unpack(res, true);
+        size_t n_tensor = 0;
+        for (size_t i = 0; i < (size_t)arg_template.size(); ++i)
+            if (arg_template[i].is_none()) ++n_tensor;
+        std::vector<std::shared_ptr<litetorch::Tensor>> out;
+        if (full.size() == n_tensor) {
+            out = full;
+        } else if (full.size() == (size_t)arg_template.size()) {
+            for (size_t i = 0; i < (size_t)arg_template.size(); ++i)
+                if (arg_template[i].is_none()) out.push_back(full[i]);
+        } else {
+            throw std::runtime_error("[litetorch Error] autograd.Function.backward: must return a grad (or None) per forward input");
+        }
+        return out;
+    }
+};
+}
+// === end W2-T4 autograd ===
 
 class PyModule : public nn::Module {
 public:
@@ -401,6 +489,7 @@ PYBIND11_MODULE(litetorch, m) {
             self.backward(grad, create_graph);
         }, py::arg("gradient") = nullptr, py::arg("create_graph") = false)
         .def("zero_grad", &Tensor::zero_grad)
+        .def("retain_grad", [](std::shared_ptr<Tensor> self) { Autograd::retain_grad(self); })
         .def("to", py::overload_cast<const Device&>(&Tensor::to), py::arg("device"))
         .def("to", py::overload_cast<DataType>(&Tensor::to), py::arg("dtype"))
         .def("to", py::overload_cast<const Device&, DataType>(&Tensor::to), py::arg("device"), py::arg("dtype"))
@@ -1803,10 +1892,16 @@ PYBIND11_MODULE(litetorch, m) {
         .def_static("get", &distributed::ProcessGroup::get, py::return_value_policy::reference)
         .def("init", &distributed::ProcessGroup::init, py::arg("rank"), py::arg("world_size"), py::arg("master_addr"), py::arg("master_port"))
         .def("shutdown", &distributed::ProcessGroup::shutdown)
-        .def("all_reduce", &distributed::ProcessGroup::all_reduce, py::arg("tensor"))
+        .def("all_reduce", py::overload_cast<std::shared_ptr<Tensor>>(&distributed::ProcessGroup::all_reduce), py::arg("tensor"))
+        .def("all_reduce", py::overload_cast<std::shared_ptr<Tensor>, distributed::ReduceOp>(&distributed::ProcessGroup::all_reduce), py::arg("tensor"), py::arg("op"))
+        .def("barrier", &distributed::ProcessGroup::barrier)
+        .def("all_to_all", &distributed::ProcessGroup::all_to_all, py::arg("input"), py::arg("output"))
+        .def("scatter", &distributed::ProcessGroup::scatter, py::arg("output"), py::arg("input"), py::arg("src"))
+        .def("gather", &distributed::ProcessGroup::gather, py::arg("input"), py::arg("output"), py::arg("dst"))
         .def("broadcast", &distributed::ProcessGroup::broadcast, py::arg("tensor"), py::arg("src"))
         .def("all_gather", &distributed::ProcessGroup::all_gather, py::arg("shard"), py::arg("full"))
-        .def("reduce_scatter", &distributed::ProcessGroup::reduce_scatter, py::arg("shard"), py::arg("full"))
+        .def("reduce_scatter", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&distributed::ProcessGroup::reduce_scatter), py::arg("shard"), py::arg("full"))
+        .def("reduce_scatter", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, distributed::ReduceOp>(&distributed::ProcessGroup::reduce_scatter), py::arg("shard"), py::arg("full"), py::arg("op"))
         .def("send_tensor", &distributed::ProcessGroup::send_tensor, py::arg("tensor"), py::arg("dst"))
         .def("recv_tensor", &distributed::ProcessGroup::recv_tensor, py::arg("tensor"), py::arg("src"))
         .def("sync_comm", &distributed::ProcessGroup::sync_comm)
@@ -1865,6 +1960,56 @@ PYBIND11_MODULE(litetorch, m) {
         .def("run_1f1b_with_backward", &distributed::PipelineParallelModule::run_1f1b_with_backward, py::arg("microbatches"), py::arg("loss_fn"))
         .def("parameters", &distributed::PipelineParallelModule::parameters)
         .def("to", &distributed::PipelineParallelModule::to, py::arg("device"));
+
+    py::enum_<distributed::ReduceOp>(dist_mod, "ReduceOp")
+        .value("SUM", distributed::ReduceOp::SUM)
+        .value("AVG", distributed::ReduceOp::AVG)
+        .value("PRODUCT", distributed::ReduceOp::PRODUCT)
+        .value("MIN", distributed::ReduceOp::MIN)
+        .value("MAX", distributed::ReduceOp::MAX)
+        .export_values();
+
+    dist_mod.def("init_process_group", &distributed::init_process_group,
+                 py::arg("rank"), py::arg("world_size"),
+                 py::arg("master_addr") = "127.0.0.1", py::arg("master_port") = 29500);
+    dist_mod.def("shutdown", &distributed::shutdown);
+    dist_mod.def("barrier", &distributed::barrier);
+    dist_mod.def("all_reduce",
+                 py::overload_cast<std::shared_ptr<Tensor>>(&distributed::all_reduce),
+                 py::arg("tensor"));
+    dist_mod.def("all_reduce",
+                 py::overload_cast<std::shared_ptr<Tensor>, distributed::ReduceOp>(&distributed::all_reduce),
+                 py::arg("tensor"), py::arg("op") = distributed::ReduceOp::SUM);
+    dist_mod.def("all_gather", &distributed::all_gather, py::arg("shard"), py::arg("full"));
+    dist_mod.def("reduce_scatter",
+                 py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&distributed::reduce_scatter),
+                 py::arg("shard"), py::arg("full"));
+    dist_mod.def("reduce_scatter",
+                 py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, distributed::ReduceOp>(&distributed::reduce_scatter),
+                 py::arg("shard"), py::arg("full"), py::arg("op"));
+    dist_mod.def("broadcast", &distributed::broadcast, py::arg("tensor"), py::arg("src_rank"));
+    dist_mod.def("all_to_all", &distributed::all_to_all, py::arg("input"), py::arg("output"));
+    dist_mod.def("scatter", &distributed::scatter, py::arg("output"), py::arg("input"), py::arg("src"));
+    dist_mod.def("gather", &distributed::gather, py::arg("input"), py::arg("output"), py::arg("dst"));
+    dist_mod.def("send_tensor", &distributed::send_tensor, py::arg("tensor"), py::arg("dst"));
+    dist_mod.def("recv_tensor", &distributed::recv_tensor, py::arg("tensor"), py::arg("src"));
+
+    py::class_<distributed::NCCLBridge, std::unique_ptr<distributed::NCCLBridge, py::nodelete>>(dist_mod, "NCCLBridge")
+        .def_static("get", &distributed::NCCLBridge::get, py::return_value_policy::reference)
+        .def("is_available", &distributed::NCCLBridge::is_available)
+        .def("init", &distributed::NCCLBridge::init, py::arg("rank"), py::arg("world_size"))
+        .def("shutdown", &distributed::NCCLBridge::shutdown)
+        .def("sync_comm", &distributed::NCCLBridge::sync_comm);
+
+    py::class_<distributed::DistributedDataParallel, nn::Module, std::shared_ptr<distributed::DistributedDataParallel>>(dist_mod, "DistributedDataParallel")
+        .def(py::init<std::shared_ptr<nn::Module>, distributed::ReduceOp>(), py::arg("module"), py::arg("op") = distributed::ReduceOp::AVG)
+        .def("forward", &distributed::DistributedDataParallel::forward, py::arg("input"))
+        .def("backward", py::overload_cast<std::shared_ptr<Tensor>>(&distributed::DistributedDataParallel::backward), py::arg("loss"))
+        .def("backward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&distributed::DistributedDataParallel::backward), py::arg("loss"), py::arg("grad_output"))
+        .def("sync_grads", &distributed::DistributedDataParallel::sync_grads)
+        .def("parameters", &distributed::DistributedDataParallel::parameters)
+        .def("to", &distributed::DistributedDataParallel::to, py::arg("device"))
+        .def_readwrite("reduce_op", &distributed::DistributedDataParallel::reduce_op);
 
     auto jit_mod = m.def_submodule("jit", "LiteTorch JIT Compilation");
 
@@ -2267,4 +2412,98 @@ PYBIND11_MODULE(litetorch, m) {
     m.def("set_grad_enabled", [](bool enabled) {
         Autograd::set_grad_enabled(enabled);
     }, py::arg("enabled"));
+
+    // === W2-T4 autograd ===
+    auto autograd_mod = m.def_submodule("autograd", "LiteTorch Autograd");
+    py::class_<FunctionContext, std::shared_ptr<FunctionContext>>(autograd_mod, "FunctionContext", py::dynamic_attr())
+        .def(py::init<>())
+        .def("save_for_backward", [](FunctionContext& self, py::args args) {
+            std::vector<std::shared_ptr<Tensor>> ts;
+            for (auto a : args) ts.push_back(a.cast<std::shared_ptr<Tensor>>());
+            self.save_for_backward(ts);
+        })
+        .def_property_readonly("saved_tensors", [](FunctionContext& self) {
+            const auto& st = self.get_saved_tensors();
+            py::tuple t(st.size());
+            for (size_t i = 0; i < st.size(); ++i) t[i] = py::cast(st[i]);
+            return t;
+        })
+        .def_property_readonly("needs_input_grad", [](FunctionContext& self) {
+            py::list l;
+            for (bool b : self.needs_input_grad()) l.append(b);
+            return l;
+        });
+    py::class_<Function, PyFunction, std::shared_ptr<Function>> pyFn(autograd_mod, "Function");
+    pyFn.def(py::init<>());
+    py::object apply_fn = py::cpp_function([](py::object cls, py::args args) -> py::object {
+        py::object inst = cls();
+        auto fn = inst.cast<std::shared_ptr<Function>>();
+        auto pyfn = std::dynamic_pointer_cast<PyFunction>(fn);
+        if (!pyfn)
+            throw std::runtime_error("[litetorch Error] autograd.Function.apply: could not access Python subclass state");
+        std::vector<std::shared_ptr<Tensor>> tensor_inputs;
+        py::tuple tmpl(args.size());
+        for (size_t i = 0; i < (size_t)args.size(); ++i) {
+            bool is_tensor = false;
+            try {
+                tensor_inputs.push_back(args[i].cast<std::shared_ptr<Tensor>>());
+                is_tensor = true;
+            } catch (py::cast_error&) {}
+            if (is_tensor) tmpl[i] = py::none();
+            else tmpl[i] = args[i];
+        }
+        pyfn->arg_template = tmpl;
+        pyfn->py_self = inst;
+        std::vector<std::shared_ptr<Tensor>> outputs = Function::apply(fn, tensor_inputs);
+        if (outputs.size() == 1) return py::cast(outputs[0]);
+        py::tuple out(outputs.size());
+        for (size_t i = 0; i < outputs.size(); ++i) out[i] = py::cast(outputs[i]);
+        return out;
+    }, py::arg("cls"));
+    pyFn.attr("apply") = py::module::import("builtins").attr("classmethod")(apply_fn);
+    autograd_mod.def("grad", [](py::object outputs, py::object inputs, py::object grad_outputs,
+            bool retain_graph, bool create_graph, bool allow_unused) -> py::object {
+        auto outs = w2t4_unpack(outputs, false);
+        auto ins = w2t4_unpack(inputs, false);
+        std::vector<std::shared_ptr<Tensor>> gos;
+        if (!grad_outputs.is_none()) gos = w2t4_unpack(grad_outputs, false);
+        std::vector<std::shared_ptr<Tensor>> res =
+            Autograd::grad(outs, ins, gos, retain_graph, create_graph, allow_unused);
+        py::tuple t(res.size());
+        for (size_t i = 0; i < res.size(); ++i) {
+            if (res[i]) t[i] = py::cast(res[i]);
+            else t[i] = py::none();
+        }
+        return t;
+    }, py::arg("outputs"), py::arg("inputs"), py::arg("grad_outputs") = py::none(),
+       py::arg("retain_graph") = false, py::arg("create_graph") = false, py::arg("allow_unused") = false);
+    autograd_mod.def("gradcheck", [](py::function func, py::object inputs, double eps, double atol,
+            double rtol, bool raise_exception) -> bool {
+        auto ins = w2t4_unpack(inputs, false);
+        AutogradFunc f = [&](const std::vector<std::shared_ptr<Tensor>>& xs)
+            -> std::vector<std::shared_ptr<Tensor>> {
+            py::gil_scoped_acquire gil;
+            py::object res = func(*py::cast(xs));
+            return w2t4_unpack(res, false);
+        };
+        std::string err;
+        return autograd_gradcheck(f, ins, eps, atol, rtol, raise_exception, err);
+    }, py::arg("func"), py::arg("inputs"), py::arg("eps") = 1e-6, py::arg("atol") = 1e-5,
+       py::arg("rtol") = 1e-3, py::arg("raise_exception") = true);
+    autograd_mod.def("gradgradcheck", [](py::function func, py::object inputs, double eps, double atol,
+            double rtol, bool raise_exception) -> bool {
+        auto ins = w2t4_unpack(inputs, false);
+        AutogradFunc f = [&](const std::vector<std::shared_ptr<Tensor>>& xs)
+            -> std::vector<std::shared_ptr<Tensor>> {
+            py::gil_scoped_acquire gil;
+            py::object res = func(*py::cast(xs));
+            return w2t4_unpack(res, false);
+        };
+        std::string err;
+        return autograd_gradgradcheck(f, ins, eps, atol, rtol, raise_exception, err);
+    }, py::arg("func"), py::arg("inputs"), py::arg("eps") = 1e-6, py::arg("atol") = 1e-5,
+       py::arg("rtol") = 1e-3, py::arg("raise_exception") = true);
+    autograd_mod.def("retain_grad", [](std::shared_ptr<Tensor> t) { Autograd::retain_grad(t); },
+        py::arg("tensor"));
+    // === end W2-T4 autograd ===
 }
