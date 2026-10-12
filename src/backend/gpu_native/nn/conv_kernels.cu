@@ -171,7 +171,7 @@ extern "C" void gpu_conv2d_cudnn(
     int kh, int kw, int stride, int padding, int apply_relu) {
     auto_set_device(input);
     lt_cudnnHandle_t handle = get_cudnn_handle(output);
-    if (!handle) return;
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d: cuDNN unavailable");
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
 
@@ -201,7 +201,7 @@ extern "C" void gpu_conv2d_cudnn(
         int64_t total = (int64_t)N * C_out * H_out * W_out;
         int threads = 256;
         int64_t blocks = (total + threads - 1) / threads;
-        relu_inplace_kernel<<<(unsigned)blocks, threads>>>(output + out_off, total);
+        relu_inplace_kernel<<<(unsigned)blocks, threads, 0, dev_stream(current_device())>>>(output + out_off, total);
     }
 }
 
@@ -261,7 +261,7 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
     int kh, int kw, int stride, int padding) {
     auto_set_device(gout);
     lt_cudnnHandle_t handle = get_cudnn_handle(gdx);
-    if (!handle) return;
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-data: cuDNN unavailable");
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
@@ -284,7 +284,7 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
     int kh, int kw, int stride, int padding) {
     auto_set_device(gout);
     lt_cudnnHandle_t handle = get_cudnn_handle(gw);
-    if (!handle) return;
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-filter: cuDNN unavailable");
     CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
     CudnnConvDescs& d = get_cudnn_conv_descs(key);
     float alpha = 1.0f, beta = 0.0f;
@@ -376,8 +376,8 @@ extern "C" __global__ void conv2d_kernel(const float* input, int in_off,
                             int batch_size, int in_channels, int in_h, int in_w,
                             int out_channels, int out_h, int out_w,
                             int kh, int kw, int stride, int padding) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
-    int total_threads = batch_size * out_channels * out_h * out_w;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total_threads = (int64_t)batch_size * out_channels * out_h * out_w;
     if (idx >= total_threads) return;
 
     int w_out = idx % out_w;
@@ -432,8 +432,8 @@ extern "C" __global__ void conv2d_backward_gw(
     int C_out, int H_out, int W_out,
     int KH, int KW, int stride, int padding)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = C_out * C_in * KH * KW;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)C_out * C_in * KH * KW;
     if (idx >= total) return;
 
     int kw = idx % KW;
@@ -468,8 +468,8 @@ extern "C" __global__ void conv2d_backward_gdx(
     int C_out, int H_out, int W_out,
     int KH, int KW, int stride, int padding)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = N * C_in * H_in * W_in;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)N * C_in * H_in * W_in;
     if (idx >= total) return;
 
     int x = idx % W_in;
@@ -509,8 +509,8 @@ extern "C" __global__ void im2col_kernel(
     int H_out, int W_out,
     float* col, int col_off)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = C * KH * KW * H_out * W_out;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)C * KH * KW * H_out * W_out;
     if (idx >= total) return;
 
     int w_out = idx % W_out;
@@ -633,8 +633,8 @@ extern "C" __global__ void add_bias_2d(
     const float* bias, int b_off,
     int N, int C, int H, int W)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = N * C * H * W;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)N * C * H * W;
     if (idx < total) {
         int c = (idx / (H * W)) % C;
         out[out_off + idx] += bias[b_off + c];
@@ -649,8 +649,8 @@ extern "C" __global__ void conv3d_kernel(
     int out_channels, int out_d, int out_h, int out_w,
     int kd, int kh, int kw, int stride, int padding)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total_threads = batch_size * out_channels * out_d * out_h * out_w;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total_threads = (int64_t)batch_size * out_channels * out_d * out_h * out_w;
     if (idx >= total_threads) return;
 
     int w_out = idx % out_w;
@@ -716,8 +716,8 @@ extern "C" __global__ void conv3d_backward_gw(
     int C_out, int D_out, int H_out, int W_out,
     int KD, int KH, int KW, int stride, int padding)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = C_out * C_in * KD * KH * KW;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)C_out * C_in * KD * KH * KW;
     if (idx >= total) return;
 
     int kw = idx % KW;
@@ -758,8 +758,8 @@ extern "C" __global__ void conv3d_backward_gdx(
     int C_out, int D_out, int H_out, int W_out,
     int KD, int KH, int KW, int stride, int padding)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = N * C_in * D_in * H_in * W_in;
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total = (int64_t)N * C_in * D_in * H_in * W_in;
     if (idx >= total) return;
 
     int x = idx % W_in;
