@@ -835,9 +835,10 @@ public:
             }
         }
         auto grad_input = dt == DataType::FP32 ? grad_input_b : grad_input_b->cast(dt);
+        auto grad_weight_out = weight_c->dtype == DataType::FP32 ? grad_weight : grad_weight->cast(weight_c->dtype);
         std::vector<std::shared_ptr<Tensor>> ret;
         ret.push_back(grad_input);
-        ret.push_back(grad_weight);
+        ret.push_back(grad_weight_out);
         return ret;
     }
 };
