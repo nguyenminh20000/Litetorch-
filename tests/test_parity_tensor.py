@@ -78,13 +78,18 @@ def test_numpy_scalar_zero_dim():
 
 def test_numpy_copy_dtypes():
     vals = [1.0, -2.5, 3.25]
-    for dt, npdt in [(lt.DataType.FP64, np.float64), (lt.DataType.FP16, np.float16),
-                     (lt.DataType.INT32, np.int32), (lt.DataType.INT16, np.int16),
-                     (lt.DataType.INT8, np.int8)]:
+    for dt, npdt in [(lt.DataType.FP64, np.float64), (lt.DataType.FP16, np.float16)]:
         t = lt.Tensor.from_vector(vals, [3], cpu(), False, dt)
         arr = t.numpy()
         assert arr.dtype == npdt, (dt, arr.dtype)
         assert np.allclose(arr.astype(np.float64), vals, atol=1e-3)
+    ivals = [1, -2, 3]
+    for dt, npdt in [(lt.DataType.INT32, np.int32), (lt.DataType.INT16, np.int16),
+                     (lt.DataType.INT8, np.int8)]:
+        t = lt.Tensor.from_vector([float(v) for v in ivals], [3], cpu(), False, dt)
+        arr = t.numpy()
+        assert arr.dtype == npdt, (dt, arr.dtype)
+        assert np.allclose(arr.astype(np.float64), ivals, atol=1e-3)
 
 
 def test_numpy_bf16_converts_to_fp32():
@@ -138,7 +143,7 @@ def test_dim_and_ndim():
     t = lt.zeros([2, 3, 4], cpu())
     assert t.dim() == 3
     assert t.ndim == 3
-    s = lt.zeros([5], cpu()).reshape([])
+    s = lt.zeros([1], cpu()).reshape([])
     assert s.dim() == 0 and s.ndim == 0
 
 
