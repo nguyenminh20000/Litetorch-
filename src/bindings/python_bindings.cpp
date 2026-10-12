@@ -224,6 +224,7 @@ PYBIND11_MODULE(litetorch, m) {
         return litetorch::MemoryManager::get().get_gpu_used();
     });
     // === W1-T2 tensor-api ===
+    cuda_mod.def("is_available", &litetorch::cuda::is_available);
     cuda_mod.def("device_count", &litetorch::cuda::device_count);
     cuda_mod.def("current_device", &litetorch::cuda::current_device);
     cuda_mod.def("set_device", &litetorch::cuda::set_device, py::arg("device") = 0);
@@ -1248,7 +1249,7 @@ PYBIND11_MODULE(litetorch, m) {
     functional_mod.def("bce_with_logits", &functional::bce_with_logits,
         py::arg("input"), py::arg("target"), py::arg("reduction") = "mean");
     functional_mod.def("normalize", &functional::normalize,
-        py::arg("x"), py::arg("p") = 2.0, py::arg("dim") = 1);
+        py::arg("x"), py::arg("p") = 2.0, py::arg("dim") = 1, py::arg("eps") = 1e-12);
     functional_mod.def("glu", &functional::glu,
         py::arg("x"), py::arg("dim") = -1);
     functional_mod.def("elu", &functional::elu,

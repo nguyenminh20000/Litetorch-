@@ -157,6 +157,8 @@ void push_m(std::vector<std::pair<std::string, std::shared_ptr<Module>>>& v,
     if (m) v.push_back({name, m});
 }
 
+}
+
 const std::unordered_map<std::type_index, Module::LegacyFill>& Module::legacy_fill_map() {
     static const std::unordered_map<std::type_index, Module::LegacyFill> m = {
         {std::type_index(typeid(Linear)), [](const Module* b, LegacyLocal& l) {
@@ -292,8 +294,6 @@ const std::unordered_map<std::type_index, Module::LegacyFill>& Module::legacy_fi
         }},
     };
     return m;
-}
-
 }
 
 Module::LegacyLocal Module::legacy_local() const {

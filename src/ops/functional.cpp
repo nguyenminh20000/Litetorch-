@@ -391,7 +391,8 @@ std::shared_ptr<Tensor> bce_with_logits(std::shared_ptr<Tensor> input,
     return Ops::bce_with_logits_loss(input, target, nullptr, reduction, nullptr);
 }
 
-std::shared_ptr<Tensor> normalize(std::shared_ptr<Tensor> x, double p, int64_t dim) {
+std::shared_ptr<Tensor> normalize(std::shared_ptr<Tensor> x, double p, int64_t dim,
+                               double eps) {
     int64_t ndim = static_cast<int64_t>(x->shape.size());
     dim = norm_dim(dim, ndim, "normalize");
     if (p <= 0.0) {
@@ -399,6 +400,7 @@ std::shared_ptr<Tensor> normalize(std::shared_ptr<Tensor> x, double p, int64_t d
     }
     float pf = static_cast<float>(p);
     auto denom = Ops::pow(Ops::sum(Ops::pow(Ops::abs(x), pf), dim, true), 1.0f / pf);
+    denom = Ops::clamp_min(denom, static_cast<float>(eps));
     return Ops::div(x, denom);
 }
 

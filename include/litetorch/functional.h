@@ -33,7 +33,8 @@ std::shared_ptr<Tensor> bce_with_logits(std::shared_ptr<Tensor> input,
                                         std::shared_ptr<Tensor> target,
                                         const std::string& reduction = "mean");
 
-std::shared_ptr<Tensor> normalize(std::shared_ptr<Tensor> x, double p = 2.0, int64_t dim = 1);
+std::shared_ptr<Tensor> normalize(std::shared_ptr<Tensor> x, double p = 2.0, int64_t dim = 1,
+                               double eps = 1e-12);
 
 std::shared_ptr<Tensor> glu(std::shared_ptr<Tensor> x, int64_t dim = -1);
 

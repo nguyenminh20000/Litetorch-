@@ -166,6 +166,20 @@ class BuildExt(build_ext):
                 sys.stderr.write("[litetorch] WARNING: could not write build status file %s: %s\n" % (status_file, e))
                 sys.stderr.flush()
 
+    def build_extension(self, ext):
+        if os.environ.get("LT_BUILD_JOBS") == "1":
+            orig_compile = self.compiler._compile
+            def _lowmem_compile(obj, src, ext_, cc_args, extra_postargs, pp_opts):
+                if src.endswith("python_bindings.cpp"):
+                    extra_postargs = [a for a in (extra_postargs or []) if not a.startswith("-O")] + ["-O1"]
+                return orig_compile(obj, src, ext_, cc_args, extra_postargs, pp_opts)
+            self.compiler._compile = _lowmem_compile
+        try:
+            super().build_extension(ext)
+        finally:
+            if os.environ.get("LT_BUILD_JOBS") == "1":
+                self.compiler._compile = orig_compile
+
     def build_extensions(self):
         self.parallel = int(os.environ.get("LT_BUILD_JOBS", os.cpu_count() or 4))
         compiler_type = self.compiler.compiler_type
