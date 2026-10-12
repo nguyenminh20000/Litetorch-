@@ -792,6 +792,7 @@ std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
         });
         if (out->device.type == DeviceType::GPU) {
             rt_gpu_write(out->gpu_data(), size * sizeof(float), out_ptr);
+            rt_gpu_write(save_tanh->gpu_data(), size * sizeof(float), st_ptr);
         } else if (out->device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu) {

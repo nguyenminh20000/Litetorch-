@@ -658,7 +658,8 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
             true)) return out;
     if (a->dtype == DataType::FP16 && b->dtype == DataType::FP16 &&
         a->device.type == DeviceType::GPU && a->device == b->device &&
-        a->shape != b->shape) {
+        a->shape != b->shape &&
+        (!Autograd::is_grad_enabled() || (!a->requires_grad && !b->requires_grad))) {
         std::vector<int64_t> bc_shape = broadcast_shapes(a->shape, b->shape);
         auto a_exp = (a->shape == bc_shape) ? a : a->expand(bc_shape);
         auto b_exp = (b->shape == bc_shape) ? b : b->expand(bc_shape);
@@ -1779,6 +1780,11 @@ public:
 };
 
 std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = sum(a_fp32, dim, keepdim);
+        return cast(out_fp32, a->dtype);
+    }
     auto out = sum_dim_forward(a, dim, keepdim, 1.0f);
     int64_t ndim = static_cast<int64_t>(a->shape.size());
     int64_t d = dim < 0 ? dim + ndim : dim;
@@ -1794,6 +1800,11 @@ std::shared_ptr<Tensor> sum(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim
 }
 
 std::shared_ptr<Tensor> mean(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto out_fp32 = mean(a_fp32, dim, keepdim);
+        return cast(out_fp32, a->dtype);
+    }
     int64_t ndim = static_cast<int64_t>(a->shape.size());
     int64_t d = dim < 0 ? dim + ndim : dim;
     if (d < 0 || d >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for mean");
@@ -1851,6 +1862,11 @@ public:
 };
 
 std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
+    if (a->dtype != DataType::FP32) {
+        auto a_fp32 = cast(a, DataType::FP32);
+        auto res_fp32 = max_with_indices(a_fp32, dim, keepdim);
+        return {cast(res_fp32.first, a->dtype), res_fp32.second};
+    }
     int64_t ndim = static_cast<int64_t>(a->shape.size());
     if (ndim == 0) throw std::runtime_error("[litetorch Error] max over dim of a 0-dim tensor");
     if (dim < 0) dim += ndim;

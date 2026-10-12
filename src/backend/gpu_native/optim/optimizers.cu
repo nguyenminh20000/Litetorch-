@@ -1,34 +1,6 @@
 #include "gpu_common.h"
 #include <unordered_map>
 
-extern "C" __global__ void adamw_step_kernel_native(
-    float* P, int p_off,
-    const float* G, int g_off,
-    float* M, int m_off,
-    float* V, int v_off,
-    int size, float lr, float beta1, float beta2, float eps, float weight_decay,
-    float bias_correction1, float bias_correction2)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        float p = P[p_off + idx];
-        float g = G[g_off + idx];
-        float m = beta1 * M[m_off + idx] + (1.0f - beta1) * g;
-        float v = beta2 * V[v_off + idx] + (1.0f - beta2) * g * g;
-        M[m_off + idx] = m;
-        V[v_off + idx] = v;
-        float m_hat = m / bias_correction1;
-        float v_hat = v / bias_correction2;
-        float update = m_hat / (sqrtf(v_hat) + eps);
-        // Decoupled weight decay (AdamW), matching the CPU/TPU implementation.
-        if (weight_decay != 0.0f) {
-            P[p_off + idx] = p - lr * (weight_decay * p + update);
-        } else {
-            P[p_off + idx] = p - lr * update;
-        }
-    }
-}
-
 extern "C" __global__ void adam_step_kernel(
     float* P, int p_off,
     const float* G, int g_off,
@@ -352,8 +324,8 @@ extern "C" __global__ void adamw_8bit_step_kernel(
     for (int idx = start + tid; idx < end; idx += blockDim.x) {
         float m_val = tmp_m[bid * block_size + (idx - start)];
         float v_val = tmp_v[bid * block_size + (idx - start)];
-        M[m_off + idx] = (int8_t)roundf(m_val / new_m_scale);
-        V[v_off + idx] = (uint8_t)roundf(v_val / new_v_scale);
+        M[m_off + idx] = new_m_scale > 0.0f ? (int8_t)roundf(m_val / new_m_scale) : 0;
+        V[v_off + idx] = new_v_scale > 0.0f ? (uint8_t)roundf(v_val / new_v_scale) : 0;
     }
 }
 
