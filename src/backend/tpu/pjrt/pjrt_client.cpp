@@ -24,7 +24,10 @@ bool PjrtClient::check(PJRT_Error* err, const char* what) {
     margs.struct_size = PJRT_Error_Message_Args_STRUCT_SIZE;
     margs.error = err;
     api_->PJRT_Error_Message(&margs);
-    last_error_ = std::string(what) + ": " + (margs.message ? std::string(margs.message, margs.message_size) : "unknown");
+    {
+        std::lock_guard<std::mutex> lock(err_mutex_);
+        last_error_ = std::string(what) + ": " + (margs.message ? std::string(margs.message, margs.message_size) : "unknown");
+    }
     PJRT_Error_Destroy_Args dargs{};
     dargs.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
     dargs.error = err;
@@ -85,31 +88,31 @@ std::string PjrtClient::find_libtpu() {
 bool PjrtClient::load_library(const std::string& path) {
     std::string lib = path.empty() ? find_libtpu() : path;
     if (lib.empty()) {
-        last_error_ = "libtpu.so not found";
+        set_error("libtpu.so not found");
         return false;
     }
     handle_ = dlopen(lib.c_str(), RTLD_NOW);
     if (!handle_) {
-        last_error_ = std::string("dlopen failed: ") + dlerror();
+        set_error(std::string("dlopen failed: ") + dlerror());
         return false;
     }
     using GetApiFn = const PJRT_Api*(*)();
     auto get_api = reinterpret_cast<GetApiFn>(dlsym(handle_, "GetPjrtApi"));
     if (!get_api) {
-        last_error_ = "GetPjrtApi symbol not found";
+        set_error("GetPjrtApi symbol not found");
         dlclose(handle_);
         handle_ = nullptr;
         return false;
     }
     api_ = get_api();
     if (!api_) {
-        last_error_ = "GetPjrtApi returned null";
+        set_error("GetPjrtApi returned null");
         dlclose(handle_);
         handle_ = nullptr;
         return false;
     }
     if (api_->pjrt_api_version.major_version != PJRT_API_MAJOR) {
-        last_error_ = "PJRT API major version mismatch";
+        set_error("PJRT API major version mismatch");
         dlclose(handle_);
         handle_ = nullptr;
         api_ = nullptr;
@@ -123,22 +126,23 @@ bool PjrtClient::initialize(const std::string& lib_path) {
     if (!load_library(lib_path)) return false;
     PJRT_Plugin_Initialize_Args iargs{};
     iargs.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
-    if (!check(api_->PJRT_Plugin_Initialize(&iargs), "Plugin_Initialize")) return false;
+    if (!check(api_->PJRT_Plugin_Initialize(&iargs), "Plugin_Initialize")) { shutdown(); return false; }
     PJRT_Client_Create_Args cargs{};
     cargs.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
-    if (!check(api_->PJRT_Client_Create(&cargs), "Client_Create")) return false;
+    if (!check(api_->PJRT_Client_Create(&cargs), "Client_Create")) { shutdown(); return false; }
     client_ = cargs.client;
     PJRT_Client_AddressableDevices_Args dargs{};
     dargs.struct_size = PJRT_Client_AddressableDevices_Args_STRUCT_SIZE;
     dargs.client = client_;
     if (!check(api_->PJRT_Client_AddressableDevices(&dargs), "AddressableDevices")) {
-        client_ = nullptr;
+        shutdown();
         return false;
     }
     devices_ = const_cast<PJRT_Device**>(dargs.addressable_devices);
     num_devices_ = static_cast<int>(dargs.num_addressable_devices);
     if (num_devices_ == 0) {
-        last_error_ = "no addressable TPU devices";
+        set_error("no addressable TPU devices");
+        shutdown();
         return false;
     }
     return true;

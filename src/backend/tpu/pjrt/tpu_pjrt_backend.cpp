@@ -79,13 +79,22 @@ bool TpuPjrtBackend::write_buffer(void* ptr, const void* host, size_t bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = buffers_.find(ptr);
     if (it == buffers_.end()) return false;
-    size_t n = (bytes + 3) / 4;
+    size_t keep = it->second.bytes;
+    if (bytes > keep) return false;
+    const void* src = host;
+    std::vector<char> merged;
+    if (bytes < keep) {
+        merged.assign(keep, 0);
+        if (!it->second.pjrt_buf.to_host(merged.data(), keep)) return false;
+        std::memcpy(merged.data(), host, bytes);
+        src = merged.data();
+    }
+    size_t n = (keep + 3) / 4;
     if (n == 0) n = 1;
     std::vector<int64_t> dims{static_cast<int64_t>(n)};
     PjrtBuffer nb;
-    if (!nb.from_host(host, n * sizeof(float), dims, PJRT_Buffer_Type_F32)) return false;
+    if (!nb.from_host(src, keep, dims, PJRT_Buffer_Type_F32)) return false;
     it->second.pjrt_buf = std::move(nb);
-    it->second.bytes = n * sizeof(float);
     return true;
 }
 

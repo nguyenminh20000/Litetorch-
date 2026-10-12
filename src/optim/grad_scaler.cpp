@@ -10,7 +10,7 @@ GradScaler::GradScaler(float init_scale, float growth_factor, float backoff_fact
 
 std::shared_ptr<Tensor> GradScaler::scale(std::shared_ptr<Tensor> loss) {
     if (!enabled || !loss) return loss;
-    auto scale_tensor = Tensor::from_vector({scale_}, {}, loss->device, false, loss->dtype);
+    auto scale_tensor = Tensor::from_vector({scale_}, {}, loss->device, false, DataType::FP32);
     return Ops::mul(loss, scale_tensor);
 }
 
@@ -22,8 +22,10 @@ bool GradScaler::check_inf_nan(const std::vector<std::shared_ptr<Tensor>>& grads
     for (const auto& g : grads) {
         if (!g) continue;
         if (g->device.type == DeviceType::CPU) {
-            float* ptr = g->data_ptr();
-            size_t total = g->numel();
+            auto g32 = g->cast(DataType::FP32);
+            auto gc = g32->is_contiguous() ? g32 : g32->contiguous();
+            float* ptr = gc->data_ptr();
+            size_t total = gc->numel();
             for (size_t i = 0; i < total; ++i) {
                 if (std::isnan(ptr[i]) || std::isinf(ptr[i])) {
                     return true;

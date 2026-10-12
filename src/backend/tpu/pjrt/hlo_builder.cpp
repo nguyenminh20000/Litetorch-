@@ -81,12 +81,18 @@ struct ModuleBuilder {
             } else {
                 uint32_t f;
                 __builtin_memcpy(&f, &value, 4);
+                uint32_t fexp = (f >> 23) & 0xff;
+                uint32_t fmant = f & 0x7fffff;
                 uint32_t sign = (f >> 16) & 0x8000;
-                int32_t exp = ((f >> 23) & 0xff) - 112;
-                uint32_t mant = (f >> 13) & 0x3ff;
-                if (exp <= 0) { bits = static_cast<uint16_t>(sign); }
-                else if (exp >= 31) { bits = static_cast<uint16_t>(sign | 0x7bff); }
-                else { bits = static_cast<uint16_t>(sign | (exp << 10) | mant); }
+                if (fexp == 0xff) {
+                    bits = static_cast<uint16_t>(sign | 0x7c00 | (fmant ? 0x0200 : 0));
+                } else {
+                    int32_t exp = static_cast<int32_t>(fexp) - 112;
+                    uint32_t mant = (f >> 13) & 0x3ff;
+                    if (exp <= 0) { bits = static_cast<uint16_t>(sign); }
+                    else if (exp >= 31) { bits = static_cast<uint16_t>(sign | 0x7c00); }
+                    else { bits = static_cast<uint16_t>(sign | (exp << 10) | mant); }
+                }
             }
             std::string bytes;
             bytes.push_back(static_cast<char>(bits & 0xff));
@@ -129,6 +135,9 @@ int64_t num_elements(const std::vector<int64_t>& dims) {
 }
 
 std::string HloBuilder::make_dot(const HloShape& a, const HloShape& b, const HloShape& out) {
+    int64_t a_rank = static_cast<int64_t>(a.dims.size());
+    int64_t b_rank = static_cast<int64_t>(b.dims.size());
+    if (a_rank < 2 || b_rank < 2) return "";
     ModuleBuilder mb;
     auto* c = mb.new_computation("dot_computation");
     auto* pa = mb.add_parameter(c, 0, a);
@@ -137,8 +146,6 @@ std::string HloBuilder::make_dot(const HloShape& a, const HloShape& b, const Hlo
     dot->add_operand_ids(pa->id());
     dot->add_operand_ids(pb->id());
     auto* dnums = dot->mutable_dot_dimension_numbers();
-    int64_t a_rank = static_cast<int64_t>(a.dims.size());
-    int64_t b_rank = static_cast<int64_t>(b.dims.size());
     for (int64_t i = 0; i < a_rank - 2; ++i) {
         dnums->add_lhs_batch_dimensions(i);
         dnums->add_rhs_batch_dimensions(i);

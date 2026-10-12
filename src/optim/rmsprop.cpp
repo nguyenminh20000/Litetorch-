@@ -24,27 +24,30 @@ void RMSprop::step() {
         if (!p->is_contiguous()) {
             throw std::runtime_error("[litetorch Error] Optimizer parameter must be contiguous");
         }
-        auto g_c = g->is_contiguous() ? g : g->contiguous();
+        bool need_cast = (p->dtype != DataType::FP32);
+        auto p32 = need_cast ? p->cast(DataType::FP32) : p;
+        auto g32 = g->cast(DataType::FP32);
+        auto g_c = g32->is_contiguous() ? g32 : g32->contiguous();
 
-        if (p->device.type == DeviceType::GPU) {
-            StorageUseGuard guard({p->storage, g_c->storage, square_avg[i]->storage});
-            cl_mem p_mem = p->gpu_data();
-            int p_off = p->offset;
+        if (p32->device.type == DeviceType::GPU) {
+            StorageUseGuard guard({p32->storage, g_c->storage, square_avg[i]->storage});
+            cl_mem p_mem = p32->gpu_data();
+            int p_off = p32->offset;
             cl_mem g_mem = g_c->gpu_data();
             int g_off = g_c->offset;
             cl_mem sq_mem = square_avg[i]->gpu_data();
             int sq_off = square_avg[i]->offset;
-            int size = p->numel();
+            int size = p32->numel();
 
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "rmsprop_step_kernel");
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&p_mem, &p_off, &g_mem, &g_off, &sq_mem, &sq_off, &alpha, &lr, &eps, &weight_decay, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
         } else {
-            float* p_ptr = p->data_ptr();
+            float* p_ptr = p32->data_ptr();
             float* g_ptr = g_c->data_ptr();
             float* sq_ptr = square_avg[i]->data_ptr();
-            size_t size = p->numel();
+            size_t size = p32->numel();
 
             ThreadPool::get().parallel_for(0, size, [&](int64_t j) {
                 float grad_val = g_ptr[j];
@@ -54,6 +57,10 @@ void RMSprop::step() {
                 sq_ptr[j] = alpha * sq_ptr[j] + (1.0f - alpha) * grad_val * grad_val;
                 p_ptr[j] -= lr * grad_val / (std::sqrt(sq_ptr[j]) + eps);
             });
+        }
+
+        if (need_cast) {
+            p->copy_(p32);
         }
     }
 }

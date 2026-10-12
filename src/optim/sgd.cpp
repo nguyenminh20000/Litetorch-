@@ -27,15 +27,18 @@ void SGD::step() {
         if (!p->is_contiguous()) {
             throw std::runtime_error("[litetorch Error] Optimizer parameter must be contiguous");
         }
-        auto g_c = g->is_contiguous() ? g : g->contiguous();
+        bool need_cast = (p->dtype != DataType::FP32);
+        auto p32 = need_cast ? p->cast(DataType::FP32) : p;
+        auto g32 = g->cast(DataType::FP32);
+        auto g_c = g32->is_contiguous() ? g32 : g32->contiguous();
 
-        if (p->device.type == DeviceType::GPU) {
-            StorageUseGuard guard({p->storage, g_c->storage});
-            cl_mem p_mem = p->gpu_data();
-            int p_off = p->offset;
+        if (p32->device.type == DeviceType::GPU) {
+            StorageUseGuard guard({p32->storage, g_c->storage});
+            cl_mem p_mem = p32->gpu_data();
+            int p_off = p32->offset;
             cl_mem g_mem = g_c->gpu_data();
             int g_off = g_c->offset;
-            int size = p->numel();
+            int size = p32->numel();
 
             cl_mem v_mem = nullptr;
             int v_off = 0;
@@ -54,9 +57,9 @@ void SGD::step() {
                 {&p_mem, &p_off, &g_mem, &g_off, &v_mem, &v_off, &has_momentum, &momentum, &dampening, &nesterov_val, &lr, &weight_decay, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float), sizeof(float), sizeof(int), sizeof(float), sizeof(float), sizeof(int)});
         } else {
-            float* p_ptr = p->data_ptr();
+            float* p_ptr = p32->data_ptr();
             float* g_ptr = g_c->data_ptr();
-            size_t size = p->numel();
+            size_t size = p32->numel();
 
             if (momentum != 0.0f) {
                 float* v_ptr = velocity[i]->data_ptr();
@@ -79,6 +82,10 @@ void SGD::step() {
                     p_ptr[j] -= lr * grad_val;
                 });
             }
+        }
+
+        if (need_cast) {
+            p->copy_(p32);
         }
     }
 }

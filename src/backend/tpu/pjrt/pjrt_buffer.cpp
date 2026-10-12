@@ -6,9 +6,53 @@
 namespace litetorch {
 namespace tpu_pjrt {
 
+namespace {
+
+size_t pjrt_element_size(int element_type) {
+    switch (static_cast<PJRT_Buffer_Type>(element_type)) {
+        case PJRT_Buffer_Type_PRED:
+        case PJRT_Buffer_Type_S8:
+        case PJRT_Buffer_Type_U8:
+        case PJRT_Buffer_Type_F8E5M2:
+        case PJRT_Buffer_Type_F8E4M3FN:
+        case PJRT_Buffer_Type_F8E4M3B11FNUZ:
+        case PJRT_Buffer_Type_F8E5M2FNUZ:
+        case PJRT_Buffer_Type_F8E4M3FNUZ:
+            return 1;
+        case PJRT_Buffer_Type_S16:
+        case PJRT_Buffer_Type_U16:
+        case PJRT_Buffer_Type_F16:
+        case PJRT_Buffer_Type_BF16:
+            return 2;
+        case PJRT_Buffer_Type_S32:
+        case PJRT_Buffer_Type_U32:
+        case PJRT_Buffer_Type_F32:
+            return 4;
+        case PJRT_Buffer_Type_S64:
+        case PJRT_Buffer_Type_U64:
+        case PJRT_Buffer_Type_F64:
+        case PJRT_Buffer_Type_C64:
+            return 8;
+        case PJRT_Buffer_Type_C128:
+            return 16;
+        default:
+            return 0;
+    }
+}
+
+}
+
 bool PjrtBuffer::from_host(const void* data, size_t bytes, const std::vector<int64_t>& dims, int element_type) {
     auto& pc = PjrtClient::instance();
-    if (!pc.is_available()) return false;
+    if (!pc.is_available() || !data) return false;
+    size_t elem = pjrt_element_size(element_type);
+    if (elem == 0) return false;
+    size_t expect = elem;
+    for (int64_t d : dims) {
+        if (d < 0) return false;
+        expect *= static_cast<size_t>(d);
+    }
+    if (bytes != expect) return false;
     const PJRT_Api* api = pc.api();
     PJRT_Client_BufferFromHostBuffer_Args args{};
     args.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;

@@ -1,5 +1,8 @@
 #include "litetorch/zero3_optimizer.h"
 #include "litetorch/backend.h"
+#include "litetorch/cl_backend.h"
+#include "litetorch/backend_route.h"
+#include "optim_utils.h"
 #include <cmath>
 
 namespace litetorch {
@@ -10,6 +13,8 @@ ZeRO3Optimizer::ZeRO3Optimizer(const std::vector<std::shared_ptr<Tensor>>& param
 
 void ZeRO3Optimizer::step() {
     t++;
+    float bias_correction1 = 1.0f - std::pow(beta1, t);
+    float bias_correction2 = 1.0f - std::pow(beta2, t);
     int rank = 0;
     int world_size = 1;
     if (distributed::ProcessGroup::get().is_initialized()) {
@@ -36,20 +41,40 @@ void ZeRO3Optimizer::step() {
             v[active_p.get()] = Tensor::zeros(active_p->shape, active_p->device, false);
         }
 
-        size_t active_size = active_p->numel();
-        float lr_t = lr * std::sqrt(1.0f - std::pow(beta2, t)) / (1.0f - std::pow(beta1, t));
+        bool need_cast = (active_p->dtype != DataType::FP32);
+        auto p32 = need_cast ? active_p->cast(DataType::FP32) : active_p;
+        auto g32 = active_p->grad->cast(DataType::FP32);
+        auto grad_c = g32->is_contiguous() ? g32 : g32->contiguous();
+        size_t active_size = p32->numel();
 
-        if (active_p->device.type == DeviceType::GPU) {
+        if (p32->device.type == DeviceType::GPU) {
             auto backend = BackendDispatcher::get().get_backend();
             if (backend && backend->is_available()) {
-                backend->adamw_step(active_p->gpu_data(), active_p->offset, active_p->grad->gpu_data(), active_p->grad->offset,
+                backend->adamw_step(p32->gpu_data(), p32->offset, grad_c->gpu_data(), grad_c->offset,
                                     m[active_p.get()]->gpu_data(), m[active_p.get()]->offset,
                                     v[active_p.get()]->gpu_data(), v[active_p.get()]->offset,
-                                    active_size, lr_t, beta1, beta2, eps, weight_decay);
+                                    active_size, lr, beta1, beta2, eps, weight_decay,
+                                    bias_correction1, bias_correction2);
+            } else {
+                StorageUseGuard guard({p32->storage, grad_c->storage, m[active_p.get()]->storage, v[active_p.get()]->storage});
+                cl_mem p_mem = p32->gpu_data();
+                int p_off = p32->offset;
+                cl_mem g_mem = grad_c->gpu_data();
+                int g_off = grad_c->offset;
+                cl_mem m_mem = m[active_p.get()]->gpu_data();
+                int m_off = m[active_p.get()]->offset;
+                cl_mem v_mem = v[active_p.get()]->gpu_data();
+                int v_off = v[active_p.get()]->offset;
+                int size = active_size;
+                auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
+                if (kernel) {
+                    rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
+                        {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
+                }
             }
         } else {
-            auto grad_c = active_p->grad->is_contiguous() ? active_p->grad : active_p->grad->contiguous();
-            float* p_ptr = active_p->data_ptr();
+            float* p_ptr = p32->data_ptr();
             float* g_ptr = grad_c->data_ptr();
             float* m_ptr = m[active_p.get()]->data_ptr();
             float* v_ptr = v[active_p.get()]->data_ptr();
@@ -57,9 +82,15 @@ void ZeRO3Optimizer::step() {
                 float g = g_ptr[i];
                 m_ptr[i] = beta1 * m_ptr[i] + (1.0f - beta1) * g;
                 v_ptr[i] = beta2 * v_ptr[i] + (1.0f - beta2) * g * g;
-                float update = m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
-                p_ptr[i] -= lr_t * (weight_decay * p_ptr[i] + update);
+                float m_hat = m_ptr[i] / bias_correction1;
+                float v_hat = v_ptr[i] / bias_correction2;
+                float update = m_hat / (std::sqrt(v_hat) + eps);
+                p_ptr[i] -= lr * (weight_decay * p_ptr[i] + update);
             }
+        }
+
+        if (need_cast) {
+            active_p->copy_(p32);
         }
     }
 
@@ -75,20 +106,40 @@ void ZeRO3Optimizer::step() {
                 v[p.get()] = Tensor::zeros(p->shape, p->device, false);
             }
 
-            size_t active_size = p->numel();
-            float lr_t = lr * std::sqrt(1.0f - std::pow(beta2, t)) / (1.0f - std::pow(beta1, t));
+            bool need_cast = (p->dtype != DataType::FP32);
+            auto p32 = need_cast ? p->cast(DataType::FP32) : p;
+            auto g32 = p->grad->cast(DataType::FP32);
+            auto grad_c = g32->is_contiguous() ? g32 : g32->contiguous();
+            size_t active_size = p32->numel();
 
-            if (p->device.type == DeviceType::GPU) {
+            if (p32->device.type == DeviceType::GPU) {
                 auto backend = BackendDispatcher::get().get_backend();
                 if (backend && backend->is_available()) {
-                    backend->adamw_step(p->gpu_data(), p->offset, p->grad->gpu_data(), p->grad->offset,
+                    backend->adamw_step(p32->gpu_data(), p32->offset, grad_c->gpu_data(), grad_c->offset,
                                         m[p.get()]->gpu_data(), m[p.get()]->offset,
                                         v[p.get()]->gpu_data(), v[p.get()]->offset,
-                                        active_size, lr_t, beta1, beta2, eps, weight_decay);
+                                        active_size, lr, beta1, beta2, eps, weight_decay,
+                                        bias_correction1, bias_correction2);
+                } else {
+                    StorageUseGuard guard({p32->storage, grad_c->storage, m[p.get()]->storage, v[p.get()]->storage});
+                    cl_mem p_mem = p32->gpu_data();
+                    int p_off = p32->offset;
+                    cl_mem g_mem = grad_c->gpu_data();
+                    int g_off = grad_c->offset;
+                    cl_mem m_mem = m[p.get()]->gpu_data();
+                    int m_off = m[p.get()]->offset;
+                    cl_mem v_mem = v[p.get()]->gpu_data();
+                    int v_off = v[p.get()]->offset;
+                    int size = active_size;
+                    auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "adamw_step_kernel");
+                    if (kernel) {
+                        rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
+                            {&p_mem, &p_off, &g_mem, &g_off, &m_mem, &m_off, &v_mem, &v_off, &beta1, &beta2, &lr, &eps, &weight_decay, &bias_correction1, &bias_correction2, &size},
+                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(float), sizeof(int)});
+                    }
                 }
             } else {
-                auto grad_c = p->grad->is_contiguous() ? p->grad : p->grad->contiguous();
-                float* p_ptr = p->data_ptr();
+                float* p_ptr = p32->data_ptr();
                 float* g_ptr = grad_c->data_ptr();
                 float* m_ptr = m[p.get()]->data_ptr();
                 float* v_ptr = v[p.get()]->data_ptr();
@@ -96,9 +147,15 @@ void ZeRO3Optimizer::step() {
                     float g = g_ptr[i];
                     m_ptr[i] = beta1 * m_ptr[i] + (1.0f - beta1) * g;
                     v_ptr[i] = beta2 * v_ptr[i] + (1.0f - beta2) * g * g;
-                    float update = m_ptr[i] / (std::sqrt(v_ptr[i]) + eps);
-                    p_ptr[i] -= lr_t * (weight_decay * p_ptr[i] + update);
+                    float m_hat = m_ptr[i] / bias_correction1;
+                    float v_hat = v_ptr[i] / bias_correction2;
+                    float update = m_hat / (std::sqrt(v_hat) + eps);
+                    p_ptr[i] -= lr * (weight_decay * p_ptr[i] + update);
                 }
+            }
+
+            if (need_cast) {
+                p->copy_(p32);
             }
         }
 

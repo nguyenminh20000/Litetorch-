@@ -75,6 +75,14 @@ bool PjrtExecutable::await() {
 
 void PjrtExecutable::destroy() {
     auto& pc = PjrtClient::instance();
+    if (execute_event_ && pc.api()) {
+        PJRT_Event_Destroy_Args dargs{};
+        dargs.struct_size = PJRT_Event_Destroy_Args_STRUCT_SIZE;
+        dargs.event = static_cast<PJRT_Event*>(execute_event_);
+        PJRT_Error* err = pc.api()->PJRT_Event_Destroy(&dargs);
+        if (err) pc.check(err, "Event_Destroy");
+    }
+    execute_event_ = nullptr;
     if (exe_ && pc.api()) {
         PJRT_LoadedExecutable_Destroy_Args args{};
         args.struct_size = PJRT_LoadedExecutable_Destroy_Args_STRUCT_SIZE;
@@ -83,7 +91,6 @@ void PjrtExecutable::destroy() {
         if (err) pc.check(err, "LoadedExecutable_Destroy");
     }
     exe_ = nullptr;
-    execute_event_ = nullptr;
 }
 
 PjrtExecutableCache& PjrtExecutableCache::instance() {
