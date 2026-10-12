@@ -1,6 +1,7 @@
 #include "litetorch/ops.h"
 #include "litetorch/tensor.h"
 #include "litetorch/thread_pool.h"
+#include "litetorch/autograd.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -28,6 +29,10 @@ std::shared_ptr<Tensor> flash_decoding(
     }
 
     if (num_splits <= 1) {
+        return flash_attention(q, k, v);
+    }
+
+    if (Autograd::is_grad_enabled() && (q->requires_grad || k->requires_grad || v->requires_grad)) {
         return flash_attention(q, k, v);
     }
 

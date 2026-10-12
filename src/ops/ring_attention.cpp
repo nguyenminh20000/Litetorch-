@@ -2,6 +2,8 @@
 #include "litetorch/tensor.h"
 #include "litetorch/distributed.h"
 #include "litetorch/thread_pool.h"
+#include "litetorch/autograd.h"
+#include "litetorch/backend_route.h"
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -14,10 +16,15 @@ std::shared_ptr<Tensor> ring_attention(
     std::shared_ptr<Tensor> q,
     std::shared_ptr<Tensor> k,
     std::shared_ptr<Tensor> v,
-    std::shared_ptr<distributed::ProcessGroup> pg)
+    std::shared_ptr<distributed::ProcessGroup> pg,
+    bool causal)
 {
     if (!pg || pg->get_world_size() <= 1) {
-        return flash_attention(q, k, v);
+        return flash_attention(q, k, v, causal);
+    }
+
+    if (Autograd::is_grad_enabled() && (q->requires_grad || k->requires_grad || v->requires_grad)) {
+        throw std::runtime_error("[litetorch Error] ring_attention: backward not supported for multi-rank; use flash_attention for training");
     }
 
     int rank = pg->get_rank();
@@ -68,6 +75,7 @@ std::shared_ptr<Tensor> ring_attention(
         float* v_ptr = v_curr->data_ptr();
         float* out_ptr = out->data_ptr();
         float* L_ptr = L->data_ptr();
+        int kv_rank = (rank - step + world_size) % world_size;
 
         ThreadPool::get().parallel_for(0, B * H * T_local, [&](int64_t idx) {
             int64_t b = idx / (H * T_local);
@@ -82,6 +90,10 @@ std::shared_ptr<Tensor> ring_attention(
             float m_local = -std::numeric_limits<float>::infinity();
 
             for (int64_t j = 0; j < T_local; ++j) {
+                if (causal && (int64_t)kv_rank * T_local + j > (int64_t)rank * T_local + t) {
+                    S[j] = -std::numeric_limits<float>::infinity();
+                    continue;
+                }
                 float dot = 0.0f;
                 int64_t q_offset = b * (H * T_local * D) + h * (T_local * D) + t * D;
                 int64_t k_offset = b * (H_kv * T_local * D) + h_kv * (T_local * D) + j * D;
@@ -140,6 +152,10 @@ std::shared_ptr<Tensor> ring_attention(
             k_curr = k_next;
             v_curr = v_next;
         }
+    }
+
+    if (out->device.type == DeviceType::GPU) {
+        rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), out->data_ptr());
     }
 
     return out;

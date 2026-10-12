@@ -17,7 +17,10 @@ RMSNorm::RMSNorm(const std::vector<int64_t>& normalized_shape, float eps)
 }
 
 std::shared_ptr<Tensor> RMSNorm::forward(std::shared_ptr<Tensor> x) {
-    auto w = weight->device == x->device ? weight : weight->to(x->device);
+    auto w = weight;
+    if (w->device != x->device || w->dtype != x->dtype) {
+        w = w->to(x->device, x->dtype);
+    }
     auto out = Ops::rmsnorm(x, w, eps);
     return out->view(x->shape);
 }
@@ -70,7 +73,7 @@ std::shared_ptr<Tensor> GPTBlock::causal_mask(int64_t T, const Device& device) {
 
 void GPTBlock::ensure_rope_cache(int64_t T, int64_t D, const Device& device) {
     if (rope_cache_valid_ && rope_cos_cache_ && rope_cos_cache_->shape[0] == T &&
-        rope_cache_device_ == device) {
+        rope_cos_cache_->shape[1] == D / 2 && rope_cache_device_ == device) {
         return;
     }
     int64_t half = D / 2;

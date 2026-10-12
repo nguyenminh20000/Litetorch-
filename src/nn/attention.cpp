@@ -81,9 +81,21 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> quer
             auto qq = ensure_contiguous(qkv_proj->forward(query));
             auto kk = ensure_contiguous(qkv_proj->forward(key));
             auto vv = ensure_contiguous(qkv_proj->forward(value));
-            q4d = Ops::qkv_extract(qq, num_heads, 0);
-            k4d = Ops::qkv_extract(kk, num_heads, 1);
-            v4d = Ops::qkv_extract(vv, num_heads, 2);
+            if (qq->dtype == DataType::FP32) {
+                q4d = Ops::qkv_extract(qq, num_heads, 0);
+                k4d = Ops::qkv_extract(kk, num_heads, 1);
+                v4d = Ops::qkv_extract(vv, num_heads, 2);
+            } else {
+                auto split_qkv = [&](std::shared_ptr<Tensor> x, int64_t T, int64_t index) {
+                    auto parts = Ops::chunk(x, 3, 2);
+                    auto p = parts[static_cast<size_t>(index)];
+                    auto pc = p->is_contiguous() ? p : p->contiguous();
+                    return pc->view({B, T, num_heads, head_dim})->transpose(1, 2);
+                };
+                q4d = split_qkv(qq, Tq, 0);
+                k4d = split_qkv(kk, Tk, 1);
+                v4d = split_qkv(vv, Tv, 2);
+            }
         } else {
             auto split_heads = [&](std::shared_ptr<Tensor> x, int64_t T) {
                 auto r = ensure_contiguous(x)->view({B, T, num_heads, head_dim});
@@ -98,7 +110,7 @@ std::shared_ptr<Tensor> MultiHeadAttention::forward(std::shared_ptr<Tensor> quer
         auto vbh = ensure_contiguous(v4d)->view({B * num_heads, Tv, head_dim});
         auto kbh_t = ensure_contiguous(kbh->transpose(1, 2));
         auto scores = Ops::bmm(qbh, kbh_t);
-        auto scale = Tensor::from_vector({1.0f / std::sqrt(static_cast<float>(head_dim))}, {1}, scores->device);
+        auto scale = Tensor::from_vector({1.0f / std::sqrt(static_cast<float>(head_dim))}, {1}, scores->device, false, scores->dtype);
         scores = Ops::mul(scores, scale);
         auto probs = Ops::softmax(scores, -1);
         if (dropout_p > 0.0) {

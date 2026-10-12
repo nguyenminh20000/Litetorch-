@@ -89,6 +89,19 @@ void GPT2B::to(const Device& device) {
     n_stages = 1;
 }
 
+void GPT2B::half() {
+    if (tok_emb->weight->dtype == DataType::FP32) {
+        tok_emb->weight = tok_emb->weight->cast(DataType::FP16);
+    }
+    for (auto& b : blocks) b->half();
+    final_norm->half();
+    if (tied) {
+        lm_head->weight = tok_emb->weight;
+    } else {
+        lm_head->half();
+    }
+}
+
 std::vector<std::shared_ptr<Module>> GPT2B::children() {
     std::vector<std::shared_ptr<Module>> c;
     c.push_back(tok_emb);

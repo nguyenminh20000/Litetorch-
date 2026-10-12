@@ -116,11 +116,16 @@ public:
             return ret;
         }
 
-        auto k_rep = k;
-        auto v_rep = v;
+        auto qf = q->dtype == DataType::FP32 ? q : q->cast(DataType::FP32);
+        auto kf = k->dtype == DataType::FP32 ? k : k->cast(DataType::FP32);
+        auto vf = v->dtype == DataType::FP32 ? v : v->cast(DataType::FP32);
+        auto goutf = gout_c->dtype == DataType::FP32 ? gout_c : gout_c->cast(DataType::FP32);
+
+        auto k_rep = kf;
+        auto v_rep = vf;
         if (H > H_kv) {
-            auto k_vec = k->to_vector();
-            auto v_vec = v->to_vector();
+            auto k_vec = kf->to_vector();
+            auto v_vec = vf->to_vector();
             std::vector<float> k_rep_vec(B * H * Tk * D);
             std::vector<float> v_rep_vec(B * H * Tk * D);
             int64_t g = H / H_kv;
@@ -137,11 +142,11 @@ public:
                     }
                 }
             }
-            k_rep = Tensor::from_vector(k_rep_vec, {B, H, Tk, D}, q->device);
-            v_rep = Tensor::from_vector(v_rep_vec, {B, H, Tk, D}, q->device);
+            k_rep = Tensor::from_vector(k_rep_vec, {B, H, Tk, D}, qf->device);
+            v_rep = Tensor::from_vector(v_rep_vec, {B, H, Tk, D}, qf->device);
         }
 
-        auto q_3d = q->view({B * H, Tq, D});
+        auto q_3d = qf->view({B * H, Tq, D});
         auto k_t = k_rep->transpose(2, 3);
         auto k_t_3d = (k_t->strides[0] == k_t->shape[1] * k_t->strides[1])
             ? k_t->as_strided({B * H, D, Tk}, {k_t->strides[1], k_t->strides[2], k_t->strides[3]})
@@ -149,7 +154,7 @@ public:
         auto scores_3d = Ops::bmm(q_3d, k_t_3d);
         auto scores_4d = scores_3d->view({B, H, Tq, Tk});
 
-        auto scale_tensor = Tensor::from_vector({scale}, {1}, q->device);
+        auto scale_tensor = Tensor::from_vector({scale}, {1}, qf->device);
         auto scaled_scores = Ops::mul(scores_4d, scale_tensor);
         // The forward applies the causal mask before softmax; the recomputed
         // attention here must do the same, otherwise dQ/dK/dV are computed
@@ -166,7 +171,7 @@ public:
                     }
                 }
             }
-            masked_scores = Tensor::from_vector(sv, {B, H, Tq, Tk}, q->device);
+            masked_scores = Tensor::from_vector(sv, {B, H, Tq, Tk}, qf->device);
         }
         auto attn = Ops::softmax(masked_scores, -1);
 
@@ -174,7 +179,7 @@ public:
         auto v_3d = v_rep->is_contiguous() ? v_rep->view({B * H, Tk, D}) : v_rep->contiguous()->view({B * H, Tk, D});
 
         auto attn_t_3d = attn_3d->transpose(1, 2);
-        auto grad_output_3d = gout_c->is_contiguous() ? gout_c->view({B * H, Tq, D}) : gout_c->contiguous()->view({B * H, Tq, D});
+        auto grad_output_3d = goutf->is_contiguous() ? goutf->view({B * H, Tq, D}) : goutf->contiguous()->view({B * H, Tq, D});
         auto grad_v_3d = Ops::bmm(attn_t_3d, grad_output_3d);
         auto grad_v = grad_v_3d->is_contiguous() ? grad_v_3d->view({B, H, Tk, D}) : grad_v_3d->contiguous()->view({B, H, Tk, D});
 
@@ -221,9 +226,13 @@ public:
                     }
                 }
             }
-            grad_k = Tensor::from_vector(gk_red, {B, H_kv, Tk, D}, q->device);
-            grad_v = Tensor::from_vector(gv_red, {B, H_kv, Tk, D}, q->device);
+            grad_k = Tensor::from_vector(gk_red, {B, H_kv, Tk, D}, qf->device);
+            grad_v = Tensor::from_vector(gv_red, {B, H_kv, Tk, D}, qf->device);
         }
+
+        if (grad_q->dtype != q->dtype) grad_q = grad_q->cast(q->dtype);
+        if (grad_k->dtype != k->dtype) grad_k = grad_k->cast(k->dtype);
+        if (grad_v->dtype != v->dtype) grad_v = grad_v->cast(v->dtype);
 
         std::vector<std::shared_ptr<Tensor>> ret;
         ret.push_back(grad_q);
@@ -300,10 +309,12 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
             }
         } else {
             void* kernel = nullptr;
-            if (q_c->dtype == DataType::FP16) {
-                kernel = rt_gpu_get_kernel("", "", "flash_attention_half_forward");
-            } else {
-                kernel = rt_gpu_get_kernel_by_id(KernelID::FlashAttentionForward);
+            if (!causal) {
+                if (q_c->dtype == DataType::FP16) {
+                    kernel = rt_gpu_get_kernel("", "", "flash_attention_half_forward");
+                } else {
+                    kernel = rt_gpu_get_kernel_by_id(KernelID::FlashAttentionForward);
+                }
             }
             if (kernel) {
                 run_gpu = true;
@@ -436,6 +447,7 @@ std::shared_ptr<Tensor> paged_attention(
     if (block_tables->dtype != DataType::INT32 || context_lens->dtype != DataType::INT32) {
         throw std::runtime_error("[litetorch Error] paged_attention: block_tables and context_lens must be INT32");
     }
+    auto q_fp32 = q->dtype == DataType::FP32 ? q : q->cast(DataType::FP32);
     auto out = Tensor::create(q->shape, q->device, false);
     int64_t num_seqs = q->shape[0];
     int64_t num_heads = q->shape[1];
@@ -453,7 +465,7 @@ std::shared_ptr<Tensor> paged_attention(
     if (q->device.type == DeviceType::CPU) {
         auto bt_c = block_tables->is_contiguous() ? block_tables : block_tables->contiguous();
         auto cl_c = context_lens->is_contiguous() ? context_lens : context_lens->contiguous();
-        float* q_ptr = q->data_ptr();
+        float* q_ptr = q_fp32->data_ptr();
         void* k_void = k_cache->storage->cpu_data;
         void* v_void = v_cache->storage->cpu_data;
         DataType k_dtype = k_cache->dtype;
@@ -552,9 +564,9 @@ std::shared_ptr<Tensor> paged_attention(
         auto k_to_use = k_cache->dtype == DataType::FP32 ? k_cache : k_cache->cast(DataType::FP32);
         auto v_to_use = v_cache->dtype == DataType::FP32 ? v_cache : v_cache->cast(DataType::FP32);
 
-        StorageUseGuard guard({q->storage, k_to_use->storage, v_to_use->storage, block_tables->storage, context_lens->storage, out->storage});
-        cl_mem q_mem = q->gpu_data();
-        int q_off = q->offset;
+        StorageUseGuard guard({q_fp32->storage, k_to_use->storage, v_to_use->storage, block_tables->storage, context_lens->storage, out->storage});
+        cl_mem q_mem = q_fp32->gpu_data();
+        int q_off = q_fp32->offset;
         cl_mem k_mem = k_to_use->gpu_data();
         int k_off = k_to_use->offset;
         cl_mem v_mem = v_to_use->gpu_data();
@@ -584,6 +596,9 @@ std::shared_ptr<Tensor> paged_attention(
              sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float)});
     }
 
+    if (q->dtype != DataType::FP32) {
+        return out->cast(q->dtype);
+    }
     return out;
 }
 
