@@ -754,6 +754,7 @@ static const KernelMap& gpu_kernel_map() {
         m["cross_entropy_loss_backward"] = (void*)&cross_entropy_loss_backward;
         m["fill_zero"] = (void*)&fill_zero;
         m["sum_backward"] = (void*)&sum_backward;
+        m["sum_backward_fp16"] = (void*)&sum_backward_fp16;
         m["fake_quantize_forward"] = (void*)&fake_quantize_forward;
         m["cast_fp32_to_fp16"] = (void*)&cast_fp32_to_fp16;
         m["cast_fp16_to_fp32"] = (void*)&cast_fp16_to_fp32;

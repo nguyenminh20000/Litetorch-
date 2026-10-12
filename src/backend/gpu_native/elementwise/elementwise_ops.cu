@@ -627,3 +627,9 @@ extern "C" __global__ void neg_forward_fp16(const __half* A, int a_off, __half* 
 extern "C" __global__ void relu_backward_fp16(const __half* A, int a_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(A, a_off, G, g_off, GI, gi_off, size, ReluBackOpH()); }
 extern "C" __global__ void sigmoid_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, SigmoidBackOpH()); }
 extern "C" __global__ void tanh_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, TanhBackOpH()); }
+extern "C" __global__ void sum_backward_fp16(__half* grad_input, int gin_off, const __half* grad_output, int gout_off, int size) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < size) {
+        grad_input[gin_off + id] = grad_output[gout_off];
+    }
+}

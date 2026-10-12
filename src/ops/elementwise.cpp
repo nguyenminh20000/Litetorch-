@@ -1349,7 +1349,12 @@ public:
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
-            auto kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
+            void* kernel = nullptr;
+            if (grad_output->dtype == DataType::FP16) {
+                kernel = rt_gpu_get_kernel("", "", "sum_backward_fp16");
+            } else {
+                kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
+            }
             if (kernel) {
                 run_gpu = true;
                 cl_mem gout_mem = grad_output->gpu_data();
@@ -1459,7 +1464,12 @@ public:
         float num_el = static_cast<float>(grad_input->numel());
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
-            auto kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
+            void* kernel = nullptr;
+            if (grad_output->dtype == DataType::FP16) {
+                kernel = rt_gpu_get_kernel("", "", "sum_backward_fp16");
+            } else {
+                kernel = rt_gpu_get_kernel_by_id(KernelID::SumBackward);
+            }
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = grad_output->gpu_data();
@@ -1468,7 +1478,7 @@ public:
                 int out_off = grad_input->offset;
                 int size = grad_input->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
-                    {&in_mem, &in_off, &out_mem, &out_off, &size},
+                    {&out_mem, &out_off, &in_mem, &in_off, &size},
                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
                 
                 auto scale_t = Tensor::from_vector({1.0f / num_el}, {1}, grad_output->device);
