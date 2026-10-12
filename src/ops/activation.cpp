@@ -79,7 +79,7 @@ public:
         if (input_c->device.type == DeviceType::GPU) {
             void* kernel = nullptr;
             if (input_c->dtype == DataType::FP16) {
-                kernel = fp16_ew_kernel("relu_backward_fp16");
+                kernel = rt_gpu_get_kernel("", "", "relu_backward_fp16");
             } else {
                 kernel = cached_kernel<KernelID::ReluBackward>();
             }
@@ -145,7 +145,7 @@ public:
         if (out_c->device.type == DeviceType::GPU) {
             void* kernel = nullptr;
             if (out_c->dtype == DataType::FP16) {
-                kernel = fp16_ew_kernel("sigmoid_backward_fp16");
+                kernel = rt_gpu_get_kernel("", "", "sigmoid_backward_fp16");
             } else {
                 kernel = cached_kernel<KernelID::SigmoidBackward>();
             }
@@ -212,7 +212,7 @@ public:
         if (out_c->device.type == DeviceType::GPU) {
             void* kernel = nullptr;
             if (out_c->dtype == DataType::FP16) {
-                kernel = fp16_ew_kernel("tanh_backward_fp16");
+                kernel = rt_gpu_get_kernel("", "", "tanh_backward_fp16");
             } else {
                 kernel = cached_kernel<KernelID::TanhBackward>();
             }
