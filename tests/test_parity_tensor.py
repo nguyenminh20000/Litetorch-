@@ -19,6 +19,12 @@ def test_cuda_is_available():
     assert a == (lt.cuda.device_count() > 0)
 
 
+def test_cuda_is_available():
+    a = lt.cuda.is_available()
+    assert isinstance(a, bool)
+    assert a == (lt.cuda.device_count() > 0)
+
+
 def test_cuda_current_device():
     d = lt.cuda.current_device()
     assert isinstance(d, int) and d >= 0
