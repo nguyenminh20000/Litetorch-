@@ -93,16 +93,23 @@ __global__ void fa_fwd_kernel(const T* Q, const T* K, const T* V, T* O, T* P_out
         __syncthreads();
 
         float s = -1e37f;
-        if (qi < Tq && lane < BCMAX) {
-            int64_t kj = j0 + lane;
+        if (qi < Tq) {
             float dot = 0.0f;
-#pragma unroll
-            for (int t = 0; t < DL; t++) {
-                int d = (t << 5) + lane;
-                if (d < D) dot = fmaf(q_reg[t], KV[lane][d], dot);
+            int Di = (int)D;
+            for (int d = 0; d < Di; ++d) {
+#ifdef __HIP_PLATFORM_AMD__
+                float qv = __shfl(q_reg[d >> 5], d & 31);
+#else
+                float qv = __shfl_sync(0xffffffff, q_reg[d >> 5], d & 31);
+#endif
+                float kv = (lane < BCMAX) ? KV[lane][d] : 0.0f;
+                dot = fmaf(qv, kv, dot);
             }
-            s = dot * scale;
-            if (kj >= Tk || (causal && kj > qi)) s = -1e37f;
+            if (lane < BCMAX) {
+                int64_t kj = j0 + lane;
+                s = dot * scale;
+                if (kj >= Tk || (causal && kj > qi)) s = -1e37f;
+            }
         }
         float rowmax = warp_reduce_max(s);
         float m_new = fmaxf(m, rowmax);
@@ -163,18 +170,25 @@ __global__ void fa_fwd_kernel(const T* Q, const T* K, const T* V, T* O, T* P_out
                 KV[jj][dd] = v;
             }
             __syncthreads();
-            if (qi < Tq && lane < BCMAX) {
-                int64_t kj = j0 + lane;
-                if (kj < Tk) {
-                    float dot = 0.0f;
-#pragma unroll
-                    for (int t = 0; t < DL; t++) {
-                        int d = (t << 5) + lane;
-                        if (d < D) dot = fmaf(q_reg[t], KV[lane][d], dot);
+            if (qi < Tq) {
+                float dot = 0.0f;
+                int Di = (int)D;
+                for (int d = 0; d < Di; ++d) {
+#ifdef __HIP_PLATFORM_AMD__
+                    float qv = __shfl(q_reg[d >> 5], d & 31);
+#else
+                    float qv = __shfl_sync(0xffffffff, q_reg[d >> 5], d & 31);
+#endif
+                    float kv = (lane < BCMAX) ? KV[lane][d] : 0.0f;
+                    dot = fmaf(qv, kv, dot);
+                }
+                if (lane < BCMAX) {
+                    int64_t kj = j0 + lane;
+                    if (kj < Tk) {
+                        float p = 0.0f;
+                        if (!(causal && kj > qi)) p = expf(dot * scale - lse);
+                        P_out[p_head_off + qi * Tk + kj] = FaDtype<T>::from_float(p);
                     }
-                    float p = 0.0f;
-                    if (!(causal && kj > qi)) p = expf(dot * scale - lse);
-                    P_out[p_head_off + qi * Tk + kj] = FaDtype<T>::from_float(p);
                 }
             }
             __syncthreads();
@@ -187,6 +201,7 @@ static void launch_fa_fwd(const T* Q, const T* K, const T* V, T* O, T* P_out,
                           int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
                           int64_t D, float scale, int causal) {
     if (D <= 0 || D > 256) throw std::runtime_error("[litetorch] flash_attention: head dim D out of range (1..256)");
+    if (H_kv <= 0 || H <= 0 || H % H_kv != 0) throw std::runtime_error("[litetorch] flash_attention: H must be divisible by H_kv");
     const int Br = 8;
     int64_t tiles = B * H * ((Tq + Br - 1) / Br);
     if (D <= 32) {
