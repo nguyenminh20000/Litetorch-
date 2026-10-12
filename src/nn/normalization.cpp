@@ -1,6 +1,7 @@
 #include "litetorch/nn.h"
 #include "litetorch/ops.h"
 #include <algorithm>
+#include <stdexcept>
 
 namespace litetorch {
 namespace nn {
@@ -31,16 +32,14 @@ std::shared_ptr<Tensor> BatchNorm2d::forward(std::shared_ptr<Tensor> input) {
         w = Tensor::ones({num_features}, input->device, false, input->dtype);
         b = Tensor::zeros({num_features}, input->device, false, input->dtype);
     } else if (w && w->device != input->device) {
-        w = w->to(input->device);
-        b = b->to(input->device);
+        throw std::runtime_error("[litetorch Error] BatchNorm2d: param device differs from input device; call .to(device) on the module");
     }
     if (!track_running_stats) {
         rm = Tensor::zeros({num_features}, input->device, false, input->dtype);
         rv = Tensor::ones({num_features}, input->device, false, input->dtype);
         train = true;
     } else if (rm && rm->device != input->device) {
-        rm = rm->to(input->device);
-        rv = rv->to(input->device);
+        throw std::runtime_error("[litetorch Error] BatchNorm2d: running stats device differs from input device; call .to(device) on the module");
     }
     return Ops::batch_norm2d(input, rm, rv, w, b, train, momentum, eps);
 }
@@ -68,6 +67,9 @@ LayerNorm::LayerNorm(const std::vector<int64_t>& normalized_shape, float eps)
 }
 
 std::shared_ptr<Tensor> LayerNorm::forward(std::shared_ptr<Tensor> input) {
+    if (weight->device != input->device || bias->device != input->device) {
+        throw std::runtime_error("[litetorch Error] LayerNorm: param device differs from input device; call .to(device) on the module");
+    }
     return Ops::layer_norm(input, normalized_shape, weight, bias, eps);
 }
 
