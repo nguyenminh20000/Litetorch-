@@ -6,9 +6,17 @@
 #include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <limits>
+#include <string>
+#include <unordered_map>
+#include <unistd.h>
+#ifdef __linux__
+#include <dlfcn.h>
+#endif
 
 namespace litetorch {
 
@@ -111,6 +119,8 @@ std::vector<int64_t> broadcast_shapes(const std::vector<int64_t>& shape_a, const
     return result;
 }
 }
+
+#include "fp16_ew_bridge.h"
 
 namespace Ops {
 
@@ -377,6 +387,9 @@ public:
 };
 
 std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (auto out = try_binary_fp16(a, b, "elementwise_add_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); },
+            false)) return out;
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
         DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
         auto a_fp32 = cast(a, DataType::FP32);
@@ -507,6 +520,9 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (auto out = try_binary_fp16(a, b, "elementwise_sub_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); },
+            false)) return out;
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
         DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
         auto a_fp32 = cast(a, DataType::FP32);
@@ -637,6 +653,9 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (auto out = try_binary_fp16(a, b, "elementwise_mul_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
         DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
         auto a_fp32 = cast(a, DataType::FP32);
@@ -767,6 +786,9 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
 }
 
 std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    if (auto out = try_binary_fp16(a, b, "elementwise_div_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<DivNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
         DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
         auto a_fp32 = cast(a, DataType::FP32);
@@ -977,6 +999,9 @@ public:
 };
 
 std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "sqrt_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<SqrtNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = sqrt(a_fp32);
@@ -1041,6 +1066,9 @@ public:
 };
 
 std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "exp_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<ExpNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = exp(a_fp32);
@@ -1104,6 +1132,9 @@ public:
 };
 
 std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "log_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<LogNode>(); },
+            false)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = log(a_fp32);
@@ -1177,6 +1208,9 @@ public:
 };
 
 std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "abs_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<AbsNode>(); },
+            false)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = abs(a_fp32);
@@ -1239,6 +1273,9 @@ public:
 };
 
 std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "neg_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<NegNode>(); },
+            false)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = neg(a_fp32);

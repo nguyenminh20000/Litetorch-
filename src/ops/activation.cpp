@@ -34,6 +34,8 @@ struct StorageUseGuard {
 };
 }
 
+#include "fp16_ew_bridge.h"
+
 class ReluNode : public Node {
 public:
     ReluNode() : Node("ReLU") {}
@@ -346,6 +348,9 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "relu_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<ReluNode>(); },
+            false)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = relu(a_fp32);
@@ -396,6 +401,9 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
 }
 
 std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "sigmoid_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<SigmoidNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = sigmoid(a_fp32);
@@ -446,6 +454,9 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
 }
 
 std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
+    if (auto out = try_unary_fp16(a, "tanh_forward_fp16",
+            [&]() -> std::shared_ptr<Node> { return std::make_shared<TanhNode>(); },
+            true)) return out;
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = tanh(a_fp32);

@@ -533,3 +533,49 @@ extern "C" void gpu_cat_backward(
         (const float*)grad_output, gout_off, (float*)grad_input, gin_off, outer_size, inner_size, dim_size, concat_dim_size, offset);
 #endif
 }
+
+template<typename Op>
+__device__ void binary_kernel_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size, Op op) {
+    for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < size; id += blockDim.x * gridDim.x) {
+        C[c_off + id] = op(A[a_off + id], B[b_off + id]);
+    }
+}
+
+template<typename Op>
+__device__ void unary_kernel_fp16(const __half* A, int a_off, __half* B, int b_off, int size, Op op) {
+    for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < size; id += blockDim.x * gridDim.x) {
+        B[b_off + id] = op(A[a_off + id]);
+    }
+}
+
+struct AddOpH { __device__ __half operator()(__half a, __half b) const { return __hadd(a, b); } };
+struct SubOpH { __device__ __half operator()(__half a, __half b) const { return __hsub(a, b); } };
+struct MulOpH { __device__ __half operator()(__half a, __half b) const { return __hmul(a, b); } };
+struct DivOpH { __device__ __half operator()(__half a, __half b) const { return __hdiv(a, b); } };
+struct ReluOpH { __device__ __half operator()(__half a) const { return __hgt(a, __half(0.0f)) ? a : __half(0.0f); } };
+struct AbsOpH { __device__ __half operator()(__half a) const { return __habs(a); } };
+struct NegOpH { __device__ __half operator()(__half a) const { return __hneg(a); } };
+struct SigmoidOpH { __device__ __half operator()(__half a) const { float x = __half2float(a); return __float2half(1.0f / (1.0f + expf(-x))); } };
+struct TanhOpH { __device__ __half operator()(__half a) const { float x = __half2float(a); return __float2half(tanhf(x)); } };
+struct SqrtOpH { __device__ __half operator()(__half a) const { return hsqrt(a); } };
+struct ExpOpH { __device__ __half operator()(__half a) const { return hexp(a); } };
+struct LogOpH { __device__ __half operator()(__half a) const { float x = __half2float(a); return __float2half(logf(x)); } };
+struct ReluBackOpH { __device__ __half operator()(__half a, __half g) const { return __hgt(a, __half(0.0f)) ? g : __half(0.0f); } };
+struct SigmoidBackOpH { __device__ __half operator()(__half o, __half g) const { float of = __half2float(o); return __float2half(__half2float(g) * of * (1.0f - of)); } };
+struct TanhBackOpH { __device__ __half operator()(__half o, __half g) const { float of = __half2float(o); return __float2half(__half2float(g) * (1.0f - of * of)); } };
+
+extern "C" __global__ void elementwise_add_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, AddOpH()); }
+extern "C" __global__ void elementwise_sub_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, SubOpH()); }
+extern "C" __global__ void elementwise_mul_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, MulOpH()); }
+extern "C" __global__ void elementwise_div_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, DivOpH()); }
+extern "C" __global__ void relu_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, ReluOpH()); }
+extern "C" __global__ void sigmoid_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, SigmoidOpH()); }
+extern "C" __global__ void tanh_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, TanhOpH()); }
+extern "C" __global__ void sqrt_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, SqrtOpH()); }
+extern "C" __global__ void exp_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, ExpOpH()); }
+extern "C" __global__ void log_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, LogOpH()); }
+extern "C" __global__ void abs_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, AbsOpH()); }
+extern "C" __global__ void neg_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, NegOpH()); }
+extern "C" __global__ void relu_backward_fp16(const __half* A, int a_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(A, a_off, G, g_off, GI, gi_off, size, ReluBackOpH()); }
+extern "C" __global__ void sigmoid_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, SigmoidBackOpH()); }
+extern "C" __global__ void tanh_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, TanhBackOpH()); }
