@@ -6,6 +6,7 @@
 #include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 
@@ -32,6 +33,32 @@ struct StorageUseGuard {
         }
     }
 };
+inline uint16_t act_float_to_half(float f) {
+    uint32_t x = *reinterpret_cast<uint32_t*>(&f);
+    uint32_t sign = (x >> 16) & 0x8000;
+    uint32_t exp = (x >> 23) & 0xff;
+    uint32_t mant = x & 0x7fffff;
+    if (exp == 0) return static_cast<uint16_t>(sign);
+    if (exp == 255) return static_cast<uint16_t>(sign | 0x7c00 | (mant ? 0x200 : 0));
+    int nexp = static_cast<int>(exp) - 127 + 15;
+    if (nexp >= 31) return static_cast<uint16_t>(sign | 0x7c00);
+    if (nexp <= 0) return static_cast<uint16_t>(sign);
+    return static_cast<uint16_t>(sign | (nexp << 10) | (mant >> 13));
+}
+inline float act_half_to_float(uint16_t h) {
+    uint32_t sign = (h >> 15) & 0x1;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t mant = h & 0x3ff;
+    uint32_t f;
+    if (exp == 0) {
+        f = sign << 31;
+    } else if (exp == 31) {
+        f = (sign << 31) | 0x7f800000 | (mant << 13);
+    } else {
+        f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+    }
+    return *reinterpret_cast<float*>(&f);
+}
 }
 
 #include "fp16_ew_bridge.h"
@@ -50,7 +77,12 @@ public:
         int size = input_c->numel();
         bool run_gpu = false;
         if (input_c->device.type == DeviceType::GPU) {
-            auto kernel = cached_kernel<KernelID::ReluBackward>();
+            void* kernel = nullptr;
+            if (input_c->dtype == DataType::FP16) {
+                kernel = fp16_ew_kernel("relu_backward_fp16");
+            } else {
+                kernel = cached_kernel<KernelID::ReluBackward>();
+            }
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = input_c->gpu_data();
@@ -65,14 +97,31 @@ public:
             }
         }
         if (!run_gpu) {
-            float* in_ptr = input_c->data_ptr();
-            float* g_in = grad_input->data_ptr();
-            float* g_out = gout_c->data_ptr();
-            ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                g_in[i] = in_ptr[i] > 0.0f ? g_out[i] : 0.0f;
-            });
-            if (grad_input->device.type == DeviceType::GPU) {
-                rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+            size_t esz = grad_input->storage->element_size();
+            if (input_c->dtype == DataType::FP16) {
+                const char* in_base = reinterpret_cast<const char*>(input_c->storage->get_cpu_ptr());
+                const char* gout_base = reinterpret_cast<const char*>(gout_c->storage->get_cpu_ptr());
+                char* gin_base = reinterpret_cast<char*>(grad_input->storage->get_cpu_ptr());
+                auto in_h = reinterpret_cast<const uint16_t*>(in_base + input_c->offset * esz);
+                auto gout_h = reinterpret_cast<const uint16_t*>(gout_base + gout_c->offset * esz);
+                auto gin_h = reinterpret_cast<uint16_t*>(gin_base + grad_input->offset * esz);
+                uint16_t zero_h = act_float_to_half(0.0f);
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    gin_h[i] = act_half_to_float(in_h[i]) > 0.0f ? gout_h[i] : zero_h;
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * esz, gin_h);
+                }
+            } else {
+                float* in_ptr = input_c->data_ptr();
+                float* g_in = grad_input->data_ptr();
+                float* g_out = gout_c->data_ptr();
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    g_in[i] = in_ptr[i] > 0.0f ? g_out[i] : 0.0f;
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+                }
             }
         }
         return { grad_input };
@@ -94,7 +143,12 @@ public:
         int size = out_c->numel();
         bool run_gpu = false;
         if (out_c->device.type == DeviceType::GPU) {
-            auto kernel = cached_kernel<KernelID::SigmoidBackward>();
+            void* kernel = nullptr;
+            if (out_c->dtype == DataType::FP16) {
+                kernel = fp16_ew_kernel("sigmoid_backward_fp16");
+            } else {
+                kernel = cached_kernel<KernelID::SigmoidBackward>();
+            }
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
@@ -109,14 +163,32 @@ public:
             }
         }
         if (!run_gpu) {
-            float* out_ptr = out_c->data_ptr();
-            float* g_in = grad_input->data_ptr();
-            float* g_out = gout_c->data_ptr();
-            ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                g_in[i] = g_out[i] * out_ptr[i] * (1.0f - out_ptr[i]);
-            });
-            if (grad_input->device.type == DeviceType::GPU) {
-                rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+            size_t esz = grad_input->storage->element_size();
+            if (out_c->dtype == DataType::FP16) {
+                const char* out_base = reinterpret_cast<const char*>(out_c->storage->get_cpu_ptr());
+                const char* gout_base = reinterpret_cast<const char*>(gout_c->storage->get_cpu_ptr());
+                char* gin_base = reinterpret_cast<char*>(grad_input->storage->get_cpu_ptr());
+                auto out_h = reinterpret_cast<const uint16_t*>(out_base + out_c->offset * esz);
+                auto gout_h = reinterpret_cast<const uint16_t*>(gout_base + gout_c->offset * esz);
+                auto gin_h = reinterpret_cast<uint16_t*>(gin_base + grad_input->offset * esz);
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    float o = act_half_to_float(out_h[i]);
+                    float g = act_half_to_float(gout_h[i]);
+                    gin_h[i] = act_float_to_half(g * o * (1.0f - o));
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * esz, gin_h);
+                }
+            } else {
+                float* out_ptr = out_c->data_ptr();
+                float* g_in = grad_input->data_ptr();
+                float* g_out = gout_c->data_ptr();
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    g_in[i] = g_out[i] * out_ptr[i] * (1.0f - out_ptr[i]);
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+                }
             }
         }
         return { grad_input };
@@ -138,7 +210,12 @@ public:
         int size = out_c->numel();
         bool run_gpu = false;
         if (out_c->device.type == DeviceType::GPU) {
-            auto kernel = cached_kernel<KernelID::TanhBackward>();
+            void* kernel = nullptr;
+            if (out_c->dtype == DataType::FP16) {
+                kernel = fp16_ew_kernel("tanh_backward_fp16");
+            } else {
+                kernel = cached_kernel<KernelID::TanhBackward>();
+            }
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
@@ -153,14 +230,32 @@ public:
             }
         }
         if (!run_gpu) {
-            float* out_ptr = out_c->data_ptr();
-            float* g_in = grad_input->data_ptr();
-            float* g_out = gout_c->data_ptr();
-            ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                g_in[i] = g_out[i] * (1.0f - out_ptr[i] * out_ptr[i]);
-            });
-            if (grad_input->device.type == DeviceType::GPU) {
-                rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+            size_t esz = grad_input->storage->element_size();
+            if (out_c->dtype == DataType::FP16) {
+                const char* out_base = reinterpret_cast<const char*>(out_c->storage->get_cpu_ptr());
+                const char* gout_base = reinterpret_cast<const char*>(gout_c->storage->get_cpu_ptr());
+                char* gin_base = reinterpret_cast<char*>(grad_input->storage->get_cpu_ptr());
+                auto out_h = reinterpret_cast<const uint16_t*>(out_base + out_c->offset * esz);
+                auto gout_h = reinterpret_cast<const uint16_t*>(gout_base + gout_c->offset * esz);
+                auto gin_h = reinterpret_cast<uint16_t*>(gin_base + grad_input->offset * esz);
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    float o = act_half_to_float(out_h[i]);
+                    float g = act_half_to_float(gout_h[i]);
+                    gin_h[i] = act_float_to_half(g * (1.0f - o * o));
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * esz, gin_h);
+                }
+            } else {
+                float* out_ptr = out_c->data_ptr();
+                float* g_in = grad_input->data_ptr();
+                float* g_out = gout_c->data_ptr();
+                ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
+                    g_in[i] = g_out[i] * (1.0f - out_ptr[i] * out_ptr[i]);
+                });
+                if (grad_input->device.type == DeviceType::GPU) {
+                    rt_gpu_write(grad_input->gpu_data(), size * sizeof(float), g_in);
+                }
             }
         }
         return { grad_input };

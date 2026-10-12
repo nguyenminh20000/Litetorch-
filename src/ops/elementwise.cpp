@@ -380,7 +380,7 @@ public:
         auto b = saved_tensors[1];
         auto grad_a = reduce_broadcast(div(grad_output, b), a->shape);
         auto b2 = mul(b, b);
-        auto neg_a = mul(a, Tensor::from_vector({-1.0f}, {1}, a->device));
+        auto neg_a = mul(a, Tensor::from_vector({-1.0f}, {1}, a->device, false, a->dtype));
         auto grad_b = reduce_broadcast(mul(grad_output, div(neg_a, b2)), b->shape);
         return { grad_a, grad_b };
     }
@@ -1004,7 +1004,7 @@ public:
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto out = output.lock();
         if (!out) return { nullptr };
-        auto two_t = Tensor::from_vector({2.0f}, {1}, out->device);
+        auto two_t = Tensor::from_vector({2.0f}, {1}, out->device, false, out->dtype);
         auto grad_input = div(grad_output, mul(two_t, out));
         return { grad_input };
     }
@@ -1205,12 +1205,20 @@ public:
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
-        auto signs = Tensor::create(input_c->shape, Device(DeviceType::CPU, 0));
-        float* in_ptr = input_c->data_ptr();
+        std::shared_ptr<Tensor> cpu_in;
+        if (input_c->dtype == DataType::FP32) {
+            cpu_in = input_c;
+        } else {
+            cpu_in = input_c->cast(DataType::FP32)->to(Device(DeviceType::CPU, 0));
+            if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
+        }
+        auto signs = Tensor::create(cpu_in->shape, Device(DeviceType::CPU, 0));
+        float* in_ptr = cpu_in->data_ptr();
         float* s_ptr = signs->data_ptr();
-        for (size_t i = 0; i < input_c->numel(); ++i) {
+        for (size_t i = 0; i < cpu_in->numel(); ++i) {
             s_ptr[i] = (in_ptr[i] > 0.0f) ? 1.0f : ((in_ptr[i] < 0.0f) ? -1.0f : 0.0f);
         }
+        if (input->dtype != DataType::FP32) signs = signs->cast(input->dtype);
         if (input->device.type != DeviceType::CPU) {
             signs = signs->to(input->device);
         }
@@ -1528,7 +1536,7 @@ public:
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
-        auto grad_input = Tensor::zeros(input->shape, grad_output->device);
+        auto grad_input = Tensor::zeros(input->shape, grad_output->device, false, grad_output->dtype);
         StorageUseGuard guard({input->storage, grad_input->storage, grad_output->storage});
         
         auto cpu_input = input->to(Device(DeviceType::CPU, 0));
@@ -1817,7 +1825,7 @@ public:
             cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
         }
         if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
-        auto grad_input = Tensor::zeros(input_shape, grad_output->device);
+        auto grad_input = Tensor::zeros(input_shape, grad_output->device, false, grad_output->dtype);
         StorageUseGuard guard({grad_input->storage, grad_output->storage});
         int64_t ndim = static_cast<int64_t>(input_shape.size());
         int64_t outer_size = 1, inner_size = 1;
