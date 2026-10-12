@@ -14,20 +14,18 @@ namespace quantization {
 
 inline void quantize_linear(std::shared_ptr<nn::Linear> layer) {
     auto W = layer->weight;
-    W->storage->ensure_cpu();
-    float* W_data = W->storage->get_cpu_ptr();
-    
+    auto W_f32 = W->to(Device(DeviceType::CPU), DataType::FP32);
+    float* W_data = (float*)W_f32->storage->get_cpu_ptr();
+
     int64_t out_features = W->shape[0];
     int64_t in_features = W->shape[1];
-    
-    auto scales = Tensor::create({out_features}, W->device);
-    float* scales_data = scales->storage->get_cpu_ptr();
-    
-    auto q_weight = Tensor::create({out_features, in_features}, W->device);
-    q_weight->dtype = DataType::INT8;
-    q_weight->storage->dtype = DataType::INT8;
+
+    auto scales = Tensor::create({out_features}, Device(DeviceType::CPU), false, DataType::FP32);
+    float* scales_data = (float*)scales->storage->get_cpu_ptr();
+
+    auto q_weight = Tensor::create({out_features, in_features}, Device(DeviceType::CPU), false, DataType::INT8);
     int8_t* q_data = (int8_t*)q_weight->storage->get_cpu_ptr();
-    
+
     for (int64_t i = 0; i < out_features; ++i) {
         float max_val = 0.0f;
         for (int64_t j = 0; j < in_features; ++j) {
@@ -35,17 +33,20 @@ inline void quantize_linear(std::shared_ptr<nn::Linear> layer) {
         }
         float scale = max_val > 0.0f ? max_val / 127.0f : 1.0f;
         scales_data[i] = scale;
-        
+
         for (int64_t j = 0; j < in_features; ++j) {
-            q_data[i * in_features + j] = (int8_t)std::round(W_data[i * in_features + j] / scale);
+            float v = std::round(W_data[i * in_features + j] / scale);
+            if (v < -128.0f) v = -128.0f;
+            if (v > 127.0f) v = 127.0f;
+            q_data[i * in_features + j] = (int8_t)v;
         }
     }
-    
+
     if (W->device.type == DeviceType::GPU) {
-        q_weight->to(W->device);
-        scales->to(W->device);
+        q_weight = q_weight->to(W->device);
+        scales = scales->to(W->device);
     }
-    
+
     layer->weight = q_weight;
     layer->scales = scales;
 }
@@ -56,8 +57,8 @@ public:
     std::unordered_map<std::string, float> max_vals;
 
     void collect(const std::string& name, std::shared_ptr<Tensor> tensor) {
-        tensor->storage->ensure_cpu();
-        float* data = tensor->storage->get_cpu_ptr();
+        auto t = tensor->to(Device(DeviceType::CPU), DataType::FP32);
+        float* data = (float*)t->storage->get_cpu_ptr();
         size_t size = tensor->numel();
         float local_min = size > 0 ? data[0] : 0.0f;
         float local_max = size > 0 ? data[0] : 0.0f;
