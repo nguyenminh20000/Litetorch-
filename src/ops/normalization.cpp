@@ -419,7 +419,16 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
             throw std::runtime_error("[litetorch Error] LayerNorm: normalized_shape must match input trailing dims");
         }
     }
-    auto out = Tensor::create(input_c->shape, input_c->device);
+    if (input_c->dtype != DataType::FP32 ||
+        (weight_c && weight_c->dtype != DataType::FP32) ||
+        (bias_c && bias_c->dtype != DataType::FP32)) {
+        auto in_fp32 = Ops::cast(input_c, DataType::FP32);
+        auto w_fp32 = weight_c ? Ops::cast(weight_c, DataType::FP32) : nullptr;
+        auto b_fp32 = bias_c ? Ops::cast(bias_c, DataType::FP32) : nullptr;
+        auto out_fp32 = layer_norm(in_fp32, normalized_shape, w_fp32, b_fp32, eps);
+        return Ops::cast(out_fp32, input_c->dtype);
+    }
+    auto out = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
     StorageUseGuard guard({input_c->storage, weight_c ? weight_c->storage : nullptr, bias_c ? bias_c->storage : nullptr, out->storage});
     
     int64_t M = 1;
@@ -527,7 +536,17 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
             throw std::runtime_error("[litetorch Error] FusedAddLayerNorm: normalized_shape must match input trailing dims");
         }
     }
-    auto out = Tensor::create(input_c->shape, input_c->device);
+    if (input_c->dtype != DataType::FP32 || residual_c->dtype != DataType::FP32 ||
+        (weight_c && weight_c->dtype != DataType::FP32) ||
+        (bias_c && bias_c->dtype != DataType::FP32)) {
+        auto in_fp32 = Ops::cast(input_c, DataType::FP32);
+        auto res_fp32 = Ops::cast(residual_c, DataType::FP32);
+        auto w_fp32 = weight_c ? Ops::cast(weight_c, DataType::FP32) : nullptr;
+        auto b_fp32 = bias_c ? Ops::cast(bias_c, DataType::FP32) : nullptr;
+        auto out_fp32 = fused_add_layernorm(in_fp32, res_fp32, normalized_shape, w_fp32, b_fp32, eps);
+        return Ops::cast(out_fp32, input_c->dtype);
+    }
+    auto out = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
     StorageUseGuard guard({input_c->storage, residual_c->storage, weight_c ? weight_c->storage : nullptr, bias_c ? bias_c->storage : nullptr, out->storage});
     
     int64_t M = 1;
@@ -641,16 +660,30 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
     auto bias_c = bias->is_contiguous() ? bias : bias->contiguous();
 
+    if (input_c->dtype != DataType::FP32 || weight_c->dtype != DataType::FP32 || bias_c->dtype != DataType::FP32) {
+        auto in_fp32 = Ops::cast(input_c, DataType::FP32);
+        auto w_fp32 = Ops::cast(weight_c, DataType::FP32);
+        auto b_fp32 = Ops::cast(bias_c, DataType::FP32);
+        auto rm_fp32 = running_mean_c->dtype == DataType::FP32 ? running_mean_c : Ops::cast(running_mean_c, DataType::FP32);
+        auto rv_fp32 = running_var_c->dtype == DataType::FP32 ? running_var_c : Ops::cast(running_var_c, DataType::FP32);
+        auto out_fp32 = batch_norm2d(in_fp32, rm_fp32, rv_fp32, w_fp32, b_fp32, training, momentum, eps);
+        if (training) {
+            if (running_mean_c->dtype != DataType::FP32) running_mean_c->copy_(Ops::cast(rm_fp32, running_mean_c->dtype));
+            if (running_var_c->dtype != DataType::FP32) running_var_c->copy_(Ops::cast(rv_fp32, running_var_c->dtype));
+        }
+        return Ops::cast(out_fp32, input_c->dtype);
+    }
+
     int N = input_c->shape[0];
     int C = input_c->shape[1];
     int H = input_c->shape[2];
     int W = input_c->shape[3];
     int M = N * H * W;
-    auto out = Tensor::create(input_c->shape, input_c->device);
+    auto out = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
     StorageUseGuard guard({input_c->storage, running_mean_c->storage, running_var_c->storage, weight_c->storage, bias_c->storage, out->storage});
 
-    auto save_mean = Tensor::create({C}, input_c->device);
-    auto save_var = Tensor::create({C}, input_c->device);
+    auto save_mean = Tensor::create({C}, input_c->device, false, DataType::FP32);
+    auto save_var = Tensor::create({C}, input_c->device, false, DataType::FP32);
 
     if (input_c->device.type == DeviceType::GPU) {
         {
