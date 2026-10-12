@@ -12,6 +12,11 @@ std::shared_ptr<Tensor> ensure_contiguous(std::shared_ptr<Tensor> t) {
     return t->is_contiguous() ? t : t->contiguous();
 }
 
+bool is_integer_dtype(DataType dt) {
+    return dt == DataType::INT32 || dt == DataType::INT16 ||
+           dt == DataType::INT8 || dt == DataType::INT4;
+}
+
 std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
                                             std::shared_ptr<Tensor> key_padding_mask,
                                             int64_t B, int64_t H, int64_t Tq, int64_t Tk,
@@ -32,13 +37,13 @@ std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
         if (!is_2d && !is_3d) {
             throw std::runtime_error("[litetorch Error] MultiHeadAttention: attn_mask must have shape (Tq, Tk) or (B*num_heads, Tq, Tk)");
         }
-        bool is_float = (mc->dtype == DataType::FP32 || mc->dtype == DataType::FP64);
+        bool is_bool_like = is_integer_dtype(mc->dtype);
         auto vals = mc->to_vector();
         for (int64_t bh = 0; bh < BH; ++bh) {
             for (int64_t i = 0; i < Tq; ++i) {
                 for (int64_t j = 0; j < Tk; ++j) {
                     float v = vals[is_2d ? (i * Tk + j) : ((bh * Tq + i) * Tk + j)];
-                    float add = is_float ? v : (v != 0.0f ? NEG_INF : 0.0f);
+                    float add = is_bool_like ? (v != 0.0f ? NEG_INF : 0.0f) : v;
                     mptr[(bh * Tq + i) * Tk + j] += add;
                 }
             }
@@ -54,12 +59,17 @@ std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
             throw std::runtime_error("[litetorch Error] MultiHeadAttention: key_padding_mask must have shape (B, Tk)");
         }
         auto vals = mc->to_vector();
+        bool is_bool_like = is_integer_dtype(mc->dtype);
         for (int64_t b = 0; b < B; ++b) {
             for (int64_t j = 0; j < Tk; ++j) {
-                if (vals[b * Tk + j] == 0.0f) continue;
+                float v = vals[b * Tk + j];
+                float add = is_bool_like ? (v != 0.0f ? NEG_INF : 0.0f) : v;
+                if (add == 0.0f) continue;
                 for (int64_t h = 0; h < H; ++h) {
                     float* col = mptr + ((b * H + h) * Tq) * Tk + j;
-                    for (int64_t i = 0; i < Tq; ++i) col[i * Tk] = NEG_INF;
+                    for (int64_t i = 0; i < Tq; ++i) {
+                        col[i * Tk] = is_bool_like ? NEG_INF : col[i * Tk] + add;
+                    }
                 }
             }
         }

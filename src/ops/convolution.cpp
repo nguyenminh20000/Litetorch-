@@ -1134,10 +1134,7 @@ std::shared_ptr<Tensor> conv1d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     auto out4_c = out4->is_contiguous() ? out4 : out4->contiguous();
     auto out3 = out4_c->view({N, C_out, L_full});
     if (stride == 1) return out3;
-    auto sub = narrow(out3, 2, 0, L_out * stride);
-    auto sub_c = sub->is_contiguous() ? sub : sub->contiguous();
-    auto sub4 = sub_c->view({N, C_out, L_out, stride});
-    return squeeze(narrow(sub4, 3, 0, 1), 3);
+    return out3->slice(2, 0, (L_out - 1) * stride + 1, stride);
 }
 
 }

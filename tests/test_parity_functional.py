@@ -193,8 +193,8 @@ def test_interpolate_backward():
     y.sum().backward()
     ref = np.zeros((1, 1, 2, 2), dtype=np.float32)
     src = np_nearest(xv, [4, 4])
-    for i in range(2):
-        for j in range(2):
+    for i in range(4):
+        for j in range(4):
             si = min(int(i * 0.5), 1)
             sj = min(int(j * 0.5), 1)
             ref[0, 0, si, sj] += 1.0

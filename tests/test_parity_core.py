@@ -93,7 +93,9 @@ class TestFactories:
         assert to_np(r).min() >= 0.0 and to_np(r).max() < 1.0
         rn = litetorch.randn_like(a)
         assert list(rn.shape) == [2, 2]
-        assert abs(to_np(rn).mean()) < 0.3
+        big = litetorch.zeros([64, 64])
+        rn_big = litetorch.randn_like(big)
+        assert abs(to_np(rn_big).mean()) < 0.1
 
 
 class TestPointwise:

@@ -479,6 +479,9 @@ class TestMHAMasks:
         out = m.forward(tv(x.tolist()))
         assert list(out.shape) == [B, T, E]
 
+    def _int(self, data):
+        return litetorch.tensor(data, dtype=litetorch.DataType.INT32)
+
     def test_masked_positions_zero_weight(self):
         m = self.make_mha()
         m.eval()
@@ -486,34 +489,45 @@ class TestMHAMasks:
         q = rng.normal(size=(B, T, E))
         k = rng.normal(size=(B, T, E))
         v = rng.normal(size=(B, T, E))
-        attn_mask = np.zeros((T, T))
-        attn_mask[0, 4] = 1.0
-        attn_mask[1, 5] = 1.0
-        attn_mask[2, 3] = 1.0
-        kpm = np.zeros((B, T))
-        kpm[0, 5] = 1.0
-        kpm[1, 4] = 1.0
-        kpm[1, 5] = 1.0
-        out, weights = m.forward(
+        blocked = [(0, 4), (1, 5), (2, 3)]
+        bool_attn = np.zeros((T, T), dtype=np.int32)
+        for i, j in blocked:
+            bool_attn[i, j] = 1
+        neginf_attn = np.where(bool_attn == 1, -1e9, 0.0)
+        bool_kpm = np.zeros((B, T), dtype=np.int32)
+        bool_kpm[0, 5] = 1
+        bool_kpm[1, 4] = 1
+        bool_kpm[1, 5] = 1
+        neginf_kpm = np.where(bool_kpm == 1, -1e9, 0.0)
+        out_b, w_b = m.forward(
             tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
-            attn_mask=tv(attn_mask.tolist()),
-            key_padding_mask=tv(kpm.tolist()),
+            attn_mask=self._int(bool_attn.tolist()),
+            key_padding_mask=self._int(bool_kpm.tolist()),
             need_weights=True,
         )
-        w = to_np(weights)
-        assert w.shape == (B, 2, T, T)
-        np.testing.assert_allclose(w[0, :, :, 5], 0.0, atol=1e-6)
-        np.testing.assert_allclose(w[1, :, :, 4:], 0.0, atol=1e-6)
-        assert w[0, 0, 0, 4] < 1e-6
-        assert w[1, 0, 2, 3] < 1e-6
+        out_f, w_f = m.forward(
+            tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
+            attn_mask=tv(neginf_attn.tolist()),
+            key_padding_mask=tv(neginf_kpm.tolist()),
+            need_weights=True,
+        )
+        wb = to_np(w_b)
+        wf = to_np(w_f)
+        assert wb.shape == (B, 2, T, T)
+        np.testing.assert_allclose(wb[0, :, :, 5], 0.0, atol=1e-6)
+        np.testing.assert_allclose(wb[1, :, :, 4:], 0.0, atol=1e-6)
+        assert wb[0, 0, 0, 4] < 1e-6
+        assert wb[1, 0, 2, 3] < 1e-6
         for b in range(B):
             for h in range(2):
                 for i in range(T):
-                    np.testing.assert_allclose(w[b, h, i].sum(), 1.0, rtol=1e-5)
+                    np.testing.assert_allclose(wb[b, h, i].sum(), 1.0, rtol=1e-5)
+        np.testing.assert_allclose(to_np(out_b), to_np(out_f), rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(wb, wf, rtol=1e-4, atol=1e-5)
         out_plain, _ = m.forward(
             tv(q.tolist()), tv(k.tolist()), tv(v.tolist()), need_weights=True
         )
-        assert not np.allclose(to_np(out), to_np(out_plain))
+        assert not np.allclose(to_np(out_b), to_np(out_plain))
 
     def test_mask_renormalizes_unmasked(self):
         m = self.make_mha()
@@ -522,22 +536,51 @@ class TestMHAMasks:
         q = rng.normal(size=(B, T, E))
         k = rng.normal(size=(B, T, E))
         v = rng.normal(size=(B, T, E))
-        attn_mask = np.zeros((T, T))
-        attn_mask[:, 3] = 1.0
+        bool_attn = np.zeros((T, T), dtype=np.int32)
+        bool_attn[:, 3] = 1
+        neginf_attn = np.where(bool_attn == 1, -1e9, 0.0)
         _, w_plain = m.forward(
             tv(q.tolist()), tv(k.tolist()), tv(v.tolist()), need_weights=True
         )
-        _, w_masked = m.forward(
+        _, w_bool = m.forward(
             tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
-            attn_mask=tv(attn_mask.tolist()), need_weights=True,
+            attn_mask=self._int(bool_attn.tolist()), need_weights=True,
+        )
+        _, w_float = m.forward(
+            tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
+            attn_mask=tv(neginf_attn.tolist()), need_weights=True,
         )
         wp = to_np(w_plain)[0, 0]
-        wm = to_np(w_masked)[0, 0]
-        assert np.all(wm[:, 3] < 1e-6)
-        keep = [j for j in range(T) if j != 3]
-        ratio = wm[:, keep] / wp[:, keep]
-        for i in range(T):
-            np.testing.assert_allclose(ratio[i], ratio[i, 0], rtol=1e-4)
+        np.testing.assert_allclose(to_np(w_bool), to_np(w_float), rtol=1e-4, atol=1e-5)
+        for wm_t in (to_np(w_bool)[0, 0], to_np(w_float)[0, 0]):
+            assert np.all(wm_t[:, 3] < 1e-6)
+            keep = [j for j in range(T) if j != 3]
+            ratio = wm_t[:, keep] / wp[:, keep]
+            for i in range(T):
+                np.testing.assert_allclose(ratio[i], ratio[i, 0], rtol=1e-4)
+
+    def test_float_mask_is_additive(self):
+        m = self.make_mha()
+        m.eval()
+        B, T, E = 1, 4, 8
+        q = rng.normal(size=(B, T, E))
+        k = rng.normal(size=(B, T, E))
+        v = rng.normal(size=(B, T, E))
+        base = rng.normal(size=(T, T)) * 0.5
+        shifted = base + 3.25
+        _, w_base = m.forward(
+            tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
+            attn_mask=tv(base.tolist()), need_weights=True,
+        )
+        _, w_shifted = m.forward(
+            tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
+            attn_mask=tv(shifted.tolist()), need_weights=True,
+        )
+        np.testing.assert_allclose(to_np(w_base), to_np(w_shifted), rtol=1e-5, atol=1e-6)
+        _, w_plain = m.forward(
+            tv(q.tolist()), tv(k.tolist()), tv(v.tolist()), need_weights=True
+        )
+        assert not np.allclose(to_np(w_base), to_np(w_plain))
 
     def test_3d_and_float_masks(self):
         m = self.make_mha()
@@ -546,19 +589,22 @@ class TestMHAMasks:
         q = rng.normal(size=(B, T, E))
         k = rng.normal(size=(B, T, E))
         v = rng.normal(size=(B, T, E))
-        bool_mask = np.zeros((T, T))
-        bool_mask[0, 2] = 1.0
-        float_mask = np.zeros((T, T))
-        float_mask[0, 2] = -1e9
-        mask3d = np.broadcast_to(bool_mask, (B * H, T, T)).copy()
+        bool_mask = np.zeros((T, T), dtype=np.int32)
+        bool_mask[0, 2] = 1
+        float_mask = np.where(bool_mask == 1, -1e9, 0.0)
+        mask3d_bool = np.broadcast_to(bool_mask, (B * H, T, T)).copy()
+        mask3d_float = np.broadcast_to(float_mask, (B * H, T, T)).copy()
         r1 = m.forward(tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
-                       attn_mask=tv(bool_mask.tolist()), need_weights=True)
+                       attn_mask=self._int(bool_mask.tolist()), need_weights=True)
         r2 = m.forward(tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
                        attn_mask=tv(float_mask.tolist()), need_weights=True)
         r3 = m.forward(tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
-                       attn_mask=tv(mask3d.tolist()), need_weights=True)
+                       attn_mask=self._int(mask3d_bool.tolist()), need_weights=True)
+        r4 = m.forward(tv(q.tolist()), tv(k.tolist()), tv(v.tolist()),
+                       attn_mask=tv(mask3d_float.tolist()), need_weights=True)
         np.testing.assert_allclose(to_np(r1[0]), to_np(r2[0]), rtol=1e-4, atol=1e-5)
         np.testing.assert_allclose(to_np(r1[0]), to_np(r3[0]), rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(to_np(r2[0]), to_np(r4[0]), rtol=1e-4, atol=1e-5)
         np.testing.assert_allclose(to_np(r1[1]), to_np(r3[1]), rtol=1e-4, atol=1e-5)
 
     def test_bad_mask_shape_raises(self):
