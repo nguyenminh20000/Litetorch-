@@ -235,8 +235,9 @@ std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::
         }
         out_data[(size_t)i] = in_data[(size_t)pos];
     });
-    auto out = Tensor::create(out_shape, input->device);
-    write_vec(out, out_data);
+    auto out_fp32 = Tensor::create(out_shape, input->device);
+    write_vec(out_fp32, out_data);
+    auto out = (input->dtype == DataType::FP32) ? out_fp32 : out_fp32->cast(input->dtype);
     if (Autograd::is_grad_enabled() && input->requires_grad) {
         auto node = std::make_shared<GatherNode>(d, input->shape);
         node->inputs = { {input, true} };
@@ -349,24 +350,25 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> topk(std::shared_ptr
             out_idx[(size_t)(o * k + j)] = (float)kk;
         }
     }
-    auto vals = Tensor::create(out_shape, a->device);
+    auto vals_fp32 = Tensor::create(out_shape, a->device);
     auto idx = Tensor::create(out_shape, a->device);
-    write_vec(vals, out_vals);
+    write_vec(vals_fp32, out_vals);
     write_vec(idx, out_idx);
+    auto vals = (a->dtype == DataType::FP32) ? vals_fp32 : vals_fp32->cast(a->dtype);
     return { vals, idx };
 }
 
 static std::shared_ptr<Tensor> cmp_op(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, int op) {
     unify_device(a, b);
-    auto ac = a->is_contiguous() ? a : a->contiguous();
-    auto bc = b->is_contiguous() ? b : b->contiguous();
-    std::vector<int64_t> out_shape = bcast2(ac->shape, bc->shape);
+    std::vector<float> av = a->to_vector();
+    std::vector<float> bv = b->to_vector();
+    std::vector<int64_t> a_strides = default_strides(a->shape);
+    std::vector<int64_t> b_strides = default_strides(b->shape);
+    std::vector<int64_t> out_shape = bcast2(a->shape, b->shape);
     int64_t ndim = (int64_t)out_shape.size();
     std::vector<int64_t> out_strides = default_strides(out_shape);
     size_t n = 1;
     for (auto s : out_shape) n *= (size_t)s;
-    float* ap = ac->data_ptr();
-    float* bp = bc->data_ptr();
     std::vector<float> out_data(n);
     std::vector<int64_t> coords((size_t)ndim);
     for (size_t i = 0; i < n; ++i) {
@@ -375,8 +377,8 @@ static std::shared_ptr<Tensor> cmp_op(std::shared_ptr<Tensor> a, std::shared_ptr
             coords[(size_t)dd] = (int64_t)(rem % (size_t)out_shape[(size_t)dd]);
             rem /= (size_t)out_shape[(size_t)dd];
         }
-        float x = ap[bcast_index(ac->shape, ac->strides, ndim, coords.data())];
-        float y = bp[bcast_index(bc->shape, bc->strides, ndim, coords.data())];
+        float x = av[(size_t)bcast_index(a->shape, a_strides, ndim, coords.data())];
+        float y = bv[(size_t)bcast_index(b->shape, b_strides, ndim, coords.data())];
         bool r = false;
         switch (op) {
             case 0: r = (x == y); break;
@@ -388,7 +390,7 @@ static std::shared_ptr<Tensor> cmp_op(std::shared_ptr<Tensor> a, std::shared_ptr
         }
         out_data[i] = r ? 1.0f : 0.0f;
     }
-    auto out = Tensor::create(out_shape, ac->device);
+    auto out = Tensor::create(out_shape, a->device);
     if (out->device.type == DeviceType::GPU) {
         rt_gpu_write(out->gpu_data(), n * sizeof(float), out_data.data(), 0);
     } else {
@@ -409,8 +411,11 @@ public:
     std::vector<int64_t> shape_a;
     std::vector<int64_t> shape_b;
     std::vector<int64_t> out_shape;
-    WhereNode(const std::vector<int64_t>& sa, const std::vector<int64_t>& sb, const std::vector<int64_t>& so)
-        : Node("Where"), shape_a(sa), shape_b(sb), out_shape(so) {}
+    DataType dtype_a;
+    DataType dtype_b;
+    WhereNode(const std::vector<int64_t>& sa, const std::vector<int64_t>& sb, const std::vector<int64_t>& so,
+              DataType da, DataType db)
+        : Node("Where"), shape_a(sa), shape_b(sb), out_shape(so), dtype_a(da), dtype_b(db) {}
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
@@ -434,23 +439,27 @@ public:
         }
         auto ga_t = vec_to_tensor(ga, out_shape, grad_output->device);
         auto gb_t = vec_to_tensor(gb, out_shape, grad_output->device);
-        return { reduce_broadcast(ga_t, shape_a), reduce_broadcast(gb_t, shape_b) };
+        auto ra = reduce_broadcast(ga_t, shape_a);
+        auto rb = reduce_broadcast(gb_t, shape_b);
+        if (ra->dtype != dtype_a) ra = ra->cast(dtype_a);
+        if (rb->dtype != dtype_b) rb = rb->cast(dtype_b);
+        return { ra, rb };
     }
 };
 
 std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     unify_device(a, b);
     if (cond->device != a->device) cond = cond->to(a->device);
-    auto cc = cond->is_contiguous() ? cond : cond->contiguous();
-    auto ac = a->is_contiguous() ? a : a->contiguous();
-    auto bc = b->is_contiguous() ? b : b->contiguous();
-    std::vector<int64_t> out_shape = bcast2(bcast2(cc->shape, ac->shape), bc->shape);
+    std::vector<float> cv = cond->to_vector();
+    std::vector<float> av = a->to_vector();
+    std::vector<float> bv = b->to_vector();
+    auto c_strides = default_strides(cond->shape);
+    auto a_strides = default_strides(a->shape);
+    auto b_strides = default_strides(b->shape);
+    std::vector<int64_t> out_shape = bcast2(bcast2(cond->shape, a->shape), b->shape);
     int64_t ndim = (int64_t)out_shape.size();
     size_t n = 1;
     for (auto s : out_shape) n *= (size_t)s;
-    float* cp = cc->data_ptr();
-    float* ap = ac->data_ptr();
-    float* bp = bc->data_ptr();
     std::vector<float> out_data(n);
     std::vector<int64_t> coords((size_t)ndim);
     for (size_t i = 0; i < n; ++i) {
@@ -459,18 +468,20 @@ std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tens
             coords[(size_t)dd] = (int64_t)(rem % (size_t)out_shape[(size_t)dd]);
             rem /= (size_t)out_shape[(size_t)dd];
         }
-        float cv = cp[bcast_index(cc->shape, cc->strides, ndim, coords.data())];
-        out_data[i] = (cv != 0.0f)
-            ? ap[bcast_index(ac->shape, ac->strides, ndim, coords.data())]
-            : bp[bcast_index(bc->shape, bc->strides, ndim, coords.data())];
+        float c = cv[(size_t)bcast_index(cond->shape, c_strides, ndim, coords.data())];
+        out_data[i] = (c != 0.0f)
+            ? av[(size_t)bcast_index(a->shape, a_strides, ndim, coords.data())]
+            : bv[(size_t)bcast_index(b->shape, b_strides, ndim, coords.data())];
     }
-    auto out = Tensor::create(out_shape, ac->device);
-    write_vec(out, out_data);
+    DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+    auto out_fp32 = Tensor::create(out_shape, a->device);
+    write_vec(out_fp32, out_data);
+    auto out = (out_dtype == DataType::FP32) ? out_fp32 : out_fp32->cast(out_dtype);
     if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
-        auto node = std::make_shared<WhereNode>(a->shape, b->shape, out_shape);
+        auto node = std::make_shared<WhereNode>(a->shape, b->shape, out_shape, a->dtype, b->dtype);
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
-        node->saved_tensors = { cc };
+        node->saved_tensors = { cond };
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -525,8 +536,9 @@ std::shared_ptr<Tensor> log_softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         for (int64_t k = 0; k < dim_size; ++k)
             out_data[(size_t)(base + k * in_strides[(size_t)d])] = data[(size_t)(base + k * in_strides[(size_t)d])] - mx - lse;
     });
-    auto out = Tensor::create(a->shape, a->device);
-    write_vec(out, out_data);
+    auto out_fp32 = Tensor::create(a->shape, a->device);
+    write_vec(out_fp32, out_data);
+    auto out = (a->dtype == DataType::FP32) ? out_fp32 : out_fp32->cast(a->dtype);
     if (Autograd::is_grad_enabled() && a->requires_grad) {
         auto node = std::make_shared<LogSoftmaxNode>(d);
         node->inputs = { {a, true} };
@@ -549,7 +561,10 @@ public:
         auto x = saved_tensors[1];
         auto one = Tensor::ones(s->shape, s->device, false, s->dtype);
         auto ds = mul(s, add(one, mul(x, sub(one, s))));
-        return { mul(grad_output, ds) };
+        auto go = (grad_output->dtype == s->dtype) ? grad_output : grad_output->cast(s->dtype);
+        auto g = mul(go, ds);
+        if (g->dtype != grad_output->dtype) g = g->cast(grad_output->dtype);
+        return { g };
     }
 };
 
@@ -564,15 +579,18 @@ std::shared_ptr<Tensor> silu(std::shared_ptr<Tensor> a) {
         sig_data[(size_t)i] = s;
         out_data[(size_t)i] = data[(size_t)i] * s;
     });
-    auto out = Tensor::create(ac->shape, ac->device);
-    write_vec(out, out_data);
+    auto out_fp32 = Tensor::create(ac->shape, ac->device);
+    write_vec(out_fp32, out_data);
+    auto out = (a->dtype == DataType::FP32) ? out_fp32 : out_fp32->cast(a->dtype);
     if (Autograd::is_grad_enabled() && a->requires_grad) {
         auto s = Tensor::create(ac->shape, ac->device);
         write_vec(s, sig_data);
+        auto xf = Tensor::create(ac->shape, ac->device);
+        write_vec(xf, data);
         auto node = std::make_shared<SiluNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = { s, ac };
+        node->saved_tensors = { s, xf };
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
