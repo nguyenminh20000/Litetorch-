@@ -65,6 +65,7 @@ private:
     std::shared_ptr<Tensor> epoch_y_gpu;
 
     void worker_loop();
+    void build_epoch_cache();
 };
 
 }

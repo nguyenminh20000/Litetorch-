@@ -6,8 +6,8 @@
 namespace litetorch {
 namespace nn {
 
-ServingScheduler::ServingScheduler(int num_blocks, int block_size, int max_num_seqs, int max_num_batched_tokens)
-    : block_size(block_size), max_num_seqs(max_num_seqs), max_num_batched_tokens(max_num_batched_tokens), num_blocks(num_blocks) {
+ServingScheduler::ServingScheduler(int num_blocks, int block_size, int max_num_seqs, int max_num_batched_tokens, int eos_token_id)
+    : block_size(block_size), max_num_seqs(max_num_seqs), max_num_batched_tokens(max_num_batched_tokens), num_blocks(num_blocks), eos_token_id(eos_token_id) {
     for (int i = 0; i < num_blocks; ++i) {
         free_blocks.push_back(i);
     }
@@ -80,14 +80,14 @@ std::vector<std::shared_ptr<Request>> ServingScheduler::step(std::shared_ptr<Mod
         auto input = Tensor::from_vector(vec, {1, length});
         auto output = model->forward(input);
 
-        float* out_ptr = output->data_ptr();
+        std::vector<float> out_vec = output->to_vector();
         int64_t vocab_size = output->shape[2];
         int64_t seq_len = output->shape[1];
 
         float max_logit = -1e9f;
         int next_token = 0;
         for (int v = 0; v < vocab_size; ++v) {
-            float logit = out_ptr[(seq_len - 1) * vocab_size + v];
+            float logit = out_vec[(seq_len - 1) * vocab_size + v];
             if (logit > max_logit) {
                 max_logit = logit;
                 next_token = v;
@@ -98,7 +98,7 @@ std::vector<std::shared_ptr<Request>> ServingScheduler::step(std::shared_ptr<Mod
             req->generated_tokens.push_back(next_token);
         }
 
-        if (next_token == 2 || req->generated_tokens.size() >= static_cast<size_t>(req->max_new_tokens)) {
+        if (next_token == eos_token_id || req->generated_tokens.size() >= static_cast<size_t>(req->max_new_tokens)) {
             req->is_finished = true;
         }
     }
@@ -119,7 +119,7 @@ std::vector<std::shared_ptr<Request>> ServingScheduler::step(std::shared_ptr<Mod
         auto input = Tensor::from_vector(batch_vec, {batch_size, 1});
         auto output = model->forward(input);
 
-        float* out_ptr = output->data_ptr();
+        std::vector<float> out_vec = output->to_vector();
         int64_t vocab_size = output->shape[2];
         int64_t seq_len = output->shape[1];
 
@@ -128,7 +128,7 @@ std::vector<std::shared_ptr<Request>> ServingScheduler::step(std::shared_ptr<Mod
             float max_logit = -1e9f;
             int next_token = 0;
             for (int v = 0; v < vocab_size; ++v) {
-                float logit = out_ptr[i * (seq_len * vocab_size) + (seq_len - 1) * vocab_size + v];
+                float logit = out_vec[i * (seq_len * vocab_size) + (seq_len - 1) * vocab_size + v];
                 if (logit > max_logit) {
                     max_logit = logit;
                     next_token = v;
@@ -139,7 +139,7 @@ std::vector<std::shared_ptr<Request>> ServingScheduler::step(std::shared_ptr<Mod
                 req->generated_tokens.push_back(next_token);
             }
 
-            if (next_token == 2 || req->generated_tokens.size() >= static_cast<size_t>(req->max_new_tokens)) {
+            if (next_token == eos_token_id || req->generated_tokens.size() >= static_cast<size_t>(req->max_new_tokens)) {
                 req->is_finished = true;
             }
         }
@@ -169,14 +169,14 @@ std::shared_ptr<Tensor> ServingScheduler::get_block_table_tensor() {
         max_blocks = std::max(max_blocks, static_cast<int64_t>(req->block_ids.size()));
     }
 
-    auto tensor = Tensor::create({num_seqs, max_blocks}, Device(DeviceType::CPU), false, DataType::FP32);
-    float* ptr = tensor->data_ptr();
-    std::fill(ptr, ptr + num_seqs * max_blocks, 0.0f);
+    auto tensor = Tensor::create({num_seqs, max_blocks}, Device(DeviceType::CPU), false, DataType::INT32);
+    int32_t* ptr = reinterpret_cast<int32_t*>(tensor->storage->get_cpu_ptr());
+    std::fill(ptr, ptr + num_seqs * max_blocks, 0);
 
     for (int64_t i = 0; i < num_seqs; ++i) {
         auto& req = running_queue[i];
         for (size_t j = 0; j < req->block_ids.size(); ++j) {
-            ptr[i * max_blocks + j] = static_cast<float>(req->block_ids[j]);
+            ptr[i * max_blocks + j] = static_cast<int32_t>(req->block_ids[j]);
         }
     }
     return tensor;
@@ -186,12 +186,12 @@ std::shared_ptr<Tensor> ServingScheduler::get_context_lens_tensor() {
     int64_t num_seqs = running_queue.size();
     if (num_seqs == 0) return nullptr;
 
-    auto tensor = Tensor::create({num_seqs}, Device(DeviceType::CPU), false, DataType::FP32);
-    float* ptr = tensor->data_ptr();
+    auto tensor = Tensor::create({num_seqs}, Device(DeviceType::CPU), false, DataType::INT32);
+    int32_t* ptr = reinterpret_cast<int32_t*>(tensor->storage->get_cpu_ptr());
 
     for (int64_t i = 0; i < num_seqs; ++i) {
         auto& req = running_queue[i];
-        ptr[i] = static_cast<float>(req->prefill_processed + req->generated_tokens.size());
+        ptr[i] = static_cast<int32_t>(req->prefill_processed + static_cast<int64_t>(req->generated_tokens.size()));
     }
     return tensor;
 }

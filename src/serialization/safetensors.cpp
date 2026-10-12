@@ -3,10 +3,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <map>
+#include <set>
 #include <vector>
 #include <string>
 #include <cstring>
 #include <cstdint>
+#include <regex>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -82,7 +84,53 @@ public:
                 if (*p == '"') out += '"';
                 else if (*p == '\\') out += '\\';
                 else if (*p == 'n') out += '\n';
-                else out += *p;
+                else if (*p == 'u' && p + 4 < end) {
+                    uint32_t cp = 0;
+                    bool ok = true;
+                    for (int i = 1; i <= 4; i++) {
+                        char c = p[i];
+                        cp <<= 4;
+                        if (c >= '0' && c <= '9') cp |= static_cast<uint32_t>(c - '0');
+                        else if (c >= 'a' && c <= 'f') cp |= static_cast<uint32_t>(c - 'a' + 10);
+                        else if (c >= 'A' && c <= 'F') cp |= static_cast<uint32_t>(c - 'A' + 10);
+                        else ok = false;
+                    }
+                    if (ok) {
+                        p += 4;
+                        if (cp >= 0xD800 && cp <= 0xDBFF && p + 6 < end && p[1] == '\\' && p[2] == 'u') {
+                            uint32_t lo = 0;
+                            bool lo_ok = true;
+                            for (int i = 3; i <= 6; i++) {
+                                char c = p[i];
+                                lo <<= 4;
+                                if (c >= '0' && c <= '9') lo |= static_cast<uint32_t>(c - '0');
+                                else if (c >= 'a' && c <= 'f') lo |= static_cast<uint32_t>(c - 'a' + 10);
+                                else if (c >= 'A' && c <= 'F') lo |= static_cast<uint32_t>(c - 'A' + 10);
+                                else lo_ok = false;
+                            }
+                            if (lo_ok && lo >= 0xDC00 && lo <= 0xDFFF) {
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                p += 6;
+                            }
+                        }
+                        if (cp < 0x80) out += static_cast<char>(cp);
+                        else if (cp < 0x800) {
+                            out += static_cast<char>(0xC0 | (cp >> 6));
+                            out += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else if (cp < 0x10000) {
+                            out += static_cast<char>(0xE0 | (cp >> 12));
+                            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            out += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else {
+                            out += static_cast<char>(0xF0 | (cp >> 18));
+                            out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            out += static_cast<char>(0x80 | (cp & 0x3F));
+                        }
+                    } else {
+                        out += 'u';
+                    }
+                } else out += *p;
             } else {
                 out += *p;
             }
@@ -258,11 +306,16 @@ void save_safetensors(const std::map<std::string, std::shared_ptr<Tensor>>& tens
 std::map<std::string, std::shared_ptr<Tensor>> load_safetensors(const std::string& filepath) {
     std::ifstream in(filepath, std::ios::binary);
     if (!in.is_open()) throw std::runtime_error("[litetorch Error] safetensors: cannot open file for reading: " + filepath);
+    in.seekg(0, std::ios::end);
+    uint64_t file_size = static_cast<uint64_t>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    if (file_size < 8) throw std::runtime_error("[litetorch Error] safetensors: file too small");
     unsigned char hlen_le[8];
     in.read(reinterpret_cast<char*>(hlen_le), 8);
     if (!in) throw std::runtime_error("[litetorch Error] safetensors: failed to read header size");
     uint64_t hlen = 0;
     for (int i = 0; i < 8; i++) hlen |= (static_cast<uint64_t>(hlen_le[i]) << (i * 8));
+    if (hlen > file_size - 8) throw std::runtime_error("[litetorch Error] safetensors: header size exceeds file size");
     std::string header(hlen, '\0');
     in.read(&header[0], hlen);
     if (!in) throw std::runtime_error("[litetorch Error] safetensors: failed to read header");
@@ -270,8 +323,6 @@ std::map<std::string, std::shared_ptr<Tensor>> load_safetensors(const std::strin
     JsonParser parser(header.data(), header.size());
     auto entries = parser.parse_header();
 
-    in.seekg(0, std::ios::end);
-    uint64_t file_size = static_cast<uint64_t>(in.tellg());
     uint64_t data_base = 8 + hlen;
     if (file_size < data_base) throw std::runtime_error("[litetorch Error] safetensors: file truncated");
 
@@ -327,7 +378,9 @@ void Module::save_pretrained(const std::string& path, int num_shards) {
     }
     std::string index_path = path + "/model.safetensors.index.json";
     std::ofstream idx(index_path);
-    idx << "{\"metadata\":{\"total_size\":0},\"weight_map\":{";
+    uint64_t total_size = 0;
+    for (auto& p : params) total_size += static_cast<uint64_t>(p->numel()) * p->storage->element_size();
+    idx << "{\"metadata\":{\"total_size\":" << total_size << "},\"weight_map\":{";
     bool first = true;
     for (size_t i = 0; i < params.size(); i++) {
         int shard = static_cast<int>(i / per_shard);
@@ -356,14 +409,14 @@ void Module::load_pretrained(const std::string& path) {
         std::ifstream idxf(index_path);
         if (idxf.good()) {
             std::string content((std::istreambuf_iterator<char>(idxf)), std::istreambuf_iterator<char>());
-            size_t pos = 0;
-            while ((pos = content.find("model-", pos)) != std::string::npos) {
-                size_t end = content.find(".safetensors\"", pos);
-                if (end == std::string::npos) break;
-                std::string fname = content.substr(pos, end - pos + 12);
+            std::set<std::string> shard_files;
+            std::regex shard_re(R"(model-\d{5}-of-\d{5}\.safetensors)");
+            for (std::sregex_iterator it(content.begin(), content.end(), shard_re), e; it != e; ++it) {
+                shard_files.insert(it->str());
+            }
+            for (auto& fname : shard_files) {
                 auto part = load_safetensors(path + "/" + fname);
                 for (auto& kv : part) loaded[kv.first] = kv.second;
-                pos = end + 1;
             }
         } else {
             throw std::runtime_error("[litetorch Error] load_pretrained: no file or index found at " + path);

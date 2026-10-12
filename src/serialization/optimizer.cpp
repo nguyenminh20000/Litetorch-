@@ -89,6 +89,50 @@ void save_optimizer_state(optim::Optimizer* opt, const std::string& filepath) {
             out.write(reinterpret_cast<const char*>(data.data()), numel * sizeof(float));
             running_crc = calculate_crc32(data.data(), numel * sizeof(float), running_crc);
         }
+    } else if (auto adamw = dynamic_cast<optim::AdamW*>(opt)) {
+        const char magic[4] = {'L', 'T', 'A', 'W'};
+        out.write(magic, 4);
+        running_crc = calculate_crc32(magic, 4, running_crc);
+
+        int32_t step_count = adamw->step_count;
+        out.write(reinterpret_cast<const char*>(&step_count), sizeof(step_count));
+        running_crc = calculate_crc32(&step_count, sizeof(step_count), running_crc);
+
+        uint32_t num_tensors = static_cast<uint32_t>(adamw->m.size());
+        out.write(reinterpret_cast<const char*>(&num_tensors), sizeof(num_tensors));
+        running_crc = calculate_crc32(&num_tensors, sizeof(num_tensors), running_crc);
+
+        for (const auto& param : adamw->m) {
+            uint32_t ndims = static_cast<uint32_t>(param->shape.size());
+            out.write(reinterpret_cast<const char*>(&ndims), sizeof(ndims));
+            running_crc = calculate_crc32(&ndims, sizeof(ndims), running_crc);
+            for (int64_t dim : param->shape) {
+                out.write(reinterpret_cast<const char*>(&dim), sizeof(dim));
+                running_crc = calculate_crc32(&dim, sizeof(dim), running_crc);
+            }
+            uint64_t numel = static_cast<uint64_t>(param->numel());
+            out.write(reinterpret_cast<const char*>(&numel), sizeof(numel));
+            running_crc = calculate_crc32(&numel, sizeof(numel), running_crc);
+            std::vector<float> data = param->to_vector();
+            out.write(reinterpret_cast<const char*>(data.data()), numel * sizeof(float));
+            running_crc = calculate_crc32(data.data(), numel * sizeof(float), running_crc);
+        }
+
+        for (const auto& param : adamw->v) {
+            uint32_t ndims = static_cast<uint32_t>(param->shape.size());
+            out.write(reinterpret_cast<const char*>(&ndims), sizeof(ndims));
+            running_crc = calculate_crc32(&ndims, sizeof(ndims), running_crc);
+            for (int64_t dim : param->shape) {
+                out.write(reinterpret_cast<const char*>(&dim), sizeof(dim));
+                running_crc = calculate_crc32(&dim, sizeof(dim), running_crc);
+            }
+            uint64_t numel = static_cast<uint64_t>(param->numel());
+            out.write(reinterpret_cast<const char*>(&numel), sizeof(numel));
+            running_crc = calculate_crc32(&numel, sizeof(numel), running_crc);
+            std::vector<float> data = param->to_vector();
+            out.write(reinterpret_cast<const char*>(data.data()), numel * sizeof(float));
+            running_crc = calculate_crc32(data.data(), numel * sizeof(float), running_crc);
+        }
     } else if (auto sgd = dynamic_cast<optim::SGD*>(opt)) {
         const char magic[4] = {'L', 'T', 'S', 'G'};
         out.write(magic, 4);
@@ -263,6 +307,105 @@ void load_optimizer_state(optim::Optimizer* opt, const std::string& filepath) {
             adam->m[i]->copy_(temp_m);
             auto temp_v = Tensor::from_vector(loaded_v[i], adam->v[i]->shape, Device(DeviceType::CPU, 0));
             adam->v[i]->copy_(temp_v);
+        }
+
+    } else if (magic[0] == 'L' && magic[1] == 'T' && magic[2] == 'A' && magic[3] == 'W') {
+        auto adamw = dynamic_cast<optim::AdamW*>(opt);
+        if (!adamw) {
+            throw std::runtime_error("[litetorch Error] Loaded AdamW state but optimizer is not AdamW");
+        }
+
+        int32_t step_count;
+        in.read(reinterpret_cast<char*>(&step_count), sizeof(step_count));
+        running_crc = calculate_crc32(&step_count, sizeof(step_count), running_crc);
+
+        uint32_t num_tensors;
+        in.read(reinterpret_cast<char*>(&num_tensors), sizeof(num_tensors));
+        running_crc = calculate_crc32(&num_tensors, sizeof(num_tensors), running_crc);
+        if (num_tensors != adamw->m.size()) {
+            throw std::runtime_error("[litetorch Error] AdamW state size mismatch");
+        }
+
+        std::vector<std::vector<float>> loaded_m(num_tensors);
+        for (size_t i = 0; i < adamw->m.size(); ++i) {
+            auto param = adamw->m[i];
+            uint32_t ndims;
+            in.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
+            running_crc = calculate_crc32(&ndims, sizeof(ndims), running_crc);
+            if (ndims != param->shape.size()) {
+                throw std::runtime_error("[litetorch Error] AdamW state ndims mismatch");
+            }
+            std::vector<int64_t> shape(ndims);
+            for (uint32_t d = 0; d < ndims; ++d) {
+                in.read(reinterpret_cast<char*>(&shape[d]), sizeof(int64_t));
+                running_crc = calculate_crc32(&shape[d], sizeof(int64_t), running_crc);
+                if (shape[d] != param->shape[d]) {
+                    throw std::runtime_error("[litetorch Error] AdamW state shape mismatch");
+                }
+            }
+            uint64_t numel;
+            in.read(reinterpret_cast<char*>(&numel), sizeof(numel));
+            running_crc = calculate_crc32(&numel, sizeof(numel), running_crc);
+            if (numel != param->numel()) {
+                throw std::runtime_error("[litetorch Error] AdamW state numel mismatch");
+            }
+            std::vector<float> cpu_data(numel);
+            in.read(reinterpret_cast<char*>(cpu_data.data()), numel * sizeof(float));
+            running_crc = calculate_crc32(cpu_data.data(), numel * sizeof(float), running_crc);
+            if (!in) {
+                throw std::runtime_error("[litetorch Error] Unexpected end of file or read error in AdamW state file");
+            }
+            loaded_m[i] = std::move(cpu_data);
+        }
+
+        std::vector<std::vector<float>> loaded_v(num_tensors);
+        for (size_t i = 0; i < adamw->v.size(); ++i) {
+            auto param = adamw->v[i];
+            uint32_t ndims;
+            in.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
+            running_crc = calculate_crc32(&ndims, sizeof(ndims), running_crc);
+            if (ndims != param->shape.size()) {
+                throw std::runtime_error("[litetorch Error] AdamW state ndims mismatch");
+            }
+            std::vector<int64_t> shape(ndims);
+            for (uint32_t d = 0; d < ndims; ++d) {
+                in.read(reinterpret_cast<char*>(&shape[d]), sizeof(int64_t));
+                running_crc = calculate_crc32(&shape[d], sizeof(int64_t), running_crc);
+                if (shape[d] != param->shape[d]) {
+                    throw std::runtime_error("[litetorch Error] AdamW state shape mismatch");
+                }
+            }
+            uint64_t numel;
+            in.read(reinterpret_cast<char*>(&numel), sizeof(numel));
+            running_crc = calculate_crc32(&numel, sizeof(numel), running_crc);
+            if (numel != param->numel()) {
+                throw std::runtime_error("[litetorch Error] AdamW state numel mismatch");
+            }
+            std::vector<float> cpu_data(numel);
+            in.read(reinterpret_cast<char*>(cpu_data.data()), numel * sizeof(float));
+            running_crc = calculate_crc32(cpu_data.data(), numel * sizeof(float), running_crc);
+            if (!in) {
+                throw std::runtime_error("[litetorch Error] Unexpected end of file or read error in AdamW state file");
+            }
+            loaded_v[i] = std::move(cpu_data);
+        }
+
+        uint32_t stored_crc;
+        in.read(reinterpret_cast<char*>(&stored_crc), sizeof(stored_crc));
+        if (!in) {
+            throw std::runtime_error("[litetorch Error] Failed to read CRC32 checksum from optimizer state file");
+        }
+        uint32_t expected_crc = running_crc ^ 0xFFFFFFFF;
+        if (stored_crc != expected_crc) {
+            throw std::runtime_error("[litetorch Error] Optimizer state file is corrupted (CRC32 checksum mismatch)");
+        }
+
+        adamw->step_count = step_count;
+        for (size_t i = 0; i < adamw->m.size(); ++i) {
+            auto temp_m = Tensor::from_vector(loaded_m[i], adamw->m[i]->shape, Device(DeviceType::CPU, 0));
+            adamw->m[i]->copy_(temp_m);
+            auto temp_v = Tensor::from_vector(loaded_v[i], adamw->v[i]->shape, Device(DeviceType::CPU, 0));
+            adamw->v[i]->copy_(temp_v);
         }
 
     } else if (magic[0] == 'L' && magic[1] == 'T' && magic[2] == 'S' && magic[3] == 'G') {

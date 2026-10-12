@@ -40,6 +40,10 @@ MedusaEngine::MedusaEngine(std::shared_ptr<Module> base, const std::vector<std::
     : base_model(base), medusa_heads(heads) {}
 
 std::vector<int64_t> MedusaEngine::generate(const std::vector<int64_t>& prompt, int max_new_tokens, int lookahead) {
+    if (medusa_heads.empty()) {
+        throw std::runtime_error("[litetorch Error] MedusaEngine: no medusa heads");
+    }
+    size_t n_heads = std::min(static_cast<size_t>(lookahead > 0 ? lookahead : 0), medusa_heads.size());
     std::vector<int64_t> tokens = prompt;
     int vocab_size = medusa_heads[0]->weight->shape[0];
 
@@ -52,12 +56,12 @@ std::vector<int64_t> MedusaEngine::generate(const std::vector<int64_t>& prompt, 
         }
 
         auto logits = base_model->forward(input);
-        float* logits_ptr = logits->data_ptr();
+        std::vector<float> logits_vec = logits->to_vector();
 
         float max_logit = -1e9f;
         int next_token = 0;
         for (int v = 0; v < vocab_size; ++v) {
-            float logit = logits_ptr[(seq_len - 1) * vocab_size + v];
+            float logit = logits_vec[(seq_len - 1) * vocab_size + v];
             if (logit > max_logit) {
                 max_logit = logit;
                 next_token = v;
@@ -67,14 +71,14 @@ std::vector<int64_t> MedusaEngine::generate(const std::vector<int64_t>& prompt, 
         tokens.push_back(next_token);
 
         std::vector<int> candidates;
-        for (size_t h = 0; h < medusa_heads.size(); ++h) {
+        for (size_t h = 0; h < n_heads; ++h) {
             auto head_out = medusa_heads[h]->forward(logits);
-            float* ho_ptr = head_out->data_ptr();
-            
+            std::vector<float> ho_vec = head_out->to_vector();
+
             float max_ho = -1e9f;
             int cand = 0;
             for (int v = 0; v < vocab_size; ++v) {
-                float logit = ho_ptr[(seq_len - 1) * vocab_size + v];
+                float logit = ho_vec[(seq_len - 1) * vocab_size + v];
                 if (logit > max_ho) {
                     max_ho = logit;
                     cand = v;
@@ -96,14 +100,14 @@ std::vector<int64_t> MedusaEngine::generate(const std::vector<int64_t>& prompt, 
         }
 
         auto cand_logits = base_model->forward(cand_input);
-        float* cl_ptr = cand_logits->data_ptr();
+        std::vector<float> cl_vec = cand_logits->to_vector();
 
         for (size_t h = 0; h < candidates.size(); ++h) {
             int64_t step_idx = T - 1 + h;
             float max_cl = -1e9f;
             int act_token = 0;
             for (int v = 0; v < vocab_size; ++v) {
-                float logit = cl_ptr[step_idx * vocab_size + v];
+                float logit = cl_vec[step_idx * vocab_size + v];
                 if (logit > max_cl) {
                     max_cl = logit;
                     act_token = v;

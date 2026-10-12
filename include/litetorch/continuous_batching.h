@@ -28,12 +28,13 @@ public:
     int block_size;
     int max_num_seqs;
     int max_num_batched_tokens;
+    int eos_token_id;
     std::vector<std::shared_ptr<Request>> pending_queue;
     std::vector<std::shared_ptr<Request>> running_queue;
     std::vector<int> free_blocks;
     int num_blocks;
 
-    ServingScheduler(int num_blocks, int block_size, int max_num_seqs, int max_num_batched_tokens);
+    ServingScheduler(int num_blocks, int block_size, int max_num_seqs, int max_num_batched_tokens, int eos_token_id = 2);
 
     void add_request(std::shared_ptr<Request> req);
     std::vector<std::shared_ptr<Request>> step(std::shared_ptr<Module> model);

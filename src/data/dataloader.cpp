@@ -59,18 +59,7 @@ DataLoader::~DataLoader() {
     }
 }
 
-void DataLoader::reset() {
-    std::unique_lock<std::mutex> lock(queue_mutex);
-    current_index = 0;
-    worker_index = 0;
-    epoch_id++;
-    generation_id++;
-    if (shuffle) {
-        std::random_device rd;
-        std::mt19937 g(rd());
-        std::shuffle(indices.begin(), indices.end(), g);
-    }
-
+void DataLoader::build_epoch_cache() {
     auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
     if (tensor_dataset && device.type != DeviceType::CPU) {
         size_t n = indices.size();
@@ -109,7 +98,25 @@ void DataLoader::reset() {
 
         epoch_x_gpu = epoch_x_cpu->to(device);
         epoch_y_gpu = epoch_y_cpu->to(device);
+    } else {
+        epoch_x_gpu.reset();
+        epoch_y_gpu.reset();
     }
+}
+
+void DataLoader::reset() {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    current_index = 0;
+    worker_index = 0;
+    epoch_id++;
+    generation_id++;
+    if (shuffle) {
+        std::random_device rd;
+        std::mt19937 g(rd());
+        std::shuffle(indices.begin(), indices.end(), g);
+    }
+
+    build_epoch_cache();
 
     while (!prefetch_queue.empty()) {
         prefetch_queue.pop();
@@ -133,7 +140,7 @@ bool DataLoader::next(std::shared_ptr<Tensor>& batch_x, std::shared_ptr<Tensor>&
 
     batch_x = batch.x;
     batch_y = batch.y;
-    current_index += batch_size;
+    current_index += static_cast<size_t>(batch.x->shape[0]);
     return true;
 }
 
@@ -351,7 +358,11 @@ void DataLoader::load_state(const std::string& filepath) {
     epoch_id = static_cast<size_t>(ep_id);
     generation_id++;
     shuffle = (shfl != 0);
+    if (loaded_indices.size() != dataset->size()) {
+        throw std::runtime_error("[litetorch Error] Dataloader state indices size mismatch with dataset");
+    }
     indices = std::move(loaded_indices);
+    build_epoch_cache();
 
     while (!prefetch_queue.empty()) {
         prefetch_queue.pop();
