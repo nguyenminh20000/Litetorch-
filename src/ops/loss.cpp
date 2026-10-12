@@ -6,7 +6,9 @@
 #include "litetorch/backend_route.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace litetorch {
 
@@ -26,6 +28,41 @@ struct StorageUseGuard {
         }
     }
 };
+
+inline std::shared_ptr<Tensor> upcast_fp32(std::shared_ptr<Tensor> t) {
+    return (t && t->dtype != DataType::FP32) ? t->cast(DataType::FP32) : t;
+}
+
+inline std::vector<int> ce_target_indices(std::shared_ptr<Tensor> target) {
+    auto tc = target->is_contiguous() ? target : target->contiguous();
+    size_t n = tc->numel();
+    size_t esz = tc->storage->element_size();
+    const char* base = reinterpret_cast<const char*>(tc->storage->get_cpu_ptr()) + tc->offset * esz;
+    std::vector<int> out(n);
+    for (size_t i = 0; i < n; ++i) {
+        switch (tc->dtype) {
+            case DataType::FP32: out[i] = static_cast<int>(reinterpret_cast<const float*>(base)[i]); break;
+            case DataType::INT32: out[i] = static_cast<int>(reinterpret_cast<const int32_t*>(base)[i]); break;
+            case DataType::INT16: out[i] = static_cast<int>(reinterpret_cast<const int16_t*>(base)[i]); break;
+            case DataType::INT8: out[i] = static_cast<int>(reinterpret_cast<const int8_t*>(base)[i]); break;
+            default: throw std::runtime_error("[litetorch Error] cross_entropy_loss: target must have integer or float dtype");
+        }
+    }
+    return out;
+}
+
+inline void ce_validate_indices(const std::vector<int>& idx, int C, int ignore_idx) {
+    for (int t : idx) {
+        if (t == ignore_idx) continue;
+        if (t < 0 || t >= C) throw std::runtime_error("[litetorch Error] cross_entropy_loss: target index out of bounds");
+    }
+}
+
+inline void ce_check_same_shape(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target, const char* name) {
+    if (input->shape != target->shape) {
+        throw std::runtime_error(std::string("[litetorch Error] ") + name + ": input and target must have the same shape");
+    }
+}
 }
 
 class MseLossNode : public Node {
@@ -38,28 +75,33 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
-        float scale = 2.0f / input_c->numel();
-        StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
-        if (input_c->device.type == DeviceType::GPU) {
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto input_w = upcast_fp32(input_c);
+        auto target_w = upcast_fp32(target_c);
+        auto gout_w = upcast_fp32(gout_c);
+        auto grad_w = Tensor::create(input_w->shape, input_w->device, false, DataType::FP32);
+        float scale = 2.0f / input_w->numel();
+        StorageUseGuard guard({input_w->storage, target_w->storage, gout_w->storage, grad_w->storage});
+        if (input_w->device.type == DeviceType::GPU) {
             auto kernel = rt_gpu_get_kernel_by_id(KernelID::MseLossBackward);
-            cl_mem in_mem = input_c->gpu_data();
-            int in_off = input_c->offset;
-            cl_mem tgt_mem = target_c->gpu_data();
-            int tgt_off = target_c->offset;
-            cl_mem gout_mem = grad_output->gpu_data();
-            int gout_off = grad_output->offset;
-            cl_mem gin_mem = grad_input->gpu_data();
-            int gin_off = grad_input->offset;
-            int size = input_c->numel();
+            cl_mem in_mem = input_w->gpu_data();
+            int in_off = input_w->offset;
+            cl_mem tgt_mem = target_w->gpu_data();
+            int tgt_off = target_w->offset;
+            cl_mem gout_mem = gout_w->gpu_data();
+            int gout_off = gout_w->offset;
+            cl_mem gin_mem = grad_w->gpu_data();
+            int gin_off = grad_w->offset;
+            int size = input_w->numel();
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
-            auto diff = Ops::sub(input_c, target_c);
-            auto scale_t = Tensor::from_vector({scale * grad_output->item()}, {1}, input_c->device);
-            grad_input = Ops::mul(diff, scale_t);
+            auto diff = Ops::sub(input_w, target_w);
+            auto scale_t = Tensor::from_vector({scale * gout_w->item()}, {1}, input_w->device);
+            grad_w = Ops::mul(diff, scale_t);
         }
+        auto grad_input = grad_w->dtype == input_c->dtype ? grad_w : grad_w->cast(input_c->dtype);
         return { grad_input, nullptr };
     }
 };
@@ -83,30 +125,40 @@ public:
         auto target_c = target->is_contiguous() ? target : target->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
-        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
+        auto input_w = upcast_fp32(input_c);
+        auto gout_w = upcast_fp32(gout_c);
+        auto weight_w = upcast_fp32(weight_c);
 
-        int N = input_c->shape[0];
-        int C = input_c->shape[1];
+        int N = input_w->shape[0];
+        int C = input_w->shape[1];
         bool per_sample = (reduction == "none");
         float norm_inv = (reduction == "mean") ? (1.0f / normalizer) : 1.0f;
         int ignore_idx = static_cast<int>(ignore_index);
-        int has_weight = weight_c ? 1 : 0;
+        int has_weight = weight_w ? 1 : 0;
 
-        StorageUseGuard guard({input_c->storage, target_c->storage, gout_c->storage, grad_input->storage,
-                               weight_c ? weight_c->storage : nullptr});
+        auto t_idx = ce_target_indices(target_c);
+        ce_validate_indices(t_idx, C, ignore_idx);
+        std::vector<float> t_f(t_idx.size());
+        for (size_t i = 0; i < t_idx.size(); ++i) t_f[i] = static_cast<float>(t_idx[i]);
+        auto target_w = Tensor::from_vector(t_f, {static_cast<int64_t>(N)}, input_w->device);
 
-        if (input_c->device.type == DeviceType::GPU) {
+        auto grad_w = Tensor::create(input_w->shape, input_w->device, false, DataType::FP32);
+
+        StorageUseGuard guard({input_w->storage, target_w->storage, gout_w->storage, grad_w->storage,
+                               weight_w ? weight_w->storage : nullptr});
+
+        if (input_w->device.type == DeviceType::GPU) {
             auto kernel = rt_gpu_get_kernel_by_id(KernelID::CrossEntropyLossBackward);
-            cl_mem in_mem = input_c->gpu_data();
-            int in_off = input_c->offset;
-            cl_mem tgt_mem = target_c->gpu_data();
-            int tgt_off = target_c->offset;
-            cl_mem w_mem = weight_c ? weight_c->gpu_data() : nullptr;
-            int w_off = weight_c ? weight_c->offset : 0;
-            cl_mem gout_mem = gout_c->gpu_data();
-            int gout_off = gout_c->offset;
-            cl_mem gin_mem = grad_input->gpu_data();
-            int gin_off = grad_input->offset;
+            cl_mem in_mem = input_w->gpu_data();
+            int in_off = input_w->offset;
+            cl_mem tgt_mem = target_w->gpu_data();
+            int tgt_off = target_w->offset;
+            cl_mem w_mem = weight_w ? weight_w->gpu_data() : nullptr;
+            int w_off = weight_w ? weight_w->offset : 0;
+            cl_mem gout_mem = gout_w->gpu_data();
+            int gout_off = gout_w->offset;
+            cl_mem gin_mem = grad_w->gpu_data();
+            int gin_off = grad_w->offset;
             int per_sample_val = per_sample ? 1 : 0;
 
             rt_gpu_launch(kernel, {static_cast<size_t>(N)}, {},
@@ -115,11 +167,10 @@ public:
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int),
                  sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(int)});
         } else {
-            float* in_ptr = input_c->data_ptr();
-            float* tgt_ptr = target_c->data_ptr();
-            float* gin_ptr = grad_input->data_ptr();
-            float* gout_ptr = gout_c->data_ptr();
-            float* w_ptr = weight_c ? weight_c->data_ptr() : nullptr;
+            float* in_ptr = input_w->data_ptr();
+            float* gin_ptr = grad_w->data_ptr();
+            float* gout_ptr = gout_w->data_ptr();
+            float* w_ptr = weight_w ? weight_w->data_ptr() : nullptr;
             float gout_val = per_sample ? 0.0f : gout_ptr[0];
 
             ThreadPool::get().parallel_for(0, N, [&](int64_t i) {
@@ -135,7 +186,7 @@ public:
                     sum += probs[j];
                 }
 
-                int target_idx = static_cast<int>(tgt_ptr[i]);
+                int target_idx = t_idx[i];
                 float* grow = gin_ptr + i * C;
                 if (target_idx == ignore_idx) {
                     std::fill(grow, grow + C, 0.0f);
@@ -151,11 +202,12 @@ public:
                 }
             });
 
-            if (grad_input->device.type == DeviceType::TPU) {
+            if (grad_w->device.type == DeviceType::TPU) {
                 auto tpu = BackendDispatcher::get().get_tpu_backend();
-                if (tpu) tpu->write(grad_input->gpu_data(), grad_input->numel() * sizeof(float), gin_ptr);
+                if (tpu) tpu->write(grad_w->gpu_data(), grad_w->numel() * sizeof(float), gin_ptr);
             }
         }
+        auto grad_input = grad_w->dtype == input_c->dtype ? grad_w : grad_w->cast(input_c->dtype);
         return { grad_input, nullptr };
     }
 };
@@ -170,33 +222,38 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
-        int size = input_c->numel();
-        StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
-        if (input_c->device.type == DeviceType::GPU) {
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto input_w = upcast_fp32(input_c);
+        auto target_w = upcast_fp32(target_c);
+        auto gout_w = upcast_fp32(gout_c);
+        auto grad_w = Tensor::create(input_w->shape, input_w->device, false, DataType::FP32);
+        int size = input_w->numel();
+        StorageUseGuard guard({input_w->storage, target_w->storage, gout_w->storage, grad_w->storage});
+        if (input_w->device.type == DeviceType::GPU) {
             auto kernel = rt_gpu_get_kernel_by_id(KernelID::L1LossBackward);
-            cl_mem in_mem = input_c->gpu_data();
-            int in_off = input_c->offset;
-            cl_mem tgt_mem = target_c->gpu_data();
-            int tgt_off = target_c->offset;
-            cl_mem gout_mem = grad_output->gpu_data();
-            int gout_off = grad_output->offset;
-            cl_mem gin_mem = grad_input->gpu_data();
-            int gin_off = grad_input->offset;
+            cl_mem in_mem = input_w->gpu_data();
+            int in_off = input_w->offset;
+            cl_mem tgt_mem = target_w->gpu_data();
+            int tgt_off = target_w->offset;
+            cl_mem gout_mem = gout_w->gpu_data();
+            int gout_off = gout_w->offset;
+            cl_mem gin_mem = grad_w->gpu_data();
+            int gin_off = grad_w->offset;
             float scale = 1.0f / size;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
-            float* in_ptr = input_c->data_ptr();
-            float* tgt_ptr = target_c->data_ptr();
-            float* gin_ptr = grad_input->data_ptr();
-            float scale = grad_output->item() / size;
+            float* in_ptr = input_w->data_ptr();
+            float* tgt_ptr = target_w->data_ptr();
+            float* gin_ptr = grad_w->data_ptr();
+            float scale = gout_w->item() / size;
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 float diff = in_ptr[i] - tgt_ptr[i];
                 gin_ptr[i] = (diff > 0.0f) ? scale : ((diff < 0.0f) ? -scale : 0.0f);
             });
         }
+        auto grad_input = grad_w->dtype == input_c->dtype ? grad_w : grad_w->cast(input_c->dtype);
         return { grad_input, nullptr };
     }
 };
@@ -211,28 +268,32 @@ public:
         auto target = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto target_c = target->is_contiguous() ? target : target->contiguous();
-        auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
-        int size = input_c->numel();
-        StorageUseGuard guard({input_c->storage, target_c->storage, grad_output->storage, grad_input->storage});
-        if (input_c->device.type == DeviceType::GPU) {
+        auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        auto input_w = upcast_fp32(input_c);
+        auto target_w = upcast_fp32(target_c);
+        auto gout_w = upcast_fp32(gout_c);
+        auto grad_w = Tensor::create(input_w->shape, input_w->device, false, DataType::FP32);
+        int size = input_w->numel();
+        StorageUseGuard guard({input_w->storage, target_w->storage, gout_w->storage, grad_w->storage});
+        if (input_w->device.type == DeviceType::GPU) {
             auto kernel = rt_gpu_get_kernel_by_id(KernelID::BceLossBackward);
-            cl_mem in_mem = input_c->gpu_data();
-            int in_off = input_c->offset;
-            cl_mem tgt_mem = target_c->gpu_data();
-            int tgt_off = target_c->offset;
-            cl_mem gout_mem = grad_output->gpu_data();
-            int gout_off = grad_output->offset;
-            cl_mem gin_mem = grad_input->gpu_data();
-            int gin_off = grad_input->offset;
+            cl_mem in_mem = input_w->gpu_data();
+            int in_off = input_w->offset;
+            cl_mem tgt_mem = target_w->gpu_data();
+            int tgt_off = target_w->offset;
+            cl_mem gout_mem = gout_w->gpu_data();
+            int gout_off = gout_w->offset;
+            cl_mem gin_mem = grad_w->gpu_data();
+            int gin_off = grad_w->offset;
             float scale = 1.0f / size;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&in_mem, &in_off, &tgt_mem, &tgt_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &scale, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(int)});
         } else {
-            float* in_ptr = input_c->data_ptr();
-            float* tgt_ptr = target_c->data_ptr();
-            float* gin_ptr = grad_input->data_ptr();
-            float scale = grad_output->item() / size;
+            float* in_ptr = input_w->data_ptr();
+            float* tgt_ptr = target_w->data_ptr();
+            float* gin_ptr = grad_w->data_ptr();
+            float scale = gout_w->item() / size;
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 float x = in_ptr[i];
                 float y = tgt_ptr[i];
@@ -241,6 +302,7 @@ public:
                 gin_ptr[i] = scale * (x - y) / (x * (1.0f - x));
             });
         }
+        auto grad_input = grad_w->dtype == input_c->dtype ? grad_w : grad_w->cast(input_c->dtype);
         return { grad_input, nullptr };
     }
 };
@@ -251,19 +313,22 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
     if (input->device != target->device) {
         target = target->to(input->device);
     }
+    ce_check_same_shape(input, target, "l1_loss");
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto target_c = target->is_contiguous() ? target : target->contiguous();
-    auto out = Tensor::create({1}, input_c->device);
-    StorageUseGuard guard({input_c->storage, target_c->storage, out->storage});
-    size_t size = input_c->numel();
+    auto input_w = upcast_fp32(input_c);
+    auto target_w = upcast_fp32(target_c);
+    auto out = Tensor::create({1}, input_w->device);
+    StorageUseGuard guard({input_w->storage, target_w->storage, out->storage});
+    size_t size = input_w->numel();
     float inv_n = 1.0f / size;
 
-    if (input_c->device.type == DeviceType::GPU) {
+    if (input_w->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::L1LossForward);
-        cl_mem in_mem = input_c->gpu_data();
-        int in_off = input_c->offset;
-        cl_mem tgt_mem = target_c->gpu_data();
-        int tgt_off = target_c->offset;
+        cl_mem in_mem = input_w->gpu_data();
+        int in_off = input_w->offset;
+        cl_mem tgt_mem = target_w->gpu_data();
+        int tgt_off = target_w->offset;
         cl_mem out_mem = out->gpu_data();
         int out_off = out->offset;
         int size_val = size;
@@ -275,8 +340,8 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
-        float* in_ptr = input_c->data_ptr();
-        float* tgt_ptr = target_c->data_ptr();
+        float* in_ptr = input_w->data_ptr();
+        float* tgt_ptr = target_w->data_ptr();
         float total = 0.0f;
         for (size_t i = 0; i < size; ++i) {
             total += std::abs(in_ptr[i] - tgt_ptr[i]);
@@ -300,19 +365,22 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
     if (input->device != target->device) {
         target = target->to(input->device);
     }
+    ce_check_same_shape(input, target, "bce_loss");
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto target_c = target->is_contiguous() ? target : target->contiguous();
-    auto out = Tensor::create({1}, input_c->device);
-    StorageUseGuard guard({input_c->storage, target_c->storage, out->storage});
-    size_t size = input_c->numel();
+    auto input_w = upcast_fp32(input_c);
+    auto target_w = upcast_fp32(target_c);
+    auto out = Tensor::create({1}, input_w->device);
+    StorageUseGuard guard({input_w->storage, target_w->storage, out->storage});
+    size_t size = input_w->numel();
     float inv_n = 1.0f / size;
 
-    if (input_c->device.type == DeviceType::GPU) {
+    if (input_w->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::BceLossForward);
-        cl_mem in_mem = input_c->gpu_data();
-        int in_off = input_c->offset;
-        cl_mem tgt_mem = target_c->gpu_data();
-        int tgt_off = target_c->offset;
+        cl_mem in_mem = input_w->gpu_data();
+        int in_off = input_w->offset;
+        cl_mem tgt_mem = target_w->gpu_data();
+        int tgt_off = target_w->offset;
         cl_mem out_mem = out->gpu_data();
         int out_off = out->offset;
         int size_val = size;
@@ -324,8 +392,8 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
-        float* in_ptr = input_c->data_ptr();
-        float* tgt_ptr = target_c->data_ptr();
+        float* in_ptr = input_w->data_ptr();
+        float* tgt_ptr = target_w->data_ptr();
         float total_loss = 0.0f;
 
         std::vector<float> losses(size, 0.0f);
@@ -359,19 +427,22 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
     if (input->device != target->device) {
         target = target->to(input->device);
     }
+    ce_check_same_shape(input, target, "mse_loss");
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto target_c = target->is_contiguous() ? target : target->contiguous();
-    auto out = Tensor::create({1}, input_c->device);
-    StorageUseGuard guard({input_c->storage, target_c->storage, out->storage});
-    size_t size = input_c->numel();
+    auto input_w = upcast_fp32(input_c);
+    auto target_w = upcast_fp32(target_c);
+    auto out = Tensor::create({1}, input_w->device);
+    StorageUseGuard guard({input_w->storage, target_w->storage, out->storage});
+    size_t size = input_w->numel();
     float inv_n = 1.0f / size;
 
-    if (input_c->device.type == DeviceType::GPU) {
+    if (input_w->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::MseLossForward);
-        cl_mem in_mem = input_c->gpu_data();
-        int in_off = input_c->offset;
-        cl_mem tgt_mem = target_c->gpu_data();
-        int tgt_off = target_c->offset;
+        cl_mem in_mem = input_w->gpu_data();
+        int in_off = input_w->offset;
+        cl_mem tgt_mem = target_w->gpu_data();
+        int tgt_off = target_w->offset;
         cl_mem out_mem = out->gpu_data();
         int out_off = out->offset;
         int size_val = size;
@@ -383,8 +454,8 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
             {&in_mem, &in_off, &tgt_mem, &tgt_off, &out_mem, &out_off, &size_val, &inv_n},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
     } else {
-        float* in_ptr = input_c->data_ptr();
-        float* tgt_ptr = target_c->data_ptr();
+        float* in_ptr = input_w->data_ptr();
+        float* tgt_ptr = target_w->data_ptr();
         float total = 0.0f;
         for (size_t i = 0; i < size; ++i) {
             float d = in_ptr[i] - tgt_ptr[i];
@@ -423,55 +494,59 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto target_c = target->is_contiguous() ? target : target->contiguous();
     auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
-    int N = input_c->shape[0];
-    int C = input_c->shape[1];
+    auto input_w = upcast_fp32(input_c);
+    auto weight_w = upcast_fp32(weight_c);
+    int N = input_w->shape[0];
+    int C = input_w->shape[1];
     if (weight_c && (weight_c->shape.size() != 1 || weight_c->shape[0] != C)) {
         throw std::runtime_error("[litetorch Error] CrossEntropyLoss weight must be 1D with num_classes elements");
     }
     int ignore_idx = static_cast<int>(ignore_index);
     bool per_sample = (reduction == "none");
 
-    auto out = Tensor::create(per_sample ? std::vector<int64_t>{N} : std::vector<int64_t>{1}, input_c->device);
-    StorageUseGuard guard({input_c->storage, target_c->storage, out->storage,
-                           weight_c ? weight_c->storage : nullptr});
+    auto t_idx = ce_target_indices(target_c);
+    if (static_cast<int>(t_idx.size()) != N) {
+        throw std::runtime_error("[litetorch Error] CrossEntropyLoss target batch size must match input");
+    }
+    ce_validate_indices(t_idx, C, ignore_idx);
+    std::vector<float> t_f(t_idx.size());
+    for (size_t i = 0; i < t_idx.size(); ++i) t_f[i] = static_cast<float>(t_idx[i]);
+    auto target_w = Tensor::from_vector(t_f, {static_cast<int64_t>(N)}, input_w->device);
+
+    auto out = Tensor::create(per_sample ? std::vector<int64_t>{N} : std::vector<int64_t>{1}, input_w->device);
+    StorageUseGuard guard({input_w->storage, target_w->storage, out->storage,
+                           weight_w ? weight_w->storage : nullptr});
 
     float normalizer = 0.0f;
     if (reduction == "mean") {
-        std::vector<float> h_tgt(N);
         std::vector<float> h_w;
-        if (input_c->device.type == DeviceType::GPU) {
-            cl_mem tgt_mem = target_c->gpu_data();
-            rt_gpu_read(tgt_mem, N * sizeof(float), h_tgt.data(), static_cast<size_t>(target_c->offset) * sizeof(float));
-            if (weight_c) {
-                h_w.resize(C);
-                cl_mem w_mem = weight_c->gpu_data();
-                rt_gpu_read(w_mem, C * sizeof(float), h_w.data(), static_cast<size_t>(weight_c->offset) * sizeof(float));
-            }
-        } else {
-            float* tgt_ptr = target_c->data_ptr();
-            std::copy(tgt_ptr, tgt_ptr + N, h_tgt.begin());
-            if (weight_c) {
-                float* w_ptr = weight_c->data_ptr();
+        if (weight_w) {
+            h_w.resize(C);
+            if (input_w->device.type == DeviceType::GPU) {
+                cl_mem w_mem = weight_w->gpu_data();
+                rt_gpu_read(w_mem, C * sizeof(float), h_w.data(), static_cast<size_t>(weight_w->offset) * sizeof(float));
+            } else {
+                float* w_ptr = weight_w->data_ptr();
                 h_w.assign(w_ptr, w_ptr + C);
             }
         }
         for (int i = 0; i < N; ++i) {
-            int t = static_cast<int>(h_tgt[i]);
+            int t = t_idx[i];
             if (t == ignore_idx) continue;
-            normalizer += weight_c ? h_w[t] : 1.0f;
+            normalizer += weight_w ? h_w[t] : 1.0f;
         }
     }
     float norm_inv = (reduction == "mean") ? (1.0f / normalizer) : 1.0f;
 
-    if (input_c->device.type == DeviceType::GPU) {
+    if (input_w->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::CrossEntropyLossForward);
-        cl_mem in_mem = input_c->gpu_data();
-        int in_off = input_c->offset;
-        cl_mem tgt_mem = target_c->gpu_data();
-        int tgt_off = target_c->offset;
-        cl_mem w_mem = weight_c ? weight_c->gpu_data() : nullptr;
-        int w_off = weight_c ? weight_c->offset : 0;
-        int has_weight = weight_c ? 1 : 0;
+        cl_mem in_mem = input_w->gpu_data();
+        int in_off = input_w->offset;
+        cl_mem tgt_mem = target_w->gpu_data();
+        int tgt_off = target_w->offset;
+        cl_mem w_mem = weight_w ? weight_w->gpu_data() : nullptr;
+        int w_off = weight_w ? weight_w->offset : 0;
+        int has_weight = weight_w ? 1 : 0;
         cl_mem out_mem = out->gpu_data();
         int out_off = out->offset;
         int per_sample_val = per_sample ? 1 : 0;
@@ -485,14 +560,13 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int),
              sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(int)});
     } else {
-        float* in_ptr = input_c->data_ptr();
-        float* tgt_ptr = target_c->data_ptr();
-        float* w_ptr = weight_c ? weight_c->data_ptr() : nullptr;
+        float* in_ptr = input_w->data_ptr();
+        float* w_ptr = weight_w ? weight_w->data_ptr() : nullptr;
         float* out_ptr = out->data_ptr();
 
         std::vector<float> losses(N, 0.0f);
         ThreadPool::get().parallel_for(0, N, [&](int64_t i) {
-            int target_idx = static_cast<int>(tgt_ptr[i]);
+            int target_idx = t_idx[i];
             if (target_idx == ignore_idx) {
                 losses[i] = 0.0f;
                 return;

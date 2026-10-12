@@ -9,6 +9,30 @@
 
 namespace litetorch {
 
+namespace {
+inline std::vector<int64_t> fused_target_indices(std::shared_ptr<Tensor> target) {
+    auto tc = target->is_contiguous() ? target : target->contiguous();
+    size_t n = tc->numel();
+    size_t esz = tc->storage->element_size();
+    const char* base = reinterpret_cast<const char*>(tc->storage->get_cpu_ptr()) + tc->offset * esz;
+    std::vector<int64_t> out(n);
+    for (size_t i = 0; i < n; ++i) {
+        switch (tc->dtype) {
+            case DataType::FP32: out[i] = static_cast<int64_t>(reinterpret_cast<const float*>(base)[i]); break;
+            case DataType::INT32: out[i] = static_cast<int64_t>(reinterpret_cast<const int32_t*>(base)[i]); break;
+            case DataType::INT16: out[i] = static_cast<int64_t>(reinterpret_cast<const int16_t*>(base)[i]); break;
+            case DataType::INT8: out[i] = static_cast<int64_t>(reinterpret_cast<const int8_t*>(base)[i]); break;
+            default: throw std::runtime_error("[litetorch Error] fused_linear_cross_entropy: target must have integer or float dtype");
+        }
+    }
+    return out;
+}
+
+inline std::shared_ptr<Tensor> fused_upcast(std::shared_ptr<Tensor> t) {
+    return (t && t->dtype != DataType::FP32) ? Ops::cast(t, DataType::FP32) : t;
+}
+}
+
 class FusedLinearCrossEntropyNode : public Node {
 public:
     FusedLinearCrossEntropyNode() : Node("FusedLinearCrossEntropy") {}
@@ -34,9 +58,10 @@ public:
         int64_t D = x->shape[1];
         int64_t Vocab = weight->shape[0];
 
+        auto t_idx = fused_target_indices(target);
+
         float* x_ptr = x->data_ptr();
         float* w_ptr = weight->data_ptr();
-        float* t_ptr = target->data_ptr();
         float* b_ptr = bias ? bias->data_ptr() : nullptr;
 
         float* gx_ptr = grad_x->data_ptr();
@@ -55,7 +80,10 @@ public:
 
             for (int64_t i = 0; i < curr_size; ++i) {
                 int64_t idx = start + i;
-                int64_t target_val = static_cast<int64_t>(t_ptr[idx]);
+                int64_t target_val = t_idx[idx];
+                if (target_val < 0 || target_val >= Vocab) {
+                    throw std::runtime_error("[litetorch Error] fused_linear_cross_entropy: target index out of bounds");
+                }
 
                 float max_logit = -1e9f;
                 std::vector<float> logits(Vocab, 0.0f);
@@ -120,9 +148,13 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
         throw std::runtime_error("Fused Linear Cross Entropy only supported on CPU currently");
     }
 
-    auto x_2d = x;
-    if (x->shape.size() == 3) {
-        x_2d = x->view({x->shape[0] * x->shape[1], x->shape[2]});
+    auto x_f = fused_upcast(x);
+    auto w_f = fused_upcast(weight);
+    auto b_f = fused_upcast(bias);
+
+    auto x_2d = x_f;
+    if (x_f->shape.size() == 3) {
+        x_2d = x_f->view({x_f->shape[0] * x_f->shape[1], x_f->shape[2]});
     }
 
     auto target_1d = target;
@@ -132,12 +164,16 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
 
     int64_t N = x_2d->shape[0];
     int64_t D = x_2d->shape[1];
-    int64_t Vocab = weight->shape[0];
+    int64_t Vocab = w_f->shape[0];
+
+    auto t_idx = fused_target_indices(target_1d);
+    if (static_cast<int64_t>(t_idx.size()) != N) {
+        throw std::runtime_error("[litetorch Error] fused_linear_cross_entropy: target batch size must match input");
+    }
 
     float* x_ptr = x_2d->data_ptr();
-    float* w_ptr = weight->data_ptr();
-    float* t_ptr = target_1d->data_ptr();
-    float* b_ptr = bias ? bias->data_ptr() : nullptr;
+    float* w_ptr = w_f->data_ptr();
+    float* b_ptr = b_f ? b_f->data_ptr() : nullptr;
 
     double total_loss = 0.0;
     int64_t chunk_size = 512;
@@ -150,7 +186,10 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
 
         for (int64_t i = 0; i < curr_size; ++i) {
             int64_t idx = start + i;
-            int64_t target_val = static_cast<int64_t>(t_ptr[idx]);
+            int64_t target_val = t_idx[idx];
+            if (target_val < 0 || target_val >= Vocab) {
+                throw std::runtime_error("[litetorch Error] fused_linear_cross_entropy: target index out of bounds");
+            }
 
             float max_logit = -1e9f;
             std::vector<float> logits(Vocab, 0.0f);
@@ -181,13 +220,13 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
 
     if (Autograd::is_grad_enabled() && (Autograd::has_active_tensors() || requires_grad)) {
         auto node = std::make_shared<FusedLinearCrossEntropyNode>();
-        node->next_nodes = {x_2d->creator, weight->creator, target_1d->creator};
-        node->inputs = {{x_2d, x_2d->requires_grad}, {weight, weight->requires_grad}, {target_1d, target_1d->requires_grad}};
-        node->saved_tensors = {x_2d, weight, target_1d};
-        if (bias) {
-            node->next_nodes.push_back(bias->creator);
-            node->inputs.push_back({bias, bias->requires_grad});
-            node->saved_tensors.push_back(bias);
+        node->next_nodes = {x_2d->creator, w_f->creator, target_1d->creator};
+        node->inputs = {{x_2d, x_2d->requires_grad}, {w_f, w_f->requires_grad}, {target_1d, target_1d->requires_grad}};
+        node->saved_tensors = {x_2d, w_f, target_1d};
+        if (b_f) {
+            node->next_nodes.push_back(b_f->creator);
+            node->inputs.push_back({b_f, b_f->requires_grad});
+            node->saved_tensors.push_back(b_f);
         }
         loss_tensor->creator = node;
         node->output = loss_tensor;

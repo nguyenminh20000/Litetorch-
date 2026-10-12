@@ -124,10 +124,11 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
         }
         for (size_t i = 0; i < full_params->size(); ++i) {
             auto full = (*full_params)[i];
+            size_t bytes = full->storage->size * full->storage->element_size();
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
-                full->storage->gpu_data = rt_gpu_allocate(full->storage->size);
+                full->storage->gpu_data = (cl_mem)rt_gpu_allocate(bytes);
             } else if (full->device.type == DeviceType::CPU && !full->storage->cpu_data) {
-                full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
+                full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(bytes);
             }
             ProcessGroup::get().all_gather((*sharded_params)[i], full);
         }

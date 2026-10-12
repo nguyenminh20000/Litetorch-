@@ -25,7 +25,11 @@ public:
     virtual void compile() { is_compiled = true; }
     virtual std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) = 0;
     virtual std::vector<std::shared_ptr<Tensor>> parameters() { return {}; }
-    virtual void to(const Device&) {}
+    virtual void to(const Device& device) {
+        for (auto& child : children()) {
+            if (child) child->to(device);
+        }
+    }
     virtual void half() {
         for (auto& child : children()) {
             if (child) child->half();
@@ -128,13 +132,14 @@ public:
     std::shared_ptr<Tensor> bias;
     int stride;
     int padding;
+    int groups;
     std::vector<int> kernel_size;
     std::vector<int> stride_vec;
     std::vector<int> padding_vec;
 
-    Conv2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true);
+    Conv2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true, int groups = 1);
     Conv2d(int in_channels, int out_channels, const std::vector<int>& kernel_size,
-           const std::vector<int>& stride, const std::vector<int>& padding, bool has_bias = true);
+           const std::vector<int>& stride, const std::vector<int>& padding, bool has_bias = true, int groups = 1);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;

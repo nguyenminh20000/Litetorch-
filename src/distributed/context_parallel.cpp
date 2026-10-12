@@ -12,6 +12,9 @@ std::shared_ptr<Tensor> context_parallel_forward(std::shared_ptr<Tensor> input, 
     if (!input || cp_group_size <= 1) {
         return input;
     }
+    if (!input->is_contiguous()) {
+        input = input->contiguous();
+    }
     int rank = ProcessGroup::get().is_initialized() ? ProcessGroup::get().get_rank() : 0;
     int world_size = ProcessGroup::get().is_initialized() ? ProcessGroup::get().get_world_size() : 1;
     if (world_size <= 1) {
@@ -23,7 +26,10 @@ std::shared_ptr<Tensor> context_parallel_forward(std::shared_ptr<Tensor> input, 
     }
     int64_t batch_size = shape[0];
     int64_t total_seq_len = shape[1];
-    int64_t shard_seq_len = (total_seq_len + cp_group_size - 1) / cp_group_size;
+    if (total_seq_len % cp_group_size != 0) {
+        throw std::runtime_error("[litetorch Error] context_parallel: seq_len must be divisible by cp_group_size");
+    }
+    int64_t shard_seq_len = total_seq_len / cp_group_size;
     int cp_rank = rank % cp_group_size;
     int64_t start_idx = cp_rank * shard_seq_len;
     int64_t end_idx = std::min(start_idx + shard_seq_len, total_seq_len);

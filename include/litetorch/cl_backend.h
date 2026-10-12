@@ -208,7 +208,7 @@ private:
 
     std::unordered_map<std::string, cl_program> programs_;
     std::unordered_map<std::string, cl_kernel> kernels_;
-    cl_kernel precompiled_kernels_[static_cast<size_t>(KernelID::COUNT)];
+    cl_kernel precompiled_kernels_[static_cast<size_t>(KernelID::COUNT)] = {};
     mutable std::mutex mutex_;
     std::unordered_map<cl_kernel, std::shared_ptr<std::mutex>> kernel_mutexes_;
 

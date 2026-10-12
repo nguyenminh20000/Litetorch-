@@ -581,11 +581,13 @@ const char* CLBackend::kernel_name(KernelID id) {
 cl_kernel CLBackend::get_kernel(KernelID id) {
     auto native = BackendDispatcher::get().get_backend();
     if (native && native->is_available()) {
-        const char* name = g_precompiled_kernel_names[static_cast<size_t>(id)];
+        const char* name = kernel_name(id);
         if (!name) return nullptr;
         return (cl_kernel)native->get_kernel("", "", name);
     }
-    return precompiled_kernels_[static_cast<size_t>(id)];
+    size_t i = static_cast<size_t>(id);
+    if (i >= static_cast<size_t>(KernelID::COUNT)) return nullptr;
+    return precompiled_kernels_[i];
 }
 
 cl_kernel CLBackend::get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name) {
