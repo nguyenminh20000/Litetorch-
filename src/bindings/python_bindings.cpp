@@ -249,6 +249,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def_static("create", &Tensor::create, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("from_vector", &Tensor::from_vector, py::arg("data"), py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("zeros", static_cast<std::shared_ptr<Tensor>(*)(const std::vector<int64_t>&, const Device&, bool)>(&Tensor::zeros), py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false)
+        .def_static("zeros", static_cast<std::shared_ptr<Tensor>(*)(const std::vector<int64_t>&, const Device&, bool, DataType)>(&Tensor::zeros), py::arg("shape"), py::arg("device"), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("ones", &Tensor::ones, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("randn", &Tensor::randn, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("arange", &Tensor::arange, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32)
@@ -350,6 +351,7 @@ PYBIND11_MODULE(litetorch, m) {
         .def("contiguous", &Tensor::contiguous)
         .def("is_contiguous", &Tensor::is_contiguous)
         .def("clone", &Tensor::clone)
+        .def("to_device_async", &Tensor::to_device_async, py::arg("target_device"))
         .def("cast", &Tensor::cast, py::arg("target_dtype"))
         .def("copy_", &Tensor::copy_)
         .def("add_", &Tensor::add_)
@@ -433,7 +435,9 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("bce_loss", &Ops::bce_loss);
     ops.def("fused_linear_cross_entropy", &Ops::fused_linear_cross_entropy, py::arg("x"), py::arg("weight"), py::arg("target"), py::arg("bias") = nullptr);
     ops.def("clip_grad_norm_", &Ops::clip_grad_norm_, py::arg("params"), py::arg("max_norm"), py::arg("norm_type") = 2.0f);
-    ops.def("rope", &Ops::rope);
+    ops.def("rmsnorm", &Ops::rmsnorm, py::arg("input"), py::arg("weight"), py::arg("eps") = 1e-5f);
+    ops.def("qkv_extract", &Ops::qkv_extract, py::arg("qkv"), py::arg("num_heads"), py::arg("index"));
+    ops.def("rope", &Ops::rope, py::arg("x"), py::arg("cos"), py::arg("sin"));
     ops.def("flash_attention", &Ops::flash_attention, py::arg("q"), py::arg("k"), py::arg("v"), py::arg("causal") = false);
     ops.def("flash_attention_qkv", &Ops::flash_attention_qkv, py::arg("qkv"), py::arg("num_heads"), py::arg("causal") = false);
     ops.def("paged_attention", &Ops::paged_attention);
@@ -1224,6 +1228,9 @@ PYBIND11_MODULE(litetorch, m) {
     }, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32);
     m.def("ones", [](const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
         return Tensor::ones(shape, device, requires_grad, dtype);
+    }, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32);
+    m.def("zeros", [](const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+        return Tensor::zeros(shape, device, requires_grad, dtype);
     }, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32);
     m.def("arange", [](int64_t start, int64_t end, int64_t step, const Device& device, DataType dtype) {
         return Tensor::arange(start, end, step, device, dtype);
