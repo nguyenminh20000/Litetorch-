@@ -249,6 +249,10 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride, int padding) {
+    if (input->dtype != DataType::FP32) {
+        auto out_fp32 = max_pool2d(cast(input, DataType::FP32), kernel_size, stride, padding);
+        return cast(out_fp32, input->dtype);
+    }
     if (stride == -1) stride = kernel_size;
 
     if (input->shape.size() != 4) {
@@ -333,6 +337,10 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
 }
 
 std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_size, int stride, int padding) {
+    if (input->dtype != DataType::FP32) {
+        auto out_fp32 = max_pool3d(cast(input, DataType::FP32), kernel_size, stride, padding);
+        return cast(out_fp32, input->dtype);
+    }
     if (stride == -1) stride = kernel_size;
 
     if (input->shape.size() != 5) {
@@ -431,6 +439,10 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
 }
 
 std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int output_height, int output_width) {
+    if (input->dtype != DataType::FP32) {
+        auto out_fp32 = adaptive_avg_pool2d(cast(input, DataType::FP32), output_height, output_width);
+        return cast(out_fp32, input->dtype);
+    }
     if (input->shape.size() != 4) {
         throw std::runtime_error("AdaptiveAvgPool2d requires 4D input (N, C, H, W)");
     }

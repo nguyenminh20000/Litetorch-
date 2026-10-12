@@ -89,6 +89,8 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> cos, std::shared_ptr<Tensor> sin) {
+    if (cos->dtype != DataType::FP32) cos = cast(cos, DataType::FP32);
+    if (sin->dtype != DataType::FP32) sin = cast(sin, DataType::FP32);
     if (x->dtype != DataType::FP32) {
         auto x_fp32 = cast(x, DataType::FP32);
         auto out_fp32 = rope(x_fp32, cos, sin);

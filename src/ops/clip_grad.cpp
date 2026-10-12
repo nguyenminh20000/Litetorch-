@@ -8,6 +8,7 @@ namespace litetorch {
 namespace Ops {
 
 float clip_grad_norm_(const std::vector<std::shared_ptr<Tensor>>& params, float max_norm, float norm_type) {
+    NoGradGuard no_grad;
     double total_sum = 0.0;
     bool has_inf = std::isinf(norm_type);
 
@@ -45,6 +46,7 @@ float clip_grad_norm_(const std::vector<std::shared_ptr<Tensor>>& params, float 
         for (auto& p : params) {
             if (!p || !p->grad) continue;
             auto scale_t = Tensor::from_vector({clip_coef}, {1}, p->grad->device);
+            if (scale_t->dtype != p->grad->dtype) scale_t = scale_t->cast(p->grad->dtype);
             auto scaled = Ops::mul(p->grad, scale_t);
             p->grad->copy_(scaled);
         }

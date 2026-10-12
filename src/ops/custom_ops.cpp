@@ -54,6 +54,10 @@ std::shared_ptr<Tensor> Registry::call(const std::string& name, const std::vecto
         }
     }
 
+    if (Autograd::is_grad_enabled() && any_requires_grad && !it->second.backward) {
+        throw std::runtime_error("[litetorch Error] Custom operator " + name + " requires grad but no backward function was registered");
+    }
+
     if (Autograd::is_grad_enabled() && (any_requires_grad && it->second.backward)) {
         auto node = std::make_shared<CustomOpNode>(name, it->second.backward);
         for (auto& a : args) {

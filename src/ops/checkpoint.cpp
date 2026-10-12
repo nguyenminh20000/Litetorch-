@@ -22,27 +22,30 @@ public:
     }
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::vector<std::shared_ptr<Tensor>> detached_inputs;
+        detached_inputs.reserve(saved_inputs.size());
         for (size_t i = 0; i < saved_inputs.size(); ++i) {
-            saved_inputs[i]->requires_grad = orig_requires_grad_inputs[i];
-        }
-        for (size_t i = 0; i < saved_params.size(); ++i) {
-            saved_params[i]->requires_grad = orig_requires_grad_params[i];
+            auto& t = saved_inputs[i];
+            auto d = Tensor::create(t->shape, t->device, false, t->dtype);
+            d->storage = t->storage;
+            d->offset = t->offset;
+            d->strides = t->strides;
+            d->requires_grad = orig_requires_grad_inputs[i];
+            detached_inputs.push_back(d);
         }
 
-        auto local_out = module->forward(saved_inputs[0]);
+        auto local_out = module->forward(detached_inputs[0]);
         local_out->backward(grad_output, Autograd::is_create_graph_);
 
         std::vector<std::shared_ptr<Tensor>> grads;
-        for (auto& t : saved_inputs) {
-            grads.push_back(t->grad);
-            t->grad = nullptr;
+        for (auto& d : detached_inputs) {
+            grads.push_back(d->grad);
+            d->grad = nullptr;
         }
         for (auto& p : saved_params) {
             grads.push_back(p->grad);
             p->grad = nullptr;
         }
-
-        local_out->creator = std::shared_ptr<Node>(nullptr);
 
         return grads;
     }

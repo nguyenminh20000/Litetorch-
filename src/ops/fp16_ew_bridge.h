@@ -163,10 +163,10 @@ std::shared_ptr<Tensor> try_unary_fp16(std::shared_ptr<Tensor> a, const char* kn
         {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
     if (Autograd::is_grad_enabled() && a->requires_grad) {
         auto node = make_node();
-        node->inputs = { {a, true} };
-        node->next_nodes = { a->creator };
+        node->inputs = { {a_c, a_c->requires_grad} };
+        node->next_nodes = { a_c->creator };
         node->saved_tensors = save_output ? std::vector<std::shared_ptr<Tensor>>{out}
-                                          : std::vector<std::shared_ptr<Tensor>>{a};
+                                          : std::vector<std::shared_ptr<Tensor>>{a_c};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

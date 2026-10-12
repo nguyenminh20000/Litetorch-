@@ -120,8 +120,8 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
         case JITVar::OpType::LOG: return Ops::log(left_tensor);
         case JITVar::OpType::ABS: return Ops::abs(left_tensor);
         case JITVar::OpType::RELU_GRAD: {
-            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0));
-            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0));
+            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
+            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
             if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
             if (!cpu_go->is_contiguous()) cpu_go = cpu_go->contiguous();
             auto cpu_out = Tensor::create(shape, Device(DeviceType::CPU, 0));
@@ -132,11 +132,13 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : 0.0f;
             });
-            return device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            std::shared_ptr<Tensor> result = device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            if (result->dtype != left_tensor->dtype) result = result->cast(left_tensor->dtype);
+            return result;
         }
         case JITVar::OpType::GELU_GRAD: {
-            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0));
-            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0));
+            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
+            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
             if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
             if (!cpu_go->is_contiguous()) cpu_go = cpu_go->contiguous();
             auto cpu_out = Tensor::create(shape, Device(DeviceType::CPU, 0));
@@ -151,11 +153,13 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
                 float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);
                 out_ptr[idx] = gout_ptr[idx] * (term1 + term2);
             });
-            return device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            std::shared_ptr<Tensor> result = device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            if (result->dtype != left_tensor->dtype) result = result->cast(left_tensor->dtype);
+            return result;
         }
         case JITVar::OpType::ABS_GRAD: {
-            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0));
-            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0));
+            auto cpu_in = left_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
+            auto cpu_go = right_tensor->to(Device(DeviceType::CPU, 0), DataType::FP32);
             if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
             if (!cpu_go->is_contiguous()) cpu_go = cpu_go->contiguous();
             auto cpu_out = Tensor::create(shape, Device(DeviceType::CPU, 0));
@@ -166,7 +170,9 @@ static std::shared_ptr<Tensor> evaluate_gpu(std::shared_ptr<JITVar> var, const s
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = in_ptr[i] > 0.0f ? gout_ptr[i] : (in_ptr[i] < 0.0f ? -gout_ptr[i] : 0.0f);
             });
-            return device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            std::shared_ptr<Tensor> result = device.type == DeviceType::GPU ? cpu_out->to(device) : cpu_out;
+            if (result->dtype != left_tensor->dtype) result = result->cast(left_tensor->dtype);
+            return result;
         }
         default: return left_tensor;
     }
@@ -213,51 +219,48 @@ public:
             }
             if (expr_->op == JITVar::OpType::RELU && saved_inputs_.size() == 1) {
                 auto inp = saved_inputs_[0];
-                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
-                auto mask = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
-                float* in_ptr = inp_c->data_ptr();
+                auto inp_cpu = inp->to(Device(DeviceType::CPU, 0), DataType::FP32);
+                if (!inp_cpu->is_contiguous()) inp_cpu = inp_cpu->contiguous();
+                auto mask = Tensor::create(inp_cpu->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_cpu->data_ptr();
                 float* m_ptr = mask->data_ptr();
-                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                for (size_t k = 0; k < inp_cpu->numel(); ++k) {
                     m_ptr[k] = (in_ptr[k] > 0.0f) ? 1.0f : 0.0f;
                 }
-                if (inp->device.type != DeviceType::CPU) {
-                    mask = mask->to(inp->device);
-                }
-                grads.push_back(Ops::mul(grad_output, mask));
+                auto mask_t = mask->to(grad_output->device, grad_output->dtype);
+                grads.push_back(Ops::mul(grad_output, mask_t));
                 continue;
             }
             if (expr_->op == JITVar::OpType::GELU && saved_inputs_.size() == 1) {
                 auto inp = saved_inputs_[0];
-                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
-                auto deriv = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
-                float* in_ptr = inp_c->data_ptr();
+                auto inp_cpu = inp->to(Device(DeviceType::CPU, 0), DataType::FP32);
+                if (!inp_cpu->is_contiguous()) inp_cpu = inp_cpu->contiguous();
+                auto deriv = Tensor::create(inp_cpu->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_cpu->data_ptr();
                 float* d_ptr = deriv->data_ptr();
                 const float C = 0.79788456f;
-                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                for (size_t k = 0; k < inp_cpu->numel(); ++k) {
                     float x = in_ptr[k];
                     float u = C * (x + 0.044715f * x * x * x);
                     float tanh_u = std::tanh(u);
                     d_ptr[k] = 0.5f * (1.0f + tanh_u) + 0.5f * x * (1.0f - tanh_u * tanh_u) * C * (1.0f + 0.134145f * x * x);
                 }
-                if (inp->device.type != DeviceType::CPU) {
-                    deriv = deriv->to(inp->device);
-                }
-                grads.push_back(Ops::mul(grad_output, deriv));
+                auto deriv_t = deriv->to(grad_output->device, grad_output->dtype);
+                grads.push_back(Ops::mul(grad_output, deriv_t));
                 continue;
             }
             if (expr_->op == JITVar::OpType::ABS && saved_inputs_.size() == 1) {
                 auto inp = saved_inputs_[0];
-                auto inp_c = inp->is_contiguous() ? inp : inp->contiguous();
-                auto signs = Tensor::create(inp_c->shape, Device(DeviceType::CPU, 0));
-                float* in_ptr = inp_c->data_ptr();
+                auto inp_cpu = inp->to(Device(DeviceType::CPU, 0), DataType::FP32);
+                if (!inp_cpu->is_contiguous()) inp_cpu = inp_cpu->contiguous();
+                auto signs = Tensor::create(inp_cpu->shape, Device(DeviceType::CPU, 0));
+                float* in_ptr = inp_cpu->data_ptr();
                 float* s_ptr = signs->data_ptr();
-                for (size_t k = 0; k < inp_c->numel(); ++k) {
+                for (size_t k = 0; k < inp_cpu->numel(); ++k) {
                     s_ptr[k] = (in_ptr[k] > 0.0f) ? 1.0f : ((in_ptr[k] < 0.0f) ? -1.0f : 0.0f);
                 }
-                if (inp->device.type != DeviceType::CPU) {
-                    signs = signs->to(inp->device);
-                }
-                grads.push_back(Ops::mul(grad_output, signs));
+                auto signs_t = signs->to(grad_output->device, grad_output->dtype);
+                grads.push_back(Ops::mul(grad_output, signs_t));
                 continue;
             }
             if (expr_->op == JITVar::OpType::MUL && saved_inputs_.size() == 2) {
