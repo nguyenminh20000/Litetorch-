@@ -128,14 +128,13 @@ public:
     std::shared_ptr<Tensor> bias;
     int stride;
     int padding;
-    int groups;
     std::vector<int> kernel_size;
     std::vector<int> stride_vec;
     std::vector<int> padding_vec;
 
-    Conv2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true, int groups = 1);
+    Conv2d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true);
     Conv2d(int in_channels, int out_channels, const std::vector<int>& kernel_size,
-           const std::vector<int>& stride, const std::vector<int>& padding, bool has_bias = true, int groups = 1);
+           const std::vector<int>& stride, const std::vector<int>& padding, bool has_bias = true);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
@@ -157,12 +156,33 @@ public:
 class Sequential : public Module {
 public:
     std::vector<std::shared_ptr<Module>> modules;
+    std::shared_ptr<Tensor> compiled_graph_input = nullptr;
     std::shared_ptr<Tensor> compiled_graph_output = nullptr;
 
     Sequential() = default;
     Sequential(const std::vector<std::shared_ptr<Module>>& modules);
 
     void add(std::shared_ptr<Module> module);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+    void train() override;
+    void eval() override;
+    std::vector<std::shared_ptr<Module>> children() override { return modules; }
+};
+
+class ModuleList : public Module {
+public:
+    std::vector<std::shared_ptr<Module>> modules;
+
+    ModuleList() = default;
+    ModuleList(const std::vector<std::shared_ptr<Module>>& modules);
+
+    void append(std::shared_ptr<Module> module);
+    void extend(const std::vector<std::shared_ptr<Module>>& ms);
+    std::shared_ptr<Module>& operator[](size_t i);
+    const std::shared_ptr<Module>& operator[](size_t i) const;
+    size_t size() const;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;

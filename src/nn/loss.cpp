@@ -13,7 +13,7 @@ void check_reduction(const std::string& reduction) {
 }
 
 std::shared_ptr<Tensor> apply_sum_reduction(std::shared_ptr<Tensor> mean_out, size_t numel) {
-    auto scale = Tensor::from_vector({static_cast<float>(numel)}, {1}, mean_out->device);
+    auto scale = Tensor::from_vector({static_cast<float>(numel)}, {1}, mean_out->device, false, mean_out->dtype);
     return Ops::mul(mean_out, scale);
 }
 }

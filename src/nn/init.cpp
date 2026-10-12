@@ -4,12 +4,19 @@
 #include <random>
 #include <cmath>
 #include <vector>
+#include <stdexcept>
 
 namespace litetorch {
 extern std::mt19937& get_generator();
 
 namespace nn {
 namespace init {
+
+static void check_mode(const std::string& mode) {
+    if (mode != "fan_in" && mode != "fan_out") {
+        throw std::invalid_argument("[litetorch Error] init mode must be 'fan_in' or 'fan_out', got '" + mode + "'");
+    }
+}
 
 static void calc_fan(const std::shared_ptr<Tensor>& t, int64_t& fan_in, int64_t& fan_out) {
     const auto& s = t->shape;
@@ -36,6 +43,7 @@ static void write_values(std::shared_ptr<Tensor> t, const std::vector<float>& va
 }
 
 std::shared_ptr<Tensor> kaiming_uniform_(std::shared_ptr<Tensor> tensor, float a, const std::string& mode, const std::string& nonlinearity) {
+    check_mode(mode);
     int64_t fan_in, fan_out;
     calc_fan(tensor, fan_in, fan_out);
     int64_t fan = (mode == "fan_out") ? fan_out : fan_in;
@@ -51,6 +59,7 @@ std::shared_ptr<Tensor> kaiming_uniform_(std::shared_ptr<Tensor> tensor, float a
 }
 
 std::shared_ptr<Tensor> kaiming_normal_(std::shared_ptr<Tensor> tensor, float a, const std::string& mode, const std::string& nonlinearity) {
+    check_mode(mode);
     int64_t fan_in, fan_out;
     calc_fan(tensor, fan_in, fan_out);
     int64_t fan = (mode == "fan_out") ? fan_out : fan_in;

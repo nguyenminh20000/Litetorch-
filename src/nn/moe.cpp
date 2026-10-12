@@ -46,8 +46,8 @@ public:
                     auto w = saved_tensors[2 + e * 2];
                     auto b = saved_tensors[2 + e * 2 + 1];
 
-                    auto gw = Tensor::zeros(w->shape, w->device, false);
-                    auto gb = b ? Tensor::zeros(b->shape, b->device, false) : nullptr;
+                    auto gw = Tensor::zeros(w->shape, w->device, false, DataType::FP32);
+                    auto gb = b ? Tensor::zeros(b->shape, b->device, false, DataType::FP32) : nullptr;
                     void* gb_ptr = gb ? gb->gpu_data() : nullptr;
                     int gb_off = gb ? gb->offset : 0;
                     void* b_ptr = b ? b->gpu_data() : nullptr;
@@ -81,8 +81,8 @@ public:
                 auto w = saved_tensors[2 + e * 2];
                 auto b = saved_tensors[2 + e * 2 + 1];
 
-                auto gw = Tensor::zeros(w->shape, w->device, false);
-                auto gb = b ? Tensor::zeros(b->shape, b->device, false) : nullptr;
+                auto gw = Tensor::zeros(w->shape, w->device, false, DataType::FP32);
+                auto gb = b ? Tensor::zeros(b->shape, b->device, false, DataType::FP32) : nullptr;
                 
                 auto cpu_w = w->to(Device(DeviceType::CPU, 0));
                 auto cpu_b = b ? b->to(Device(DeviceType::CPU, 0)) : nullptr;
@@ -167,13 +167,23 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
     int64_t D = input->shape.back();
     int64_t N = input->numel() / D;
     int64_t out_features = experts[0]->weight->shape[0];
+    DataType in_dtype = input->dtype;
 
     auto input_flat = input->reshape({N, D});
+    auto cin = Ops::cast(input_flat, DataType::FP32);
+    auto cgw = Ops::cast(gate_weight, DataType::FP32);
+
+    std::vector<std::shared_ptr<Tensor>> cw_list(num_experts);
+    std::vector<std::shared_ptr<Tensor>> cb_list(num_experts);
+    for (int e = 0; e < num_experts; ++e) {
+        cw_list[e] = Ops::cast(experts[e]->weight, DataType::FP32);
+        cb_list[e] = experts[e]->bias ? Ops::cast(experts[e]->bias, DataType::FP32) : nullptr;
+    }
 
     std::shared_ptr<Tensor> indices;
-    auto probs = Ops::moe_gate(input_flat, gate_weight, top_k, indices);
+    auto probs = Ops::moe_gate(cin, cgw, top_k, indices);
 
-    auto out = Tensor::zeros({N, out_features}, input->device, false);
+    auto out = Tensor::zeros({N, out_features}, input->device, false, DataType::FP32);
 
     bool run_gpu = false;
     if (input->device.type == DeviceType::GPU) {
@@ -181,15 +191,15 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         if (backend && backend->is_available()) {
             run_gpu = true;
             for (int e = 0; e < num_experts; ++e) {
-                void* b_ptr = experts[e]->bias ? experts[e]->bias->gpu_data() : nullptr;
-                int b_off = experts[e]->bias ? experts[e]->bias->offset : 0;
-                backend->moe_expert_forward(input_flat->gpu_data(), input_flat->offset, experts[e]->weight->gpu_data(), experts[e]->weight->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, out->gpu_data(), out->offset, N, D, out_features, e, top_k);
+                void* b_ptr = cb_list[e] ? cb_list[e]->gpu_data() : nullptr;
+                int b_off = cb_list[e] ? cb_list[e]->offset : 0;
+                backend->moe_expert_forward(cin->gpu_data(), cin->offset, cw_list[e]->gpu_data(), cw_list[e]->offset, b_ptr, b_off, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, out->gpu_data(), out->offset, N, D, out_features, e, top_k);
             }
         }
     }
     
     if (!run_gpu) {
-        auto cpu_in = input_flat->to(Device(DeviceType::CPU, 0));
+        auto cpu_in = cin->to(Device(DeviceType::CPU, 0));
         auto cpu_probs = probs->to(Device(DeviceType::CPU, 0));
         auto cpu_indices = indices->to(Device(DeviceType::CPU, 0));
         auto cpu_out = out->to(Device(DeviceType::CPU, 0));
@@ -200,8 +210,8 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         float* out_ptr = cpu_out->data_ptr();
 
         for (int e = 0; e < num_experts; ++e) {
-            auto cpu_w = experts[e]->weight->to(Device(DeviceType::CPU, 0));
-            auto cpu_b = experts[e]->bias ? experts[e]->bias->to(Device(DeviceType::CPU, 0)) : nullptr;
+            auto cpu_w = cw_list[e]->to(Device(DeviceType::CPU, 0));
+            auto cpu_b = cb_list[e] ? cb_list[e]->to(Device(DeviceType::CPU, 0)) : nullptr;
             
             float* w_ptr = cpu_w->data_ptr();
             float* b_ptr = cpu_b ? cpu_b->data_ptr() : nullptr;
@@ -226,27 +236,27 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         out->copy_(cpu_out);
     }
 
-    bool requires_grad = input->requires_grad || gate_weight->requires_grad;
+    bool requires_grad = cin->requires_grad || cgw->requires_grad;
     for (int e = 0; e < num_experts; ++e) {
-        requires_grad = requires_grad || experts[e]->weight->requires_grad || (experts[e]->bias && experts[e]->bias->requires_grad);
+        requires_grad = requires_grad || cw_list[e]->requires_grad || (cb_list[e] && cb_list[e]->requires_grad);
     }
 
     if (Autograd::is_grad_enabled() && (Autograd::has_active_tensors() || requires_grad)) {
         out->requires_grad = requires_grad;
         auto node = std::make_shared<MoeForwardNode>(num_experts, top_k, indices, probs, in_shape);
-        node->next_nodes = {input->creator, gate_weight->creator};
-        node->inputs = {{input, input->requires_grad}, {gate_weight, gate_weight->requires_grad}};
-        node->saved_tensors = {input_flat, gate_weight};
+        node->next_nodes = {cin->creator, cgw->creator};
+        node->inputs = {{cin, cin->requires_grad}, {cgw, cgw->requires_grad}};
+        node->saved_tensors = {cin, cgw};
 
         for (int e = 0; e < num_experts; ++e) {
-            node->next_nodes.push_back(experts[e]->weight->creator);
-            node->inputs.push_back({experts[e]->weight, experts[e]->weight->requires_grad});
-            node->saved_tensors.push_back(experts[e]->weight);
+            node->next_nodes.push_back(cw_list[e]->creator);
+            node->inputs.push_back({cw_list[e], cw_list[e]->requires_grad});
+            node->saved_tensors.push_back(cw_list[e]);
 
-            if (experts[e]->bias) {
-                node->next_nodes.push_back(experts[e]->bias->creator);
-                node->inputs.push_back({experts[e]->bias, experts[e]->bias->requires_grad});
-                node->saved_tensors.push_back(experts[e]->bias);
+            if (cb_list[e]) {
+                node->next_nodes.push_back(cb_list[e]->creator);
+                node->inputs.push_back({cb_list[e], cb_list[e]->requires_grad});
+                node->saved_tensors.push_back(cb_list[e]);
             } else {
                 node->next_nodes.push_back(nullptr);
                 node->inputs.push_back(NodeInput{std::weak_ptr<Tensor>(), false});
@@ -260,7 +270,8 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
 
     std::vector<int64_t> out_shape = in_shape;
     out_shape.back() = out_features;
-    return out->reshape(out_shape);
+    auto out_cast = Ops::cast(out, in_dtype);
+    return out_cast->reshape(out_shape);
 }
 
 std::vector<std::shared_ptr<Tensor>> MoELinear::parameters() {
