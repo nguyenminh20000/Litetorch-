@@ -405,7 +405,7 @@ void Module::add_module(const std::string& name, std::shared_ptr<Module> module)
 std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> Module::named_parameters(const std::string& prefix) {
     std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> out;
     for (auto& kv : local_params()) {
-        if (kv.second) out.push_back({prefix + kv.first, kv.second});
+        if (kv.second) out.push_back({(prefix.empty() ? kv.first : prefix + "." + kv.first), kv.second});
     }
     for (auto& ck : named_children()) {
         if (!ck.second) continue;
@@ -418,7 +418,7 @@ std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> Module::named_param
 std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> Module::named_buffers(const std::string& prefix) {
     std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> out;
     for (auto& kv : local_buffers()) {
-        if (kv.second) out.push_back({prefix + kv.first, kv.second});
+        if (kv.second) out.push_back({(prefix.empty() ? kv.first : prefix + "." + kv.first), kv.second});
     }
     for (auto& ck : named_children()) {
         if (!ck.second) continue;
@@ -466,10 +466,10 @@ std::vector<std::pair<std::string, std::shared_ptr<Module>>> Module::named_modul
 void Module::state_dict_rec(const std::string& prefix,
                             std::vector<std::pair<std::string, std::shared_ptr<Tensor>>>& out) {
     for (auto& kv : local_params()) {
-        if (kv.second) out.push_back({prefix + kv.first, kv.second});
+        if (kv.second) out.push_back({(prefix.empty() ? kv.first : prefix + "." + kv.first), kv.second});
     }
     for (auto& kv : local_buffers()) {
-        if (kv.second) out.push_back({prefix + kv.first, kv.second});
+        if (kv.second) out.push_back({(prefix.empty() ? kv.first : prefix + "." + kv.first), kv.second});
     }
     for (auto& ck : named_children()) {
         if (!ck.second) continue;
