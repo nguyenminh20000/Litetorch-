@@ -118,6 +118,7 @@ public:
     static std::shared_ptr<Tensor> create(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> from_vector(const std::vector<float>& data, const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> zeros(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false);
+    static std::shared_ptr<Tensor> zeros(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype);
     static std::shared_ptr<Tensor> ones(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> randn(const std::vector<int64_t>& shape, const Device& device = Device(DeviceType::CPU, 0), bool requires_grad = false, DataType dtype = DataType::FP32);
     static std::shared_ptr<Tensor> arange(int64_t start, int64_t end, int64_t step = 1, const Device& device = Device(DeviceType::CPU, 0), DataType dtype = DataType::FP32);

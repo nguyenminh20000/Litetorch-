@@ -295,30 +295,66 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
     return tensor;
 }
 
-std::shared_ptr<Tensor> Tensor::ones(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+    if (dtype == DataType::FP32) {
+        return zeros(shape, device, requires_grad);
+    }
     auto tensor = create(shape, device, requires_grad, dtype);
     size_t n = tensor->numel();
-    std::vector<float> ones_vec(n, 1.0f);
+    size_t elem = tensor->storage->element_size();
+    size_t bytes = n * elem;
+    if (tensor->device.type == DeviceType::GPU) {
+        std::vector<uint8_t> z(bytes, 0);
+        if (auto native = native_gpu_backend()) {
+            native->write(tensor->gpu_data(), bytes, z.data(), tensor->offset * elem);
+        } else {
+            rt_gpu_write(tensor->gpu_data(), bytes, z.data(), tensor->offset * elem);
+        }
+    } else {
+        std::memset(reinterpret_cast<uint8_t*>(tensor->storage->get_cpu_ptr()) + tensor->offset * elem, 0, bytes);
+        if (tensor->device.type == DeviceType::TPU) {
+            auto tpu = BackendDispatcher::get().get_tpu_backend();
+            if (tpu && tensor->gpu_data()) {
+                std::vector<uint8_t> z(bytes, 0);
+                tpu->write(tensor->gpu_data(), bytes, z.data(), tensor->offset * elem);
+            }
+        }
+    }
+    return tensor;
+}
+
+static uint16_t float_to_half(float f);
+
+std::shared_ptr<Tensor> Tensor::ones(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
+    if (dtype != DataType::FP32 && dtype != DataType::FP16) {
+        auto f32 = ones(shape, device, requires_grad, DataType::FP32);
+        return f32->cast(dtype);
+    }
+    auto tensor = create(shape, device, requires_grad, dtype);
+    size_t n = tensor->numel();
+    size_t elem = tensor->storage->element_size();
+    std::vector<uint8_t> buf(n * elem);
+    if (dtype == DataType::FP16) {
+        uint16_t h = float_to_half(1.0f);
+        for (size_t i = 0; i < n; ++i) reinterpret_cast<uint16_t*>(buf.data())[i] = h;
+    } else {
+        for (size_t i = 0; i < n; ++i) reinterpret_cast<float*>(buf.data())[i] = 1.0f;
+    }
     if (tensor->device.type == DeviceType::GPU) {
         if (auto native = native_gpu_backend()) {
-            native->write(tensor->gpu_data(), n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+            native->write(tensor->gpu_data(), n * elem, buf.data(), tensor->offset * elem);
         } else {
             cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-            rt_gpu_write(gpu_ptr, n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+            rt_gpu_write(gpu_ptr, n * elem, buf.data(), tensor->offset * elem);
         }
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
-        float* cpu_ptr = tensor->storage->get_cpu_ptr();
-        std::copy(ones_vec.begin(), ones_vec.end(), cpu_ptr + tensor->offset);
+        std::memcpy(reinterpret_cast<uint8_t*>(tensor->storage->get_cpu_ptr()) + tensor->offset * elem, buf.data(), n * elem);
         if (tpu && tensor->gpu_data()) {
-            tpu->write(tensor->gpu_data(), n * sizeof(float), ones_vec.data(), tensor->offset * sizeof(float));
+            tpu->write(tensor->gpu_data(), n * elem, buf.data(), tensor->offset * elem);
         }
     } else {
-        float* cpu_ptr = tensor->storage->get_cpu_ptr();
-        std::copy(ones_vec.begin(), ones_vec.end(), cpu_ptr + tensor->offset);
-    }
-    if (dtype != DataType::FP32) {
-        return tensor->cast(dtype);
+        std::memcpy(reinterpret_cast<uint8_t*>(tensor->storage->get_cpu_ptr()) + tensor->offset * elem, buf.data(), n * elem);
     }
     return tensor;
 }

@@ -117,16 +117,23 @@ extern "C" bool gpu_is_fp16_math_enabled() {
 }
 
 cublasHandle_t get_cublas_handle(const void* ref) {
-    thread_local std::unordered_map<int, cublasHandle_t> handles;
+    thread_local std::unordered_map<int, std::pair<cublasHandle_t, cublasMath_t>> handles;
     auto_set_device(ref);
     int dev = current_device();
+    cublasMath_t want = current_math_mode();
     auto it = handles.find(dev);
-    if (it != handles.end()) return it->second;
+    if (it != handles.end()) {
+        if (it->second.second != want) {
+            cublasSetMathMode(it->second.first, want);
+            it->second.second = want;
+        }
+        return it->second.first;
+    }
     cublasHandle_t handle = nullptr;
     LT_CUBLAS_CHECK(cublasCreate(&handle));
     cublasSetStream(handle, dev_stream(dev));
-    cublasSetMathMode(handle, current_math_mode());
-    handles[dev] = handle;
+    cublasSetMathMode(handle, want);
+    handles[dev] = {handle, want};
     return handle;
 }
 cublasLtHandle_t get_cublaslt_handle() {

@@ -547,7 +547,7 @@ public:
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto s = saved_tensors[0];
         auto x = saved_tensors[1];
-        auto one = Tensor::ones(s->shape, s->device);
+        auto one = Tensor::ones(s->shape, s->device, false, s->dtype);
         auto ds = mul(s, add(one, mul(x, sub(one, s))));
         return { mul(grad_output, ds) };
     }

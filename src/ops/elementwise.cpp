@@ -2090,10 +2090,7 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto grad_input = Tensor::zeros(input_shape, grad_output->device, false);
-        if (grad_input->dtype != grad_output->dtype) {
-            grad_input = grad_input->cast(grad_output->dtype);
-        }
+        auto grad_input = Tensor::zeros(input_shape, grad_output->device, false, grad_output->dtype);
         auto region = grad_input->slice(dim, start, start + length, 1);
         region->copy_(grad_output);
         return { grad_input };
