@@ -30,24 +30,41 @@ public:
         auto grad_input = Tensor::zeros(input->shape, input->device, false, input->dtype);
         auto grad_gate_weight = Tensor::zeros(gate_weight->shape, gate_weight->device, false, gate_weight->dtype);
 
+        auto as_fp32_contig = [](std::shared_ptr<Tensor> t) {
+            auto u = t->dtype == DataType::FP32 ? t : t->cast(DataType::FP32);
+            return u->is_contiguous() ? u : u->contiguous();
+        };
+
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {
             auto backend = BackendDispatcher::get().get_backend();
             if (backend && backend->is_available()) {
                 run_gpu = true;
-                backend->moe_gate_backward(grad_output->gpu_data(), grad_output->offset, input->gpu_data(), input->offset, gate_weight->gpu_data(), gate_weight->offset, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, grad_input->gpu_data(), grad_input->offset, grad_gate_weight->gpu_data(), grad_gate_weight->offset, N, D, E, top_k);
+                auto go32 = as_fp32_contig(grad_output);
+                auto in32 = as_fp32_contig(input);
+                auto gw32 = as_fp32_contig(gate_weight);
+                auto gin32 = Tensor::zeros(grad_input->shape, grad_output->device, false, DataType::FP32);
+                auto ggw32 = Tensor::zeros(grad_gate_weight->shape, grad_output->device, false, DataType::FP32);
+                backend->moe_gate_backward(go32->gpu_data(), go32->offset, in32->gpu_data(), in32->offset, gw32->gpu_data(), gw32->offset, probs->gpu_data(), probs->offset, indices->gpu_data(), indices->offset, gin32->gpu_data(), gin32->offset, ggw32->gpu_data(), ggw32->offset, N, D, E, top_k);
+                grad_input->copy_(gin32);
+                grad_gate_weight->copy_(ggw32);
             }
         }
-        
+
         if (!run_gpu) {
-            auto cpu_gout = grad_output->to(Device(DeviceType::CPU, 0));
-            auto cpu_in = input->to(Device(DeviceType::CPU, 0));
-            auto cpu_gw = gate_weight->to(Device(DeviceType::CPU, 0));
-            auto cpu_probs = probs->to(Device(DeviceType::CPU, 0));
-            auto cpu_indices = indices->to(Device(DeviceType::CPU, 0));
-            
-            auto cpu_gin = grad_input->to(Device(DeviceType::CPU, 0));
-            auto cpu_ggw = grad_gate_weight->to(Device(DeviceType::CPU, 0));
+            auto cpu = Device(DeviceType::CPU, 0);
+            auto c32 = [&](std::shared_ptr<Tensor> t) {
+                auto u = t->to(cpu, DataType::FP32);
+                return u->is_contiguous() ? u : u->contiguous();
+            };
+            auto cpu_gout = c32(grad_output);
+            auto cpu_in = c32(input);
+            auto cpu_gw = c32(gate_weight);
+            auto cpu_probs = c32(probs);
+            auto cpu_indices = c32(indices);
+
+            auto cpu_gin = Tensor::create(grad_input->shape, cpu, false, DataType::FP32);
+            auto cpu_ggw = Tensor::create(grad_gate_weight->shape, cpu, false, DataType::FP32);
             
             float* d_out = cpu_gout->data_ptr();
             float* in_ptr = cpu_in->data_ptr();
@@ -154,16 +171,19 @@ std::shared_ptr<Tensor> moe_gate(
     indices_out = Tensor::create({N, top_k}, input->device, false);
 
     bool run_gpu = false;
-    if (input->device.type == DeviceType::GPU) {
+    if (top_k <= 8 && input->device.type == DeviceType::GPU) {
         auto backend = BackendDispatcher::get().get_backend();
         if (backend && backend->is_available()) {
             run_gpu = true;
-            backend->moe_gate(logits->gpu_data(), logits->offset, out_probs->gpu_data(), out_probs->offset, indices_out->gpu_data(), indices_out->offset, N, E, top_k);
+            auto l32 = logits->dtype == DataType::FP32 ? logits : logits->cast(DataType::FP32);
+            auto l32c = l32->is_contiguous() ? l32 : l32->contiguous();
+            backend->moe_gate(l32c->gpu_data(), l32c->offset, out_probs->gpu_data(), out_probs->offset, indices_out->gpu_data(), indices_out->offset, N, E, top_k);
         }
     }
-    
+
     if (!run_gpu) {
-        auto cpu_logits = logits->to(Device(DeviceType::CPU, 0));
+        auto cpu_logits = logits->to(Device(DeviceType::CPU, 0), DataType::FP32);
+        if (!cpu_logits->is_contiguous()) cpu_logits = cpu_logits->contiguous();
         float* logit_ptr = cpu_logits->data_ptr();
 
         auto probs_full = Tensor::create({N, E}, Device(DeviceType::CPU, 0), false);

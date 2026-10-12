@@ -54,6 +54,9 @@ std::shared_ptr<Tensor> w8a8_matmul(
 
     if (x_c->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::W8A8MatMul);
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] w8a8_matmul: GPU kernel not available");
+        }
         cl_mem x_mem = x_c->gpu_data();
         cl_mem w_mem = w_c->gpu_data();
         cl_mem out_mem = out->gpu_data();

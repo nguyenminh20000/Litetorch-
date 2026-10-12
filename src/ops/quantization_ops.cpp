@@ -45,6 +45,12 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale, float zero_point, int bits) {
+    if (bits < 1 || bits > 32) {
+        throw std::runtime_error("[litetorch Error] fake_quantize: bits must satisfy 1 <= bits <= 32, got " + std::to_string(bits));
+    }
+    if (scale == 0.0f) {
+        throw std::runtime_error("[litetorch Error] fake_quantize: scale must be non-zero");
+    }
     if (input->dtype != DataType::FP32) {
         auto input_fp32 = input->cast(DataType::FP32);
         auto out_fp32 = fake_quantize(input_fp32, scale, zero_point, bits);
@@ -69,6 +75,9 @@ std::shared_ptr<Tensor> fake_quantize(std::shared_ptr<Tensor> input, float scale
 
     if (input_c->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel_by_id(KernelID::FakeQuantizeForward);
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] fake_quantize: GPU kernel not available");
+        }
         int size = out->numel();
         cl_mem a_mem = input_c->gpu_data();
         cl_mem b_mem = out->gpu_data();
