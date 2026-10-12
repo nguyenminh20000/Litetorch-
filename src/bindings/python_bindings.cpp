@@ -248,7 +248,7 @@ PYBIND11_MODULE(litetorch, m) {
     py::class_<Tensor, std::shared_ptr<Tensor>>(m, "Tensor")
         .def_static("create", &Tensor::create, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("from_vector", &Tensor::from_vector, py::arg("data"), py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
-        .def_static("zeros", &Tensor::zeros, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false)
+        .def_static("zeros", static_cast<std::shared_ptr<Tensor>(*)(const std::vector<int64_t>&, const Device&, bool)>(&Tensor::zeros), py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false)
         .def_static("ones", &Tensor::ones, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("randn", &Tensor::randn, py::arg("shape"), py::arg("device") = Device(DeviceType::CPU, 0), py::arg("requires_grad") = false, py::arg("dtype") = DataType::FP32)
         .def_static("arange", &Tensor::arange, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32)
