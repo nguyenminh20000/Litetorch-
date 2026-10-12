@@ -281,6 +281,9 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
     auto tensor = create(shape, device, requires_grad);
     if (tensor->device.type == DeviceType::GPU) {
         void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "fill_zero");
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] zeros(): fill_zero kernel not available");
+        }
         int size_val = static_cast<int>(tensor->numel());
         int off_val = static_cast<int>(tensor->offset);
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
@@ -324,6 +327,9 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
 }
 
 static uint16_t float_to_half(float f);
+static float half_to_float(uint16_t h);
+static uint16_t float_to_bf16(float f);
+static float bf16_to_float(uint16_t h);
 
 std::shared_ptr<Tensor> Tensor::ones(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
     if (dtype != DataType::FP32 && dtype != DataType::FP16) {
@@ -432,6 +438,9 @@ std::shared_ptr<Tensor> Tensor::masked_fill(std::shared_ptr<Tensor> mask, float 
 std::shared_ptr<Tensor> Tensor::slice(int64_t dim, int64_t start, int64_t end, int64_t step) {
     int64_t ndim = static_cast<int64_t>(shape.size());
     if (dim < 0) dim += ndim;
+    if (dim < 0 || dim >= ndim) {
+        throw std::runtime_error("[litetorch Error] Dimension out of range in slice");
+    }
     int64_t dim_size = shape[dim];
     if (start < 0) start += dim_size;
     if (end < 0) end += dim_size;
@@ -505,11 +514,21 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
         auto fp32_cont = fp32_self->contiguous();
         auto res = fp32_cont->cast(dtype);
         res->requires_grad = requires_grad;
+        if (requires_grad) {
+            auto node = std::make_shared<ContiguousNode>();
+            node->inputs = { {shared_from_this(), true} };
+            node->next_nodes = { creator };
+            node->output = res;
+            res->creator = node;
+        }
         return res;
     }
 
     auto out = create(shape, device, requires_grad, dtype);
     if (device.type == DeviceType::GPU) {
+        if (dtype != DataType::FP32 && dtype != DataType::FP16) {
+            throw std::runtime_error("[litetorch Error] contiguous(): unsupported dtype on GPU");
+        }
         size_t num_elements = numel();
         int ndims_val = static_cast<int>(shape.size());
         if (ndims_val > 8) throw std::runtime_error("contiguous(): ndims > 8 not supported by GPU kernel");
@@ -524,6 +543,9 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
         void* kernel = (dtype == DataType::FP16)
             ? rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "make_contiguous_kernel_fp16")
             : rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "make_contiguous_kernel");
+        if (!kernel) {
+            throw std::runtime_error("[litetorch Error] contiguous(): GPU kernel not available");
+        }
         
         cl_mem src_mem = gpu_data();
         cl_mem dst_mem = out->gpu_data();
@@ -956,6 +978,9 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
     size_t elem_sz = storage->element_size();
     if (!is_contiguous()) {
         if (device.type == DeviceType::GPU) {
+            if (dtype != DataType::FP32 && dtype != DataType::FP16) {
+                throw std::runtime_error("[litetorch Error] copy_(): unsupported dtype on GPU");
+            }
             size_t num_elements = numel();
             int ndims_val = static_cast<int>(shape.size());
             if (ndims_val > 8) throw std::runtime_error("to(): ndims > 8 not supported by GPU kernel");
@@ -970,6 +995,9 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
             void* kernel = (dtype == DataType::FP16)
                 ? rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "copy_to_strided_kernel_fp16")
                 : rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "copy_to_strided_kernel");
+            if (!kernel) {
+                throw std::runtime_error("[litetorch Error] copy_(): GPU kernel not available");
+            }
             cl_mem src_mem = src_cont->gpu_data();
             cl_mem dst_mem = gpu_data();
             int src_off = src_cont->offset;
@@ -979,6 +1007,13 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
             rt_gpu_launch(kernel, {num_elements}, {},
                 {&src_mem, &src_off, &dst_mem, &dst_off, &ndims_val, &shape_arr, &strides_arr, &size_val},
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(shape_arr), sizeof(strides_arr), sizeof(int)});
+            {
+                std::lock_guard<std::mutex> storage_lock(storage->storage_mutex_);
+                if (storage->cpu_data) {
+                    CachingAllocator::get().free_cpu(storage->cpu_data);
+                    storage->cpu_data = nullptr;
+                }
+            }
         } else {
             char* dest_base = (char*)storage->get_cpu_ptr();
             char* src_base = (char*)src_cont->storage->get_cpu_ptr();
@@ -1052,52 +1087,98 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
     }
     StorageUseGuard guard({storage, other->storage});
     if (device.type == DeviceType::GPU) {
-        if (is_contiguous() && other->is_contiguous()) {
-            void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_inplace");
-            int size = numel();
-            cl_mem a_mem = gpu_data();
-            cl_mem b_mem = other->gpu_data();
-            int a_off = offset;
-            int b_off = other->offset;
-            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, 
-                {&a_mem, &a_off, &b_mem, &b_off, &size}, 
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
-        } else {
-            if (is_contiguous()) {
-                auto other_cont = other->contiguous();
-                void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_inplace");
-                int size = numel();
-                cl_mem a_mem = gpu_data();
-                cl_mem b_mem = other_cont->gpu_data();
-                int a_off = offset;
-                int b_off = other_cont->offset;
-                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, 
-                    {&a_mem, &a_off, &b_mem, &b_off, &size}, 
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+        bool fp16 = (dtype == DataType::FP16);
+        if (dtype != DataType::FP32 && !fp16) {
+            throw std::runtime_error("[litetorch Error] add_(): unsupported dtype on GPU");
+        }
+        auto launch_add = [&](cl_mem a_mem, int a_off, cl_mem b_mem, int b_off, int size) {
+            if (fp16) {
+                void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_fp16");
+                if (!kernel) {
+                    throw std::runtime_error("[litetorch Error] add_(): elementwise_add_fp16 kernel not available");
+                }
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
+                    {&a_mem, &a_off, &b_mem, &b_off, &a_mem, &a_off, &size},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
             } else {
-                auto this_cont = contiguous();
-                auto other_cont = other->is_contiguous() ? other : other->contiguous();
-                this_cont->add_(other_cont);
-                copy_(this_cont);
+                void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_inplace");
+                if (!kernel) {
+                    throw std::runtime_error("[litetorch Error] add_(): elementwise_add_inplace kernel not available");
+                }
+                rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
+                    {&a_mem, &a_off, &b_mem, &b_off, &size},
+                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            }
+        };
+        if (is_contiguous() && other->is_contiguous()) {
+            launch_add(gpu_data(), static_cast<int>(offset), other->gpu_data(), static_cast<int>(other->offset), static_cast<int>(numel()));
+        } else if (is_contiguous()) {
+            auto other_cont = other->contiguous();
+            launch_add(gpu_data(), static_cast<int>(offset), other_cont->gpu_data(), static_cast<int>(other_cont->offset), static_cast<int>(numel()));
+        } else {
+            auto this_cont = contiguous();
+            auto other_cont = other->is_contiguous() ? other : other->contiguous();
+            this_cont->add_(other_cont);
+            copy_(this_cont);
+        }
+        {
+            std::lock_guard<std::mutex> storage_lock(storage->storage_mutex_);
+            if (storage->cpu_data) {
+                CachingAllocator::get().free_cpu(storage->cpu_data);
+                storage->cpu_data = nullptr;
             }
         }
     } else {
+        size_t esz = storage->element_size();
+        char* a_raw = reinterpret_cast<char*>(storage->get_cpu_ptr());
+        const char* b_raw = reinterpret_cast<const char*>(other->storage->get_cpu_ptr());
+        auto add_elem = [&](int64_t a_idx, int64_t b_idx) {
+            switch (dtype) {
+                case DataType::FP32:
+                    reinterpret_cast<float*>(a_raw)[a_idx] += reinterpret_cast<const float*>(b_raw)[b_idx];
+                    break;
+                case DataType::FP64:
+                    reinterpret_cast<double*>(a_raw)[a_idx] += reinterpret_cast<const double*>(b_raw)[b_idx];
+                    break;
+                case DataType::FP16: {
+                    uint16_t* ap = reinterpret_cast<uint16_t*>(a_raw);
+                    const uint16_t* bp = reinterpret_cast<const uint16_t*>(b_raw);
+                    ap[a_idx] = float_to_half(half_to_float(ap[a_idx]) + half_to_float(bp[b_idx]));
+                    break;
+                }
+                case DataType::BF16: {
+                    uint16_t* ap = reinterpret_cast<uint16_t*>(a_raw);
+                    const uint16_t* bp = reinterpret_cast<const uint16_t*>(b_raw);
+                    ap[a_idx] = float_to_bf16(bf16_to_float(ap[a_idx]) + bf16_to_float(bp[b_idx]));
+                    break;
+                }
+                case DataType::INT32:
+                    reinterpret_cast<int32_t*>(a_raw)[a_idx] += reinterpret_cast<const int32_t*>(b_raw)[b_idx];
+                    break;
+                case DataType::INT16:
+                    reinterpret_cast<int16_t*>(a_raw)[a_idx] += reinterpret_cast<const int16_t*>(b_raw)[b_idx];
+                    break;
+                case DataType::INT8:
+                    reinterpret_cast<int8_t*>(a_raw)[a_idx] += reinterpret_cast<const int8_t*>(b_raw)[b_idx];
+                    break;
+                default:
+                    throw std::runtime_error("[litetorch Error] add_(): unsupported dtype on CPU");
+            }
+        };
         if (is_contiguous() && other->is_contiguous()) {
-            float* a_ptr = storage->get_cpu_ptr() + offset;
-            const float* b_ptr = other->storage->get_cpu_ptr() + other->offset;
-            int64_t size = numel();
+            int64_t size = static_cast<int64_t>(numel());
+            int64_t a0 = offset;
+            int64_t b0 = other->offset;
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                a_ptr[i] += b_ptr[i];
+                add_elem(a0 + i, b0 + i);
             });
         } else {
-            float* a_base = storage->get_cpu_ptr();
-            const float* b_base = other->storage->get_cpu_ptr();
             std::vector<int64_t> coords(shape.size(), 0);
-            int64_t total = numel();
+            int64_t total = static_cast<int64_t>(numel());
             int64_t a_offset = offset;
             int64_t b_offset = other->offset;
             for (int64_t i = 0; i < total; ++i) {
-                a_base[a_offset] += b_base[b_offset];
+                add_elem(a_offset, b_offset);
                 for (int d = static_cast<int>(shape.size()) - 1; d >= 0; --d) {
                     coords[d]++;
                     a_offset += strides[d];
@@ -1112,7 +1193,7 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
         if (device.type == DeviceType::TPU) {
             auto tpu = BackendDispatcher::get().get_tpu_backend();
             if (tpu && gpu_data()) {
-                tpu->write(gpu_data(), numel() * sizeof(float), storage->get_cpu_ptr() + offset, offset * sizeof(float));
+                tpu->write(gpu_data(), numel() * esz, a_raw + offset * esz, offset * esz);
             }
         }
     }
@@ -1332,6 +1413,16 @@ static float half_to_float(uint16_t h) {
         val = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
     }
     return *(float*)&val;
+}
+
+static uint16_t float_to_bf16(float f) {
+    uint32_t x = *(uint32_t*)&f;
+    return (uint16_t)(x >> 16);
+}
+
+static float bf16_to_float(uint16_t h) {
+    uint32_t x = ((uint32_t)h) << 16;
+    return *(float*)&x;
 }
 
 std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {

@@ -145,7 +145,7 @@ void StorageImpl::to(const Device& new_device) {
         cl_mem new_gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
         if (!new_gpu_data) {
             MemoryManager::get().unregister_gpu_impl(this);
-            return;
+            throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes");
         }
 
         if (cpu_data) {
