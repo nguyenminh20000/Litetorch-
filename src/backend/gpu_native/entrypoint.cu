@@ -56,6 +56,12 @@ static inline void auto_set_device(const void* ptr) {
     if (dev != current_device()) GPU_API(SetDevice)(dev);
 }
 
+struct DeviceGuard {
+    int saved_;
+    DeviceGuard() { GPU_API(GetDevice)(&saved_); }
+    ~DeviceGuard() { GPU_API(SetDevice)(saved_); }
+};
+
 static inline int launch_device(void** args, int arg_count) {
     int n = arg_count < 4 ? arg_count : 4;
     for (int i = 0; i < n; i++) {
@@ -521,6 +527,7 @@ static bool ensure_p2p(int dev, int peer) {
 }
 
 extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) {
+    DeviceGuard dg;
     int dev = ptr_device(ptr);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) s = dev_stream(dev);
@@ -529,6 +536,7 @@ extern "C" void gpu_read(void* ptr, size_t size, void* host_ptr, size_t offset) 
 }
 
 extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t offset) {
+    DeviceGuard dg;
     int dev = ptr_device(ptr);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) s = dev_stream(dev);
@@ -538,6 +546,7 @@ extern "C" void gpu_write(void* ptr, size_t size, const void* host_ptr, size_t o
 
 extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
     if (!src || !dst || size == 0) return;
+    DeviceGuard dg;
     int sdev = ptr_device(src);
     int ddev = ptr_device(dst);
     if (sdev == ddev) {
@@ -571,6 +580,7 @@ extern "C" void gpu_copy(void* src, void* dst, size_t size, size_t src_offset, s
 
 extern "C" void gpu_copy_peer(void* src, int sdev, void* dst, int ddev, size_t size) {
     if (!src || !dst || size == 0) return;
+    DeviceGuard dg;
     if (sdev < 0) sdev = 0;
     if (ddev < 0) ddev = 0;
     if (sdev == ddev) {
@@ -608,10 +618,23 @@ extern "C" void gpu_write_async(void* ptr, size_t size, const void* host_ptr, si
 
 extern "C" void gpu_copy_async(void* src, void* dst, size_t size, size_t src_offset, size_t dst_offset) {
     if (!src || !dst || size == 0) return;
+    DeviceGuard dg;
+    int sdev = ptr_device(src);
     int ddev = ptr_device(dst);
-    GPU_API(SetDevice)(ddev);
-    GPU_API(Stream_t) s = dev_stream(ddev);
-    GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), s);
+    if (sdev == ddev) {
+        GPU_API(SetDevice)(ddev);
+        GPU_API(Stream_t) s = dev_stream(ddev);
+        GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), s);
+        return;
+    }
+    if (ensure_p2p(ddev, sdev)) {
+        GPU_API(StreamSynchronize)(dev_stream(sdev));
+        GPU_API(SetDevice)(ddev);
+        GPU_API(Stream_t) ds = dev_stream(ddev);
+        GPU_API(MemcpyAsync)((char*)dst + dst_offset, (char*)src + src_offset, size, GPU_API(MemcpyDeviceToDevice), ds);
+        return;
+    }
+    gpu_copy(src, dst, size, src_offset, dst_offset);
 }
 
 extern "C" void gpu_finish() {
@@ -622,6 +645,7 @@ extern "C" void gpu_finish() {
 }
 
 extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
+    if (!kernel || global_x <= 0 || global_y <= 0 || global_z <= 0) return;
     int dev = launch_device(args, arg_count);
     GPU_API(SetDevice)(dev);
     GPU_API(Stream_t) stream = dev_stream(dev);
@@ -822,7 +846,12 @@ extern "C" void* gpu_get_kernel(const char* name) {
 }
 
 extern "C" void* gpu_compile_kernel(const char* source, const char* name) {
-    if (!source || !name) return nullptr;
+    if (!source || !name || !*name) return nullptr;
+    for (const char* p = name; *p; ++p) {
+        char c = *p;
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!ok) return nullptr;
+    }
     const char* tmp_dir = "/tmp";
 #ifdef _WIN32
     tmp_dir = getenv("TEMP");
