@@ -230,8 +230,6 @@ inline bool cudnn_dyn_init() {
     return false;
 }
 
-lt_cudnnHandle_t get_cudnn_handle();
-
 #endif
 
 #endif

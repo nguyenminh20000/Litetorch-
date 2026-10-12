@@ -104,7 +104,7 @@ __device__ inline float dev_half_to_float(unsigned short h) {
 
 __device__ inline unsigned short dev_float_to_bf16(float f) {
     unsigned int val = *reinterpret_cast<unsigned int*>(&f);
-    return static_cast<unsigned short>(val >> 16);
+    return static_cast<unsigned short>((val + 0x7FFF + ((val >> 16) & 1)) >> 16);
 }
 
 __device__ inline float dev_bf16_to_float(unsigned short h) {
@@ -179,7 +179,7 @@ __device__ inline unsigned char dev_float_to_fp8_e5m2(float val) {
     unsigned int exp_bits = (ui >> 23) & 0xFF;
     unsigned int mant_bits = ui & 0x7FFFFF;
     if (exp_bits == 0) return static_cast<unsigned char>(sign_bit << 7);
-    if (exp_bits == 0xFF) return static_cast<unsigned char>((sign_bit << 7) | 0x7F);
+    if (exp_bits == 0xFF) return static_cast<unsigned char>((sign_bit << 7) | 0x7C);
     int new_exp = static_cast<int>(exp_bits) - 127 + 15;
     if (new_exp <= 0) {
         int shift = 1 - new_exp;
