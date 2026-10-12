@@ -26,7 +26,7 @@ size_t g_tpu_cached_bytes = 0;
 }
 
 void* tpu_hbm_allocate(size_t size) {
-    if (size == 0) return nullptr;
+    if (size == 0) size = 1;
     size_t alignment = TPU_HBM_ALIGNMENT;
     size_t total_size = size + alignment + TPU_ALLOC_HEADER;
     {
