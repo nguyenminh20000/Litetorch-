@@ -32,10 +32,11 @@ public:
         }
         for (size_t i = 0; i < full_params.size(); ++i) {
             auto full = full_params[i];
+            size_t bytes = full->storage->size * full->storage->element_size();
             if (full->device.type == DeviceType::GPU && !full->storage->gpu_data) {
-                full->storage->gpu_data = rt_gpu_allocate(full->storage->size);
+                full->storage->gpu_data = (cl_mem)rt_gpu_allocate(bytes);
             } else if (full->device.type == DeviceType::CPU && !full->storage->cpu_data) {
-                full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(full->storage->size);
+                full->storage->cpu_data = (float*)CachingAllocator::get().allocate_cpu(bytes);
             }
             ProcessGroup::get().all_gather(sharded_params[i], full);
         }
@@ -64,12 +65,13 @@ static void shard_module_parameters(std::shared_ptr<nn::Module> module,
         size_t copy_size = std::min(shard_size, total_elements > start_idx ? total_elements - start_idx : 0);
         
         if (copy_size > 0) {
+            size_t esz = p->storage->element_size();
             if (p->device.type == DeviceType::CPU) {
                 if (!p->storage->cpu_data) p->storage->ensure_cpu();
-                std::memcpy(shard->data_ptr(), p->data_ptr() + start_idx, copy_size * p->storage->element_size());
+                std::memcpy(shard->data_ptr(), (char*)p->data_ptr() + start_idx * esz, copy_size * esz);
             } else {
                 auto cpu_p = p->to(Device(DeviceType::CPU, 0));
-                std::memcpy(shard->data_ptr(), cpu_p->data_ptr() + start_idx, copy_size * p->storage->element_size());
+                std::memcpy(shard->data_ptr(), (char*)cpu_p->data_ptr() + start_idx * esz, copy_size * esz);
                 shard = shard->to(p->device);
             }
         }
@@ -87,10 +89,9 @@ static void shard_module_parameters(std::shared_ptr<nn::Module> module,
                 }
                 
                 shard->grad = sharded_grad;
-                
+
                 p->storage->discard_gpu();
-                grad->storage->discard_gpu();
-                return grad;
+                return sharded_grad;
             });
         }
         
