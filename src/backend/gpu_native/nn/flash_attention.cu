@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <unordered_map>
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
@@ -25,6 +26,179 @@ __device__ __forceinline__ __half atomicAdd(__half *address, __half val) {
 }
 #endif
 #endif
+
+template <typename T> struct FaDtype;
+template <> struct FaDtype<float> {
+    __device__ static inline float to_float(float x) { return x; }
+    __device__ static inline float from_float(float x) { return x; }
+};
+template <> struct FaDtype<__half> {
+    __device__ static inline float to_float(__half x) { return __half2float(x); }
+    __device__ static inline __half from_float(float x) { return __float2half(x); }
+};
+
+template <typename T, int DMAX, int BCMAX>
+__global__ void fa_fwd_kernel(const T* Q, const T* K, const T* V, T* O, T* P_out,
+                              int64_t B, int64_t H, int64_t H_kv,
+                              int64_t Tq, int64_t Tk, int64_t D,
+                              float scale, int causal) {
+    const int Br = 8;
+    const int DL = DMAX / 32;
+    const int lane = threadIdx.x & 31;
+    const int warp = threadIdx.x >> 5;
+
+    __shared__ float KV[BCMAX][DMAX];
+    __shared__ float PS[Br][BCMAX];
+
+    int64_t tiles_q = (Tq + Br - 1) / Br;
+    int64_t bh = (int64_t)blockIdx.x / tiles_q;
+    int64_t tq = (int64_t)blockIdx.x % tiles_q;
+    if (bh >= B * H) return;
+    int64_t b = bh / H;
+    int64_t h = bh % H;
+    int64_t hk = h / (H / H_kv);
+    int64_t qi = tq * Br + warp;
+
+    int64_t q_base = (b * H + h) * Tq * D;
+    int64_t kv_base = (b * H_kv + hk) * Tk * D;
+
+    float q_reg[DL];
+    float o_acc[DL];
+#pragma unroll
+    for (int t = 0; t < DL; t++) {
+        q_reg[t] = 0.0f;
+        o_acc[t] = 0.0f;
+    }
+    if (qi < Tq) {
+        int64_t q_row = q_base + qi * D;
+#pragma unroll
+        for (int t = 0; t < DL; t++) {
+            int d = (t << 5) + lane;
+            if (d < D) q_reg[t] = FaDtype<T>::to_float(Q[q_row + d]);
+        }
+    }
+
+    float m = -1e37f;
+    float l = 0.0f;
+
+    for (int64_t j0 = 0; j0 < Tk; j0 += BCMAX) {
+        for (int t = threadIdx.x; t < BCMAX * DMAX; t += blockDim.x) {
+            int jj = t / DMAX;
+            int dd = t % DMAX;
+            int64_t kj = j0 + jj;
+            float v = 0.0f;
+            if (kj < Tk && dd < D) v = FaDtype<T>::to_float(K[kv_base + kj * D + dd]);
+            KV[jj][dd] = v;
+        }
+        __syncthreads();
+
+        float s = -1e37f;
+        if (qi < Tq && lane < BCMAX) {
+            int64_t kj = j0 + lane;
+            float dot = 0.0f;
+#pragma unroll
+            for (int t = 0; t < DL; t++) {
+                int d = (t << 5) + lane;
+                if (d < D) dot = fmaf(q_reg[t], KV[lane][d], dot);
+            }
+            s = dot * scale;
+            if (kj >= Tk || (causal && kj > qi)) s = -1e37f;
+        }
+        float rowmax = warp_reduce_max(s);
+        float m_new = fmaxf(m, rowmax);
+        float alpha = expf(m - m_new);
+        float p = expf(s - m_new);
+        if (lane < BCMAX) PS[warp][lane] = p;
+        float rowsum = warp_reduce_sum(p);
+        float l_new = l * alpha + rowsum;
+
+        for (int t = threadIdx.x; t < BCMAX * DMAX; t += blockDim.x) {
+            int jj = t / DMAX;
+            int dd = t % DMAX;
+            int64_t kj = j0 + jj;
+            float v = 0.0f;
+            if (kj < Tk && dd < D) v = FaDtype<T>::to_float(V[kv_base + kj * D + dd]);
+            KV[jj][dd] = v;
+        }
+        __syncthreads();
+
+        if (qi < Tq) {
+            float o_scale = (l * alpha) / l_new;
+            float p_scale = 1.0f / l_new;
+#pragma unroll
+            for (int t = 0; t < DL; t++) {
+                int d = (t << 5) + lane;
+                float pv = 0.0f;
+                if (d < D) {
+                    for (int jj = 0; jj < BCMAX; jj++) pv = fmaf(PS[warp][jj], KV[jj][d], pv);
+                }
+                o_acc[t] = o_acc[t] * o_scale + pv * p_scale;
+            }
+            m = m_new;
+            l = l_new;
+        }
+        __syncthreads();
+    }
+
+    float lse = 0.0f;
+    if (qi < Tq) {
+        lse = m + logf(l);
+        int64_t o_row = q_base + qi * D;
+#pragma unroll
+        for (int t = 0; t < DL; t++) {
+            int d = (t << 5) + lane;
+            if (d < D) O[o_row + d] = FaDtype<T>::from_float(o_acc[t]);
+        }
+    }
+
+    if (P_out) {
+        int64_t p_head_off = (b * H + h) * Tq * Tk;
+        for (int64_t j0 = 0; j0 < Tk; j0 += BCMAX) {
+            for (int t = threadIdx.x; t < BCMAX * DMAX; t += blockDim.x) {
+                int jj = t / DMAX;
+                int dd = t % DMAX;
+                int64_t kj = j0 + jj;
+                float v = 0.0f;
+                if (kj < Tk && dd < D) v = FaDtype<T>::to_float(K[kv_base + kj * D + dd]);
+                KV[jj][dd] = v;
+            }
+            __syncthreads();
+            if (qi < Tq && lane < BCMAX) {
+                int64_t kj = j0 + lane;
+                if (kj < Tk) {
+                    float dot = 0.0f;
+#pragma unroll
+                    for (int t = 0; t < DL; t++) {
+                        int d = (t << 5) + lane;
+                        if (d < D) dot = fmaf(q_reg[t], KV[lane][d], dot);
+                    }
+                    float p = 0.0f;
+                    if (!(causal && kj > qi)) p = expf(dot * scale - lse);
+                    P_out[p_head_off + qi * Tk + kj] = FaDtype<T>::from_float(p);
+                }
+            }
+            __syncthreads();
+        }
+    }
+}
+
+template <typename T>
+static void launch_fa_fwd(const T* Q, const T* K, const T* V, T* O, T* P_out,
+                          int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
+                          int64_t D, float scale, int causal) {
+    if (D <= 0 || D > 256) throw std::runtime_error("[litetorch] flash_attention: head dim D out of range (1..256)");
+    const int Br = 8;
+    int64_t tiles = B * H * ((Tq + Br - 1) / Br);
+    if (D <= 32) {
+        fa_fwd_kernel<T, 32, 32><<<(unsigned)tiles, 256, 0, dev_stream(current_device())>>>(Q, K, V, O, P_out, B, H, H_kv, Tq, Tk, D, scale, causal);
+    } else if (D <= 64) {
+        fa_fwd_kernel<T, 64, 32><<<(unsigned)tiles, 256, 0, dev_stream(current_device())>>>(Q, K, V, O, P_out, B, H, H_kv, Tq, Tk, D, scale, causal);
+    } else if (D <= 128) {
+        fa_fwd_kernel<T, 128, 32><<<(unsigned)tiles, 256, 0, dev_stream(current_device())>>>(Q, K, V, O, P_out, B, H, H_kv, Tq, Tk, D, scale, causal);
+    } else {
+        fa_fwd_kernel<T, 256, 16><<<(unsigned)tiles, 256, 0, dev_stream(current_device())>>>(Q, K, V, O, P_out, B, H, H_kv, Tq, Tk, D, scale, causal);
+    }
+}
 
 __global__ void fused_softmax_fwd_kernel(const float* S, float* P, int M, int Tk, int Tq, bool causal) {
     int row = blockIdx.x;
@@ -973,39 +1147,9 @@ extern "C" void gpu_flash_attention(void *Q, int64_t q_off, void *K, int64_t k_o
         return;
     }
 
-    size_t total_elements = (size_t)B * H * Tq * Tk;
-    ensure_attn_scratch(total_elements);
-
-    const float* q_ptr = (const float*)Q + q_off;
-    const float* k_ptr = (const float*)K + k_off;
-    const float* v_ptr = (const float*)V + v_off;
-    float* o_ptr = (float*)O + o_off;
-
-#ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle(o_ptr);
-    float alpha = scale;
-
-    gqa_gemm_s_f32(handle, k_ptr, q_ptr, g_attn_scratch_s,
-                   B, H, H_kv, Tq, Tk, D, alpha);
-
-    int total_rows = B * H * Tq;
-    launch_softmax_fwd(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk, (int)Tq, causal != 0);
-
-    gqa_gemm_o_f32(handle, v_ptr, g_attn_scratch_p, o_ptr,
-                   B, H, H_kv, Tq, Tk, D);
-#else
-    rocblas_handle handle = get_rocblas_handle();
-    float alpha = scale;
-
-    gqa_gemm_s_f32(handle, k_ptr, q_ptr, g_attn_scratch_s,
-                   B, H, H_kv, Tq, Tk, D, alpha);
-
-    int total_rows = B * H * Tq;
-    launch_softmax_fwd_hip(g_attn_scratch_s, g_attn_scratch_p, total_rows, Tk, (int)Tq, causal != 0);
-
-    gqa_gemm_o_f32(handle, v_ptr, g_attn_scratch_p, o_ptr,
-                   B, H, H_kv, Tq, Tk, D);
-#endif
+    launch_fa_fwd<float>((const float*)Q + q_off, (const float*)K + k_off, (const float*)V + v_off,
+                         (float*)O + o_off, (float*)nullptr,
+                         B, H, H_kv, Tq, Tk, D, scale, causal);
 }
 
 extern "C" int gpu_flash_attention_forward_save_p(void *Q, int64_t q_off, void *K, int64_t k_off,
@@ -1013,14 +1157,16 @@ extern "C" int gpu_flash_attention_forward_save_p(void *Q, int64_t q_off, void *
                                     void *P, int64_t p_off,
                                     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
                                     int64_t D, float scale, int causal) {
-    gpu_flash_attention(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal);
+    auto_set_device(Q);
     if (g_fa3_fwd_fn) {
+        g_fa3_fwd_fn((const char*)Q + q_off * sizeof(float), (const char*)K + k_off * sizeof(float),
+                     (const char*)V + v_off * sizeof(float), (char*)O + o_off * sizeof(float),
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), causal);
         return 0;
     }
-    size_t total_elements = (size_t)B * H * Tq * Tk;
-    float* p_out = (float*)P + p_off;
-    GPU_API(MemcpyAsync)(p_out, g_attn_scratch_p, total_elements * sizeof(float),
-                         GPU_API(MemcpyDeviceToDevice), dev_stream(current_device()));
+    launch_fa_fwd<float>((const float*)Q + q_off, (const float*)K + k_off, (const float*)V + v_off,
+                         (float*)O + o_off, (float*)P + p_off,
+                         B, H, H_kv, Tq, Tk, D, scale, causal);
     return 1;
 }
 
@@ -1036,39 +1182,9 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
         return;
     }
 
-    size_t total_elements = (size_t)B * H * Tq * Tk;
-    ensure_attn_scratch(total_elements);
-
-    const __half* q_ptr = (const __half*)Q + q_off;
-    const __half* k_ptr = (const __half*)K + k_off;
-    const __half* v_ptr = (const __half*)V + v_off;
-    __half* o_ptr = (__half*)O + o_off;
-    __half* s_half = (__half*)g_attn_scratch_s;
-    __half* p_half = (__half*)g_attn_scratch_p;
-
-#ifndef __HIP_PLATFORM_AMD__
-    cublasHandle_t handle = get_cublas_handle(o_ptr);
-
-    gqa_gemm_s_f16(handle, k_ptr, q_ptr, s_half,
-                   B, H, H_kv, Tq, Tk, D, scale);
-
-    int total_rows = B * H * Tq;
-    launch_softmax_fwd_half(s_half, p_half, total_rows, Tk, (int)Tq, causal != 0);
-
-    gqa_gemm_o_f16(handle, v_ptr, p_half, o_ptr,
-                   B, H, H_kv, Tq, Tk, D);
-#else
-    rocblas_handle handle = get_rocblas_handle();
-
-    gqa_gemm_s_f16(handle, k_ptr, q_ptr, s_half,
-                   B, H, H_kv, Tq, Tk, D, scale);
-
-    int total_rows = B * H * Tq;
-    launch_softmax_fwd_half_hip(s_half, p_half, total_rows, Tk, (int)Tq, causal != 0);
-
-    gqa_gemm_o_f16(handle, v_ptr, p_half, o_ptr,
-                   B, H, H_kv, Tq, Tk, D);
-#endif
+    launch_fa_fwd<__half>((const __half*)Q + q_off, (const __half*)K + k_off, (const __half*)V + v_off,
+                          (__half*)O + o_off, (__half*)nullptr,
+                          B, H, H_kv, Tq, Tk, D, scale, causal);
 }
 
 extern "C" int gpu_flash_attention_half_forward_save_p(void *Q, int64_t q_off, void *K, int64_t k_off,
@@ -1076,15 +1192,16 @@ extern "C" int gpu_flash_attention_half_forward_save_p(void *Q, int64_t q_off, v
                                     void *P, int64_t p_off,
                                     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk,
                                     int64_t D, float scale, int causal) {
-    gpu_flash_attention_half(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal);
+    auto_set_device(Q);
     if (g_fa3_fwd_fn) {
+        g_fa3_fwd_fn((const char*)Q + q_off * sizeof(__half), (const char*)K + k_off * sizeof(__half),
+                     (const char*)V + v_off * sizeof(__half), (char*)O + o_off * sizeof(__half),
+                     B, H, H_kv, Tq, Tk, D, scale, (void*)dev_stream(current_device()), causal);
         return 0;
     }
-    size_t total_elements = (size_t)B * H * Tq * Tk;
-    __half* p_out = (__half*)P + p_off;
-    __half* p_scratch = (__half*)g_attn_scratch_p;
-    GPU_API(MemcpyAsync)(p_out, p_scratch, total_elements * sizeof(__half),
-                         GPU_API(MemcpyDeviceToDevice), dev_stream(current_device()));
+    launch_fa_fwd<__half>((const __half*)Q + q_off, (const __half*)K + k_off, (const __half*)V + v_off,
+                          (__half*)O + o_off, (__half*)P + p_off,
+                          B, H, H_kv, Tq, Tk, D, scale, causal);
     return 1;
 }
 
