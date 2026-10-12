@@ -2,7 +2,7 @@ import os
 import sys
 import time
 
-import torch.multiprocessing as mp
+import multiprocessing as mp
 
 import litetorch as lt
 
@@ -74,7 +74,7 @@ def worker(rank, world_size, port, out):
     full = lt.Tensor.from_vector([float(rank + 1)] * 4, [4], cpu)
     shard = lt.Tensor.from_vector([0.0] * 2, [2], cpu)
     lt.distributed.reduce_scatter(shard, full, lt.distributed.ReduceOp.MAX)
-    r["rs_max"] = shard.to_vector() == ([1.0, 1.0] if rank == 0 else [2.0, 2.0])
+    r["rs_max"] = shard.to_vector() == [2.0, 2.0]
 
     base = rank * 10
     inp = lt.Tensor.from_vector([float(base + 1), float(base + 2), float(base + 3), float(base + 4)], [4], cpu)
@@ -115,9 +115,15 @@ def worker(rank, world_size, port, out):
 
 def main():
     t0 = time.perf_counter()
-    with mp.Manager() as mgr:
+    ctx = mp.get_context("spawn")
+    with ctx.Manager() as mgr:
         out = mgr.dict()
-        mp.spawn(worker, args=(2, PORT_BASE, out), nprocs=2, join=True)
+        procs = [ctx.Process(target=worker, args=(rank, 2, PORT_BASE, out)) for rank in (0, 1)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(120)
+        failed_proc = any(p.exitcode != 0 for p in procs)
         res = dict(out)
 
     names = ["rank_ok", "ws_ok", "init_ok", "nccl_no_crash", "barrier_ok",
@@ -133,6 +139,9 @@ def main():
 
     passed = sum(1 for _, ok in results if ok)
     failed = len(results) - passed
+    if failed_proc:
+        print("WARNING: a worker process exited non-zero", flush=True)
+        failed += 1
     print(f"== SUMMARY: {passed} PASS, {failed} FAIL in {time.perf_counter()-t0:.1f}s ==", flush=True)
     sys.exit(1 if failed else 0)
 
