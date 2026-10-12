@@ -111,7 +111,7 @@ public:
             float* in_ptr = cpu_input->data_ptr();
             size_t num_indices = cpu_input->numel();
             if (wdt == DataType::FP32) {
-                float* gout_ptr = reinterpret_cast<float*>(cpu_gout->storage->get_cpu_ptr());
+                float* gout_ptr = cpu_gout->data_ptr();
                 float* gw_ptr = reinterpret_cast<float*>(cpu_gw->storage->get_cpu_ptr());
                 for (size_t i = 0; i < num_indices; ++i) {
                     int idx = static_cast<int>(in_ptr[i]);
@@ -128,7 +128,7 @@ public:
                               gw_ptr + (padding_idx + 1) * embedding_dim, 0.0f);
                 }
             } else if (wdt == DataType::FP16) {
-                uint16_t* gout_ptr = reinterpret_cast<uint16_t*>(cpu_gout->storage->get_cpu_ptr());
+                uint16_t* gout_ptr = reinterpret_cast<uint16_t*>(cpu_gout->data_ptr());
                 uint16_t* gw_ptr = reinterpret_cast<uint16_t*>(cpu_gw->storage->get_cpu_ptr());
                 for (size_t i = 0; i < num_indices; ++i) {
                     int idx = static_cast<int>(in_ptr[i]);
@@ -145,7 +145,7 @@ public:
                 auto gout_f32 = cpu_gout->cast(DataType::FP32);
                 if (!gout_f32->is_contiguous()) gout_f32 = gout_f32->contiguous();
                 auto tmp_gw = Tensor::create(weight_c->shape, Device(DeviceType::CPU, 0));
-                float* gout_ptr = reinterpret_cast<float*>(gout_f32->storage->get_cpu_ptr());
+                float* gout_ptr = gout_f32->data_ptr();
                 float* gw_ptr = reinterpret_cast<float*>(tmp_gw->storage->get_cpu_ptr());
                 std::fill(gw_ptr, gw_ptr + tmp_gw->numel(), 0.0f);
                 for (size_t i = 0; i < num_indices; ++i) {

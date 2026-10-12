@@ -46,8 +46,8 @@ void Linear::to(const Device& device) {
 }
 
 void Linear::half() {
-    weight = weight->cast(DataType::FP16);
-    if (bias) bias = bias->cast(DataType::FP16);
+    if (weight->dtype == DataType::FP32) weight = weight->cast(DataType::FP16);
+    if (bias && bias->dtype == DataType::FP32) bias = bias->cast(DataType::FP16);
 }
 
 }

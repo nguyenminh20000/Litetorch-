@@ -3,6 +3,7 @@
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend_route.h"
 #include <random>
+#include <stdexcept>
 
 namespace litetorch {
 extern std::mt19937& get_generator();
@@ -10,7 +11,9 @@ extern const std::string litetorch_kernels_src;
 
 namespace nn {
 
-Dropout::Dropout(float p) : p(p) {}
+Dropout::Dropout(float p) : p(p) {
+    if (p < 0.0f || p >= 1.0f) throw std::runtime_error("[litetorch Error] Dropout probability must be in [0, 1)");
+}
 
 std::shared_ptr<Tensor> Dropout::forward(std::shared_ptr<Tensor> input) {
     if (!training || p == 0.0f) return input;
