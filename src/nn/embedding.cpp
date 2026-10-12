@@ -186,19 +186,25 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
 
+    std::shared_ptr<Tensor> w_compute = weight_c;
+    if (weight_c->dtype != DataType::FP32) {
+        w_compute = weight_c->cast(DataType::FP32);
+    }
+    auto w_compute_c = w_compute->is_contiguous() ? w_compute : w_compute->contiguous();
+
     std::vector<int64_t> out_shape = input_c->shape;
     out_shape.push_back(embedding_dim);
-    auto out = Tensor::create(out_shape, weight_c->device);
-    StorageUseGuard guard({input_c->storage, weight_c->storage, out->storage});
+    auto out_fp32 = Tensor::create(out_shape, w_compute_c->device);
+    StorageUseGuard guard({input_c->storage, w_compute_c->storage, out_fp32->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
         auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_forward");
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
-        cl_mem w_mem = weight_c->gpu_data();
-        int w_off = weight_c->offset;
-        cl_mem out_mem = out->gpu_data();
-        int out_off = out->offset;
+        cl_mem w_mem = w_compute_c->gpu_data();
+        int w_off = w_compute_c->offset;
+        cl_mem out_mem = out_fp32->gpu_data();
+        int out_off = out_fp32->offset;
         int num_indices = input_c->numel();
         int num_embeddings_val = num_embeddings;
         int embedding_dim_val = embedding_dim;
@@ -217,8 +223,8 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
         }
     } else {
         float* in_ptr = input_c->data_ptr();
-        float* w_ptr = weight_c->data_ptr();
-        float* out_ptr = out->data_ptr();
+        float* w_ptr = w_compute_c->data_ptr();
+        float* out_ptr = out_fp32->data_ptr();
         size_t num_indices = input_c->numel();
         litetorch::ThreadPool::get().parallel_for(0, num_indices, [&](int64_t i) {
             int idx = static_cast<int>(in_ptr[i]);
@@ -234,6 +240,11 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
                 }
             }
         }
+    }
+
+    std::shared_ptr<Tensor> out = out_fp32;
+    if (weight_c->dtype != DataType::FP32) {
+        out = out_fp32->cast(weight_c->dtype);
     }
 
     if (Autograd::is_grad_enabled() && (input->requires_grad || weight->requires_grad)) {

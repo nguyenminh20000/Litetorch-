@@ -40,7 +40,7 @@ std::shared_ptr<Tensor> ColumnParallelLinear::forward(std::shared_ptr<Tensor> in
         if (world_size > 1) {
             std::vector<int64_t> full_shape = out->shape;
             full_shape[full_shape.size() - 1] *= world_size;
-            auto full_out = Tensor::create(full_shape, out->device);
+            auto full_out = Tensor::create(full_shape, out->device, false, out->dtype);
             if (distributed::NCCLBridge::get().is_available()) {
                 distributed::NCCLBridge::get().tp_all_gather(out, full_out);
             } else {

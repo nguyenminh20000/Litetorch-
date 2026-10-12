@@ -28,15 +28,15 @@ std::shared_ptr<Tensor> BatchNorm2d::forward(std::shared_ptr<Tensor> input) {
     std::shared_ptr<Tensor> rv = running_var;
     bool train = training;
     if (!affine) {
-        w = Tensor::ones({num_features}, input->device);
-        b = Tensor::zeros({num_features}, input->device);
+        w = Tensor::ones({num_features}, input->device, false, input->dtype);
+        b = Tensor::zeros({num_features}, input->device, false, input->dtype);
     } else if (w && w->device != input->device) {
         w = w->to(input->device);
         b = b->to(input->device);
     }
     if (!track_running_stats) {
-        rm = Tensor::zeros({num_features}, input->device);
-        rv = Tensor::ones({num_features}, input->device);
+        rm = Tensor::zeros({num_features}, input->device, false, input->dtype);
+        rv = Tensor::ones({num_features}, input->device, false, input->dtype);
         train = true;
     } else if (rm && rm->device != input->device) {
         rm = rm->to(input->device);

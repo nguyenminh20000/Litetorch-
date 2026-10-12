@@ -29,6 +29,9 @@ std::shared_ptr<Tensor> Dropout::forward(std::shared_ptr<Tensor> input) {
             {&mask_mem, &mask_off, &p, &scale, &seed, &size},
             {sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(float), sizeof(unsigned int), sizeof(int)});
 
+        if (mask->dtype != input->dtype) {
+            mask = mask->cast(input->dtype);
+        }
         return Ops::mul(input, mask);
     }
 
@@ -40,6 +43,9 @@ std::shared_ptr<Tensor> Dropout::forward(std::shared_ptr<Tensor> input) {
     float scale = 1.0f / (1.0f - p);
     for (size_t i = 0; i < mask->numel(); ++i) {
         m_ptr[i] = dis(gen) ? scale : 0.0f;
+    }
+    if (mask->dtype != input->dtype) {
+        mask = mask->cast(input->dtype);
     }
     return Ops::mul(input, mask);
 }
