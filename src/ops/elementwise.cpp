@@ -656,6 +656,18 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     if (auto out = try_binary_fp16(a, b, "elementwise_mul_fp16",
             [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); },
             true)) return out;
+    if (a->dtype == DataType::FP16 && b->dtype == DataType::FP16 &&
+        a->device.type == DeviceType::GPU && a->device == b->device &&
+        a->shape != b->shape) {
+        std::vector<int64_t> bc_shape = broadcast_shapes(a->shape, b->shape);
+        auto a_exp = (a->shape == bc_shape) ? a : a->expand(bc_shape);
+        auto b_exp = (b->shape == bc_shape) ? b : b->expand(bc_shape);
+        auto a_c = a_exp->is_contiguous() ? a_exp : a_exp->contiguous();
+        auto b_c = b_exp->is_contiguous() ? b_exp : b_exp->contiguous();
+        if (auto out = try_binary_fp16(a_c, b_c, "elementwise_mul_fp16",
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); },
+                true)) return out;
+    }
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
         DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
         auto a_fp32 = cast(a, DataType::FP32);
