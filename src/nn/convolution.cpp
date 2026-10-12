@@ -2,8 +2,11 @@
 #include "litetorch/ops.h"
 #include "nn_utils.h"
 #include <stdexcept>
+#include <cmath>
+#include <random>
 
 namespace litetorch {
+extern std::mt19937& get_generator();
 namespace nn {
 
 static std::vector<int> normalize_pair(const std::vector<int>& v, const char* name) {
@@ -81,14 +84,20 @@ void Conv2d::to(const Device& device) {
     if (bias) bias = bias->to(device);
 }
 
-Conv3d::Conv3d(int in_channels, int out_channels, int kernel_size, int stride, int padding, bool has_bias)
-    : stride(stride), padding(padding) {
-    weight = Tensor::create({out_channels, in_channels, kernel_size, kernel_size, kernel_size}, Device(DeviceType::CPU, 0), true);
+Conv3d::Conv3d(int in_channels, int out_channels, int kernel_size, int stride, int padding, bool has_bias, int groups)
+    : stride(stride), padding(padding), groups(groups) {
+    if (groups < 1) {
+        throw std::runtime_error("[litetorch Error] Conv3d groups must be >= 1");
+    }
+    if (in_channels % groups != 0 || out_channels % groups != 0) {
+        throw std::runtime_error("[litetorch Error] Conv3d in_channels and out_channels must be divisible by groups");
+    }
+    weight = Tensor::create({out_channels, in_channels / groups, kernel_size, kernel_size, kernel_size}, Device(DeviceType::CPU, 0), true);
     kaiming_uniform(weight, std::sqrt(5.0f));
 
     if (has_bias) {
         bias = Tensor::create({out_channels}, Device(DeviceType::CPU, 0), true);
-        float fan_in = in_channels * kernel_size * kernel_size * kernel_size;
+        float fan_in = (in_channels / groups) * kernel_size * kernel_size * kernel_size;
         float bound = 1.0f / std::sqrt(fan_in);
         std::mt19937& gen = get_generator();
         std::uniform_real_distribution<float> dis(-bound, bound);
@@ -100,7 +109,21 @@ Conv3d::Conv3d(int in_channels, int out_channels, int kernel_size, int stride, i
 }
 
 std::shared_ptr<Tensor> Conv3d::forward(std::shared_ptr<Tensor> input) {
-    return Ops::conv3d(input, weight, bias, stride, padding);
+    if (groups == 1) {
+        return Ops::conv3d(input, weight, bias, stride, padding);
+    }
+    auto xs = Ops::chunk(input, groups, 1);
+    auto ws = Ops::chunk(weight, groups, 0);
+    std::vector<std::shared_ptr<Tensor>> bs;
+    if (bias) bs = Ops::chunk(bias, groups, 0);
+    std::vector<std::shared_ptr<Tensor>> ys;
+    ys.reserve(static_cast<size_t>(groups));
+    for (int g = 0; g < groups; ++g) {
+        size_t gi = static_cast<size_t>(g);
+        std::shared_ptr<Tensor> b = bias ? bs[gi] : nullptr;
+        ys.push_back(Ops::conv3d(xs[gi], ws[gi], b, stride, padding));
+    }
+    return Ops::cat(ys, 1);
 }
 
 std::vector<std::shared_ptr<Tensor>> Conv3d::parameters() {

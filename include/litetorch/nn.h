@@ -151,8 +151,9 @@ public:
     std::shared_ptr<Tensor> bias;
     int stride;
     int padding;
+    int groups;
 
-    Conv3d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true);
+    Conv3d(int in_channels, int out_channels, int kernel_size, int stride = 1, int padding = 0, bool has_bias = true, int groups = 1);
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     void to(const Device& device) override;
