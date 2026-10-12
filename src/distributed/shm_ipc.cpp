@@ -407,6 +407,40 @@ bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared
         } else {
             std::memcpy(shard->data_ptr(), acc.data(), S * elem_sz);
         }
+    } else if (shard->dtype == DataType::FP16) {
+        std::vector<uint16_t> acc(S, 0);
+        for (size_t j = 0; j < S; ++j) {
+            float sum = 0.0f;
+            for (int r = 0; r < world_size_; ++r) {
+                uint16_t* r_buf = reinterpret_cast<uint16_t*>(shm_buffers_[r]);
+                sum += half_to_float(r_buf[rank_ * S + j]);
+            }
+            acc[j] = float_to_half(sum);
+        }
+        if (shard->device.type == DeviceType::GPU) {
+            rt_gpu_write(shard->gpu_data(), S * elem_sz, acc.data(), shard->offset * elem_sz);
+        } else {
+            std::memcpy(shard->data_ptr(), acc.data(), S * elem_sz);
+        }
+    } else if (shard->dtype == DataType::BF16) {
+        std::vector<uint16_t> acc(S, 0);
+        for (size_t j = 0; j < S; ++j) {
+            float sum = 0.0f;
+            for (int r = 0; r < world_size_; ++r) {
+                uint16_t* r_buf = reinterpret_cast<uint16_t*>(shm_buffers_[r]);
+                uint32_t val = ((uint32_t)r_buf[rank_ * S + j]) << 16;
+                sum += *(float*)&val;
+            }
+            uint32_t val_u = *(uint32_t*)&sum;
+            acc[j] = (uint16_t)(val_u >> 16);
+        }
+        if (shard->device.type == DeviceType::GPU) {
+            rt_gpu_write(shard->gpu_data(), S * elem_sz, acc.data(), shard->offset * elem_sz);
+        } else {
+            std::memcpy(shard->data_ptr(), acc.data(), S * elem_sz);
+        }
+    } else {
+        throw std::runtime_error("shm reduce_scatter: unsupported dtype for collective");
     }
 
     shm_ctrl_->steps[rank_].store(cur_step + 2);

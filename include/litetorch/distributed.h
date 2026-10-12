@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <deque>
 
 namespace litetorch {
 namespace distributed {
@@ -77,6 +78,23 @@ private:
     std::mutex async_mutex_;
     std::condition_variable async_cv_;
     bool stop_async_worker_ = false;
+
+    struct RelayMsg {
+        int src = -1;
+        int32_t ndim = 0;
+        int32_t dtype_val = 0;
+        std::vector<int64_t> shape;
+        std::vector<char> data;
+    };
+    std::thread relay_thread_;
+    bool stop_relay_ = false;
+    std::mutex relay_send_mutex_;
+    std::mutex relay_inbox_mutex_;
+    std::condition_variable relay_inbox_cv_;
+    std::deque<RelayMsg> relay_inbox_;
+    void relay_loop();
+    static void relay_send_all(int fd, const char* buf, size_t n);
+    static size_t relay_dtype_bytes(int32_t dtype_val);
 };
 
 void init_process_group(int rank, int world_size, const std::string& master_addr, int master_port);

@@ -20,6 +20,115 @@
 namespace litetorch {
 namespace distributed {
 
+static constexpr int32_t kDirectMagic = 0x4C54444D;
+static constexpr int32_t kRelayMagic = 0x4C54524D;
+
+void ProcessGroup::relay_send_all(int fd, const char* buf, size_t n) {
+    size_t sent = 0;
+    while (sent < n) {
+        ssize_t s = send(fd, buf + sent, n - sent, 0);
+        if (s <= 0) throw std::runtime_error("Socket write error in relay");
+        sent += s;
+    }
+}
+
+size_t ProcessGroup::relay_dtype_bytes(int32_t dtype_val) {
+    switch (static_cast<DataType>(dtype_val)) {
+        case DataType::FP64: return 8;
+        case DataType::FP32: return 4;
+        case DataType::FP16: return 2;
+        case DataType::BF16: return 2;
+        case DataType::INT16: return 2;
+        case DataType::INT8: return 1;
+        case DataType::INT4: return 1;
+        case DataType::FP8_E4M3: return 1;
+        case DataType::FP8_E5M2: return 1;
+        case DataType::NF4: return 1;
+        case DataType::FP4_E2M1: return 1;
+        case DataType::INT32: return 4;
+        default: return 4;
+    }
+}
+
+void ProcessGroup::relay_loop() {
+    while (!stop_relay_) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        int maxfd = -1;
+        for (int i = 1; i < world_size_; ++i) {
+            int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
+            if (fd >= 0) {
+                FD_SET(fd, &rfds);
+                if (fd > maxfd) maxfd = fd;
+            }
+        }
+        if (maxfd < 0) {
+            usleep(100000);
+            continue;
+        }
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
+        int n = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (n <= 0) continue;
+        for (int i = 1; i < world_size_; ++i) {
+            int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
+            if (fd < 0 || !FD_ISSET(fd, &rfds)) continue;
+            int32_t magic = 0;
+            ssize_t r = recv(fd, &magic, sizeof(magic), MSG_WAITALL);
+            if (r != sizeof(magic)) continue;
+            bool is_relay = (magic == kRelayMagic);
+            if (!is_relay && magic != kDirectMagic) continue;
+            int32_t dst = 0;
+            if (is_relay) {
+                if (recv(fd, &dst, sizeof(dst), MSG_WAITALL) != sizeof(dst)) continue;
+            }
+            RelayMsg msg;
+            msg.src = i;
+            if (recv(fd, &msg.ndim, sizeof(msg.ndim), MSG_WAITALL) != sizeof(msg.ndim)) continue;
+            if (recv(fd, &msg.dtype_val, sizeof(msg.dtype_val), MSG_WAITALL) != sizeof(msg.dtype_val)) continue;
+            if (msg.ndim < 0 || msg.ndim > 8) continue;
+            msg.shape.resize(msg.ndim);
+            if (msg.ndim > 0) {
+                if (recv(fd, msg.shape.data(), msg.ndim * sizeof(int64_t), MSG_WAITALL) != (ssize_t)(msg.ndim * sizeof(int64_t))) continue;
+            }
+            size_t N = 1;
+            for (auto s : msg.shape) {
+                if (s < 0) { N = 0; break; }
+                N *= (size_t)s;
+            }
+            size_t total = N * relay_dtype_bytes(msg.dtype_val);
+            msg.data.resize(total);
+            size_t recvd = 0;
+            bool ok = true;
+            while (recvd < total) {
+                ssize_t rr = recv(fd, msg.data.data() + recvd, total - recvd, 0);
+                if (rr <= 0) { ok = false; break; }
+                recvd += rr;
+            }
+            if (!ok) continue;
+            if (is_relay) {
+                if (dst < 1 || dst >= world_size_) continue;
+                std::lock_guard<std::mutex> lock(relay_send_mutex_);
+                int dfd = (dst < (int)client_fds_.size()) ? client_fds_[dst] : -1;
+                if (dfd < 0) continue;
+                try {
+                    int32_t dm = kDirectMagic;
+                    relay_send_all(dfd, (const char*)&dm, sizeof(dm));
+                    relay_send_all(dfd, (const char*)&msg.ndim, sizeof(msg.ndim));
+                    relay_send_all(dfd, (const char*)&msg.dtype_val, sizeof(msg.dtype_val));
+                    if (msg.ndim > 0) relay_send_all(dfd, (const char*)msg.shape.data(), msg.ndim * sizeof(int64_t));
+                    if (total > 0) relay_send_all(dfd, msg.data.data(), total);
+                } catch (...) {}
+            } else {
+                std::lock_guard<std::mutex> lock(relay_inbox_mutex_);
+                relay_inbox_.push_back(std::move(msg));
+                relay_inbox_cv_.notify_one();
+            }
+        }
+    }
+}
+
 ProcessGroup& ProcessGroup::get() {
     static ProcessGroup instance;
     return instance;
@@ -185,12 +294,21 @@ void ProcessGroup::init(int rank, int world_size, const std::string& master_addr
         });
     }
 
+    if (rank_ == 0 && world_size_ > 1 && !use_shm_) {
+        stop_relay_ = false;
+        relay_thread_ = std::thread([this]() { relay_loop(); });
+    }
+
     initialized_ = true;
 }
 
 void ProcessGroup::shutdown() {
     if (!initialized_) return;
 
+    if (relay_thread_.joinable()) {
+        stop_relay_ = true;
+        relay_thread_.join();
+    }
     if (world_size_ > 1) {
         {
             std::lock_guard<std::mutex> lock(async_mutex_);
@@ -309,7 +427,73 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
-        } else {
+        } else if (tensor->dtype == DataType::INT32) {
+            std::vector<int32_t> acc(N, 0);
+            int32_t* data_ptr = reinterpret_cast<int32_t*>(data.data());
+            for (size_t j = 0; j < N; ++j) acc[j] += data_ptr[j];
+
+            std::vector<char> temp(N * elem_sz);
+            int32_t* temp_ptr = reinterpret_cast<int32_t*>(temp.data());
+            for (int i = 1; i < world_size_; ++i) {
+                size_t bytes_received = 0;
+                while (bytes_received < N * elem_sz) {
+                    ssize_t r = recv(client_fds_[i], temp.data() + bytes_received, N * elem_sz - bytes_received, 0);
+                    if (r <= 0) throw std::runtime_error("Socket read error in all_reduce");
+                    bytes_received += r;
+                }
+                for (size_t j = 0; j < N; ++j) acc[j] += temp_ptr[j];
+            }
+
+            for (size_t j = 0; j < N; ++j) data_ptr[j] = acc[j];
+
+            for (int i = 1; i < world_size_; ++i) {
+                size_t bytes_sent = 0;
+                while (bytes_sent < N * elem_sz) {
+                    ssize_t s = send(client_fds_[i], data.data() + bytes_sent, N * elem_sz - bytes_sent, 0);
+                    if (s <= 0) throw std::runtime_error("Socket write error in all_reduce");
+                    bytes_sent += s;
+                }
+            }
+        } else if (tensor->dtype == DataType::INT8 || tensor->dtype == DataType::INT16) {
+            std::vector<int32_t> acc(N, 0);
+            size_t isz = (tensor->dtype == DataType::INT8) ? 1 : 2;
+            for (size_t j = 0; j < N; ++j) {
+                int32_t v = 0;
+                if (isz == 1) v = reinterpret_cast<int8_t*>(data.data())[j];
+                else v = reinterpret_cast<int16_t*>(data.data())[j];
+                acc[j] += v;
+            }
+
+            std::vector<char> temp(N * elem_sz);
+            for (int i = 1; i < world_size_; ++i) {
+                size_t bytes_received = 0;
+                while (bytes_received < N * elem_sz) {
+                    ssize_t r = recv(client_fds_[i], temp.data() + bytes_received, N * elem_sz - bytes_received, 0);
+                    if (r <= 0) throw std::runtime_error("Socket read error in all_reduce");
+                    bytes_received += r;
+                }
+                for (size_t j = 0; j < N; ++j) {
+                    int32_t v = 0;
+                    if (isz == 1) v = reinterpret_cast<int8_t*>(temp.data())[j];
+                    else v = reinterpret_cast<int16_t*>(temp.data())[j];
+                    acc[j] += v;
+                }
+            }
+
+            for (size_t j = 0; j < N; ++j) {
+                if (isz == 1) reinterpret_cast<int8_t*>(data.data())[j] = static_cast<int8_t>(acc[j]);
+                else reinterpret_cast<int16_t*>(data.data())[j] = static_cast<int16_t>(acc[j]);
+            }
+
+            for (int i = 1; i < world_size_; ++i) {
+                size_t bytes_sent = 0;
+                while (bytes_sent < N * elem_sz) {
+                    ssize_t s = send(client_fds_[i], data.data() + bytes_sent, N * elem_sz - bytes_sent, 0);
+                    if (s <= 0) throw std::runtime_error("Socket write error in all_reduce");
+                    bytes_sent += s;
+                }
+            }
+        } else if (tensor->dtype == DataType::FP32) {
             std::vector<float> acc(N, 0.0f);
             float* data_ptr = reinterpret_cast<float*>(data.data());
             for (size_t j = 0; j < N; ++j) acc[j] += data_ptr[j];
@@ -336,6 +520,8 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
+        } else {
+            throw std::runtime_error("all_reduce socket fallback: unsupported dtype for CPU reduction");
         }
     } else {
         size_t bytes_sent = 0;
@@ -606,42 +792,39 @@ void ProcessGroup::send_tensor(std::shared_ptr<Tensor> tensor, int dst) {
 
         shm_ctrl_->steps[rank_].store(cur_step + 1);
     } else {
+        std::vector<char> temp_buf(N * elem_sz);
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, temp_buf.data(), tensor->offset * elem_sz);
+        } else {
+            std::memcpy(temp_buf.data(), tensor->data_ptr(), N * elem_sz);
+        }
+        int32_t dmagic = kDirectMagic;
+        int32_t snd_ndim = ndim;
+        int32_t snd_dtype = dtype_val;
         if (rank_ == 0) {
-            send(client_fds_[dst], &ndim, sizeof(ndim), 0);
-            send(client_fds_[dst], &dtype_val, sizeof(dtype_val), 0);
-            send(client_fds_[dst], tensor->shape.data(), ndim * sizeof(int64_t), 0);
-
-            std::vector<char> temp_buf(N * elem_sz);
-            if (tensor->device.type == DeviceType::GPU) {
-                rt_gpu_read(tensor->gpu_data(), N * elem_sz, temp_buf.data(), tensor->offset * elem_sz);
-            } else {
-                std::memcpy(temp_buf.data(), tensor->data_ptr(), N * elem_sz);
-            }
-
-            size_t bytes_sent = 0;
-            while (bytes_sent < N * elem_sz) {
-                ssize_t s = send(client_fds_[dst], temp_buf.data() + bytes_sent, N * elem_sz - bytes_sent, 0);
-                if (s <= 0) throw std::runtime_error("Socket write error in send_tensor");
-                bytes_sent += s;
-            }
+            std::lock_guard<std::mutex> lock(relay_send_mutex_);
+            int fd = (dst < (int)client_fds_.size()) ? client_fds_[dst] : -1;
+            if (fd < 0) throw std::runtime_error("send_tensor: no socket to rank " + std::to_string(dst));
+            relay_send_all(fd, (const char*)&dmagic, sizeof(dmagic));
+            relay_send_all(fd, (const char*)&snd_ndim, sizeof(snd_ndim));
+            relay_send_all(fd, (const char*)&snd_dtype, sizeof(snd_dtype));
+            if (ndim > 0) relay_send_all(fd, (const char*)tensor->shape.data(), ndim * sizeof(int64_t));
+            if (N * elem_sz > 0) relay_send_all(fd, temp_buf.data(), N * elem_sz);
         } else if (dst == 0) {
-            send(peer_fd_, &ndim, sizeof(ndim), 0);
-            send(peer_fd_, &dtype_val, sizeof(dtype_val), 0);
-            send(peer_fd_, tensor->shape.data(), ndim * sizeof(int64_t), 0);
-
-            std::vector<char> temp_buf(N * elem_sz);
-            if (tensor->device.type == DeviceType::GPU) {
-                rt_gpu_read(tensor->gpu_data(), N * elem_sz, temp_buf.data(), tensor->offset * elem_sz);
-            } else {
-                std::memcpy(temp_buf.data(), tensor->data_ptr(), N * elem_sz);
-            }
-
-            size_t bytes_sent = 0;
-            while (bytes_sent < N * elem_sz) {
-                ssize_t s = send(peer_fd_, temp_buf.data() + bytes_sent, N * elem_sz - bytes_sent, 0);
-                if (s <= 0) throw std::runtime_error("Socket write error in send_tensor");
-                bytes_sent += s;
-            }
+            relay_send_all(peer_fd_, (const char*)&dmagic, sizeof(dmagic));
+            relay_send_all(peer_fd_, (const char*)&snd_ndim, sizeof(snd_ndim));
+            relay_send_all(peer_fd_, (const char*)&snd_dtype, sizeof(snd_dtype));
+            if (ndim > 0) relay_send_all(peer_fd_, (const char*)tensor->shape.data(), ndim * sizeof(int64_t));
+            if (N * elem_sz > 0) relay_send_all(peer_fd_, temp_buf.data(), N * elem_sz);
+        } else {
+            int32_t rmagic = kRelayMagic;
+            int32_t rdst = dst;
+            relay_send_all(peer_fd_, (const char*)&rmagic, sizeof(rmagic));
+            relay_send_all(peer_fd_, (const char*)&rdst, sizeof(rdst));
+            relay_send_all(peer_fd_, (const char*)&snd_ndim, sizeof(snd_ndim));
+            relay_send_all(peer_fd_, (const char*)&snd_dtype, sizeof(snd_dtype));
+            if (ndim > 0) relay_send_all(peer_fd_, (const char*)tensor->shape.data(), ndim * sizeof(int64_t));
+            if (N * elem_sz > 0) relay_send_all(peer_fd_, temp_buf.data(), N * elem_sz);
         }
     }
 }
@@ -685,68 +868,80 @@ void ProcessGroup::recv_tensor(std::shared_ptr<Tensor> tensor, int src) {
 
         shm_ctrl_->steps[rank_].store(cur_step + 1);
     } else {
+        RelayMsg msg;
+        bool have_msg = false;
         if (rank_ == 0) {
-            recv(client_fds_[src], &ndim, sizeof(ndim), MSG_WAITALL);
-            recv(client_fds_[src], &dtype_val, sizeof(dtype_val), MSG_WAITALL);
-            shape.resize(ndim);
-            recv(client_fds_[src], shape.data(), ndim * sizeof(int64_t), MSG_WAITALL);
-            DataType dtype = static_cast<DataType>(dtype_val);
-
+            std::unique_lock<std::mutex> lock(relay_inbox_mutex_);
+            relay_inbox_cv_.wait(lock, [this, src]() {
+                if (stop_relay_) return true;
+                for (auto& m : relay_inbox_) {
+                    if (m.src == src) return true;
+                }
+                return false;
+            });
+            if (stop_relay_) throw std::runtime_error("recv_tensor: shutdown while waiting");
+            for (auto it = relay_inbox_.begin(); it != relay_inbox_.end(); ++it) {
+                if (it->src == src) {
+                    msg = std::move(*it);
+                    relay_inbox_.erase(it);
+                    have_msg = true;
+                    break;
+                }
+            }
+            if (!have_msg) throw std::runtime_error("recv_tensor: inbox lost message");
+        } else {
+            int32_t magic = 0;
+            if (recv(peer_fd_, &magic, sizeof(magic), MSG_WAITALL) != (ssize_t)sizeof(magic))
+                throw std::runtime_error("Socket read error in recv_tensor (magic)");
+            if (magic != kDirectMagic)
+                throw std::runtime_error("recv_tensor: protocol magic mismatch");
+            msg.src = src;
+            if (recv(peer_fd_, &msg.ndim, sizeof(msg.ndim), MSG_WAITALL) != (ssize_t)sizeof(msg.ndim))
+                throw std::runtime_error("Socket read error in recv_tensor");
+            if (recv(peer_fd_, &msg.dtype_val, sizeof(msg.dtype_val), MSG_WAITALL) != (ssize_t)sizeof(msg.dtype_val))
+                throw std::runtime_error("Socket read error in recv_tensor");
+            if (msg.ndim < 0 || msg.ndim > 8) throw std::runtime_error("recv_tensor: bad ndim");
+            msg.shape.resize(msg.ndim);
+            if (msg.ndim > 0) {
+                if (recv(peer_fd_, msg.shape.data(), msg.ndim * sizeof(int64_t), MSG_WAITALL) != (ssize_t)(msg.ndim * sizeof(int64_t)))
+                    throw std::runtime_error("Socket read error in recv_tensor");
+            }
             size_t N = 1;
-            for (int i = 0; i < ndim; ++i) N *= shape[i];
-
-            tensor->shape = shape;
-            tensor->strides = default_strides(shape);
-            tensor->numel_ = N;
-            tensor->contiguous_ = true;
-            tensor->dtype = dtype;
-            tensor->storage = std::make_shared<StorageImpl>(N, tensor->device, dtype);
-            size_t elem_sz = tensor->storage->element_size();
-
-            std::vector<char> temp_buf(N * elem_sz);
+            for (auto s : msg.shape) {
+                if (s < 0) throw std::runtime_error("recv_tensor: bad shape");
+                N *= (size_t)s;
+            }
+            size_t total = N * relay_dtype_bytes(msg.dtype_val);
+            msg.data.resize(total);
             size_t bytes_received = 0;
-            while (bytes_received < N * elem_sz) {
-                ssize_t r = recv(client_fds_[src], temp_buf.data() + bytes_received, N * elem_sz - bytes_received, 0);
+            while (bytes_received < total) {
+                ssize_t r = recv(peer_fd_, msg.data.data() + bytes_received, total - bytes_received, 0);
                 if (r <= 0) throw std::runtime_error("Socket read error in recv_tensor");
                 bytes_received += r;
             }
+            have_msg = true;
+        }
 
-            if (tensor->device.type == DeviceType::GPU) {
-                rt_gpu_write(tensor->gpu_data(), N * elem_sz, temp_buf.data(), 0);
-            } else {
-                std::memcpy(tensor->data_ptr(), temp_buf.data(), N * elem_sz);
-            }
-        } else if (src == 0) {
-            recv(peer_fd_, &ndim, sizeof(ndim), MSG_WAITALL);
-            recv(peer_fd_, &dtype_val, sizeof(dtype_val), MSG_WAITALL);
-            shape.resize(ndim);
-            recv(peer_fd_, shape.data(), ndim * sizeof(int64_t), MSG_WAITALL);
-            DataType dtype = static_cast<DataType>(dtype_val);
+        ndim = msg.ndim;
+        dtype_val = msg.dtype_val;
+        shape = msg.shape;
+        DataType dtype = static_cast<DataType>(dtype_val);
 
-            size_t N = 1;
-            for (int i = 0; i < ndim; ++i) N *= shape[i];
+        size_t N = 1;
+        for (int i = 0; i < ndim; ++i) N *= (size_t)shape[i];
 
-            tensor->shape = shape;
-            tensor->strides = default_strides(shape);
-            tensor->numel_ = N;
-            tensor->contiguous_ = true;
-            tensor->dtype = dtype;
-            tensor->storage = std::make_shared<StorageImpl>(N, tensor->device, dtype);
-            size_t elem_sz = tensor->storage->element_size();
+        tensor->shape = shape;
+        tensor->strides = default_strides(shape);
+        tensor->numel_ = N;
+        tensor->contiguous_ = true;
+        tensor->dtype = dtype;
+        tensor->storage = std::make_shared<StorageImpl>(N, tensor->device, dtype);
+        size_t elem_sz = tensor->storage->element_size();
 
-            std::vector<char> temp_buf(N * elem_sz);
-            size_t bytes_received = 0;
-            while (bytes_received < N * elem_sz) {
-                ssize_t r = recv(peer_fd_, temp_buf.data() + bytes_received, N * elem_sz - bytes_received, 0);
-                if (r <= 0) throw std::runtime_error("Socket read error in recv_tensor");
-                bytes_received += r;
-            }
-
-            if (tensor->device.type == DeviceType::GPU) {
-                rt_gpu_write(tensor->gpu_data(), N * elem_sz, temp_buf.data(), 0);
-            } else {
-                std::memcpy(tensor->data_ptr(), temp_buf.data(), N * elem_sz);
-            }
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, msg.data.data(), 0);
+        } else {
+            std::memcpy(tensor->data_ptr(), msg.data.data(), N * elem_sz);
         }
     }
 }
@@ -943,6 +1138,9 @@ void NCCLBridge::init_groups(int rank, int world_size, int tp_size, int pp_size)
 #endif
 }
 
+static std::shared_ptr<Tensor> nccl_contig_in(std::shared_ptr<Tensor> t);
+static void nccl_contig_out(std::shared_ptr<Tensor> orig, std::shared_ptr<Tensor> tmp);
+
 void NCCLBridge::nccl_check(int res, const char* op) {
     if (res != 0) {
         throw std::runtime_error(std::string("nccl ") + op + " failed");
@@ -959,17 +1157,19 @@ void NCCLBridge::order_for_stream(void* stream) {
 
 bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor) {
     if (available_ && comm_ && tensor->device.type == DeviceType::GPU) {
-        size_t count = tensor->numel();
-        int datatype = map_dtype(tensor->dtype);
+        auto work = nccl_contig_in(tensor);
+        size_t count = work->numel();
+        int datatype = map_dtype(work->dtype);
         if (datatype < 0) return false;
 
-        void* gpu_ptr = get_gpu_raw_ptr(tensor);
+        void* gpu_ptr = get_gpu_raw_ptr(work);
         if (!gpu_ptr) return false;
 
         order_for_stream(comm_stream_);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, comm_, comm_stream_), "all_reduce");
         sync_stream_(comm_stream_);
+        nccl_contig_out(tensor, work);
         return true;
     }
     return false;
@@ -979,15 +1179,17 @@ bool NCCLBridge::tp_all_reduce(std::shared_ptr<Tensor> tensor) {
     void* c = tp_comm_ ? tp_comm_ : comm_;
     void* s = tp_stream_ ? tp_stream_ : comm_stream_;
     if (available_ && c && tensor->device.type == DeviceType::GPU) {
-        size_t count = tensor->numel();
-        int datatype = map_dtype(tensor->dtype);
+        auto work = nccl_contig_in(tensor);
+        size_t count = work->numel();
+        int datatype = map_dtype(work->dtype);
         if (datatype < 0) return false;
-        void* gpu_ptr = get_gpu_raw_ptr(tensor);
+        void* gpu_ptr = get_gpu_raw_ptr(work);
         if (!gpu_ptr) return false;
         order_for_stream(s);
         typedef int (*all_reduce_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((all_reduce_t)all_reduce_fn)(gpu_ptr, gpu_ptr, count, datatype, 0, c, s), "tp_all_reduce");
         sync_stream_(s);
+        nccl_contig_out(tensor, work);
         return true;
     }
     return false;
@@ -997,16 +1199,20 @@ bool NCCLBridge::tp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
     void* c = tp_comm_ ? tp_comm_ : comm_;
     void* s = tp_stream_ ? tp_stream_ : comm_stream_;
     if (available_ && c && shard->device.type == DeviceType::GPU) {
-        size_t sendcount = shard->numel();
-        int datatype = map_dtype(shard->dtype);
+        auto shard_c = nccl_contig_in(shard);
+        size_t sendcount = shard_c->numel();
+        int datatype = map_dtype(shard_c->dtype);
         if (datatype < 0) return false;
-        void* shard_ptr = get_gpu_raw_ptr(shard);
-        void* full_ptr = get_gpu_raw_ptr(full);
-        if (!shard_ptr || !full_ptr) return false;
+        void* shard_ptr = get_gpu_raw_ptr(shard_c);
+        if (!shard_ptr) return false;
+        auto full_c = nccl_contig_in(full);
+        void* full_ptr = get_gpu_raw_ptr(full_c);
+        if (!full_ptr) return false;
         order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "tp_all_gather");
         sync_stream_(s);
+        nccl_contig_out(full, full_c);
         return true;
     }
     return false;
@@ -1016,16 +1222,20 @@ bool NCCLBridge::dp_reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_pt
     void* c = dp_comm_ ? dp_comm_ : comm_;
     void* s = dp_stream_ ? dp_stream_ : comm_stream_;
     if (available_ && c && reduce_scatter_fn && shard->device.type == DeviceType::GPU) {
+        auto full_c = nccl_contig_in(full);
         size_t sendcount = shard->numel();
         int datatype = map_dtype(shard->dtype);
         if (datatype < 0) return false;
-        void* shard_ptr = get_gpu_raw_ptr(shard);
-        void* full_ptr = get_gpu_raw_ptr(full);
-        if (!shard_ptr || !full_ptr) return false;
+        void* full_ptr = get_gpu_raw_ptr(full_c);
+        if (!full_ptr) return false;
+        auto shard_c = nccl_contig_in(shard);
+        void* shard_ptr = get_gpu_raw_ptr(shard_c);
+        if (!shard_ptr) return false;
         order_for_stream(s);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, c, s), "dp_reduce_scatter");
         sync_stream_(s);
+        nccl_contig_out(shard, shard_c);
         return true;
     }
     return false;
@@ -1035,16 +1245,20 @@ bool NCCLBridge::dp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
     void* c = dp_comm_ ? dp_comm_ : comm_;
     void* s = dp_stream_ ? dp_stream_ : comm_stream_;
     if (available_ && c && shard->device.type == DeviceType::GPU) {
-        size_t sendcount = shard->numel();
-        int datatype = map_dtype(shard->dtype);
+        auto shard_c = nccl_contig_in(shard);
+        size_t sendcount = shard_c->numel();
+        int datatype = map_dtype(shard_c->dtype);
         if (datatype < 0) return false;
-        void* shard_ptr = get_gpu_raw_ptr(shard);
-        void* full_ptr = get_gpu_raw_ptr(full);
-        if (!shard_ptr || !full_ptr) return false;
+        void* shard_ptr = get_gpu_raw_ptr(shard_c);
+        if (!shard_ptr) return false;
+        auto full_c = nccl_contig_in(full);
+        void* full_ptr = get_gpu_raw_ptr(full_c);
+        if (!full_ptr) return false;
         order_for_stream(s);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, c, s), "dp_all_gather");
         sync_stream_(s);
+        nccl_contig_out(full, full_c);
         return true;
     }
     return false;
@@ -1052,17 +1266,19 @@ bool NCCLBridge::dp_all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Te
 
 bool NCCLBridge::broadcast(std::shared_ptr<Tensor> tensor, int src) {
     if (available_ && comm_ && tensor->device.type == DeviceType::GPU) {
-        size_t count = tensor->numel();
-        int datatype = map_dtype(tensor->dtype);
+        auto work = nccl_contig_in(tensor);
+        size_t count = work->numel();
+        int datatype = map_dtype(work->dtype);
         if (datatype < 0) return false;
 
-        void* gpu_ptr = get_gpu_raw_ptr(tensor);
+        void* gpu_ptr = get_gpu_raw_ptr(work);
         if (!gpu_ptr) return false;
 
         order_for_stream(comm_stream_);
         typedef int (*broadcast_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((broadcast_t)broadcast_fn)(gpu_ptr, gpu_ptr, count, datatype, src, comm_, comm_stream_), "broadcast");
         sync_stream_(comm_stream_);
+        nccl_contig_out(tensor, work);
         return true;
     }
     return false;
@@ -1070,18 +1286,22 @@ bool NCCLBridge::broadcast(std::shared_ptr<Tensor> tensor, int src) {
 
 bool NCCLBridge::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full) {
     if (available_ && comm_ && shard->device.type == DeviceType::GPU) {
-        size_t sendcount = shard->numel();
-        int datatype = map_dtype(shard->dtype);
+        auto shard_c = nccl_contig_in(shard);
+        size_t sendcount = shard_c->numel();
+        int datatype = map_dtype(shard_c->dtype);
         if (datatype < 0) return false;
 
-        void* shard_ptr = get_gpu_raw_ptr(shard);
-        void* full_ptr = get_gpu_raw_ptr(full);
-        if (!shard_ptr || !full_ptr) return false;
+        void* shard_ptr = get_gpu_raw_ptr(shard_c);
+        if (!shard_ptr) return false;
+        auto full_c = nccl_contig_in(full);
+        void* full_ptr = get_gpu_raw_ptr(full_c);
+        if (!full_ptr) return false;
 
         order_for_stream(comm_stream_);
         typedef int (*all_gather_t)(const void*, void*, size_t, int, void*, void*);
         nccl_check(((all_gather_t)all_gather_fn)(shard_ptr, full_ptr, sendcount, datatype, comm_, comm_stream_), "all_gather");
         sync_stream_(comm_stream_);
+        nccl_contig_out(full, full_c);
         return true;
     }
     return false;
@@ -1089,18 +1309,22 @@ bool NCCLBridge::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tenso
 
 bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full) {
     if (available_ && initialized_ && reduce_scatter_fn && shard->device.type == DeviceType::GPU) {
+        auto full_c = nccl_contig_in(full);
         size_t sendcount = shard->numel();
         int datatype = map_dtype(shard->dtype);
         if (datatype < 0) return false;
 
-        void* shard_ptr = get_gpu_raw_ptr(shard);
-        void* full_ptr = get_gpu_raw_ptr(full);
-        if (!shard_ptr || !full_ptr) return false;
+        void* full_ptr = get_gpu_raw_ptr(full_c);
+        if (!full_ptr) return false;
+        auto shard_c = nccl_contig_in(shard);
+        void* shard_ptr = get_gpu_raw_ptr(shard_c);
+        if (!shard_ptr) return false;
 
         order_for_stream(comm_stream_);
         typedef int (*reduce_scatter_t)(const void*, void*, size_t, int, int, void*, void*);
         nccl_check(((reduce_scatter_t)reduce_scatter_fn)(full_ptr, shard_ptr, sendcount, datatype, 0, comm_, comm_stream_), "reduce_scatter");
         sync_stream_(comm_stream_);
+        nccl_contig_out(shard, shard_c);
         return true;
     }
     return false;
@@ -1188,6 +1412,17 @@ void NCCLBridge::sync_stream_(void* stream) {
         if (backend && backend->is_available()) {
             backend->sync_stream(stream);
         }
+    }
+}
+
+static std::shared_ptr<Tensor> nccl_contig_in(std::shared_ptr<Tensor> t) {
+    if (t->is_contiguous()) return t;
+    return t->contiguous();
+}
+
+static void nccl_contig_out(std::shared_ptr<Tensor> orig, std::shared_ptr<Tensor> tmp) {
+    if (tmp.get() != orig.get()) {
+        orig->copy_(tmp);
     }
 }
 
