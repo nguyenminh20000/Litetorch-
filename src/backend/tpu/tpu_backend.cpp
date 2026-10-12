@@ -135,14 +135,15 @@ void TPUBackend::finish() {
 }
 
 void* TPUBackend::get_kernel(const std::string&, const std::string&, const std::string&) {
-    return nullptr;
+    throw std::runtime_error("[litetorch Error] TPUBackend::get_kernel not implemented (TPU uses PJRT/HLO, not runtime kernels)");
 }
 
 void* TPUBackend::get_precompiled_kernel(int) {
-    return nullptr;
+    throw std::runtime_error("[litetorch Error] TPUBackend::get_precompiled_kernel not implemented (TPU uses PJRT/HLO, not runtime kernels)");
 }
 
 void TPUBackend::launch(void*, const std::vector<size_t>&, const std::vector<size_t>&, const std::vector<void*>&, const std::vector<size_t>&) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::launch not implemented (TPU uses PJRT/HLO, not runtime kernels)");
 }
 
 void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
@@ -313,6 +314,7 @@ void TPUBackend::adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void
 }
 
 void TPUBackend::adamw_8bit_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, void* M_scales, void* V_scales, int64_t size, int is_fp16, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1, float bias_correction2) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::adamw_8bit_step not implemented");
 }
 
 void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
@@ -321,7 +323,7 @@ void TPUBackend::flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off,
     const float* k_ptr = reinterpret_cast<const float*>(K) + k_off;
     const float* v_ptr = reinterpret_cast<const float*>(V) + v_off;
     float* o_ptr = reinterpret_cast<float*>(O) + o_off;
-    tpu_internal::tpu_flash_attention_forward(q_ptr, k_ptr, v_ptr, o_ptr, B, H, H_kv, Tq, Tk, D, scale);
+    tpu_internal::tpu_flash_attention_forward(q_ptr, k_ptr, v_ptr, o_ptr, B, H, H_kv, Tq, Tk, D, scale, causal);
 }
 
 void TPUBackend::flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
@@ -341,7 +343,7 @@ void TPUBackend::flash_attention_backward(void* dQ, int64_t dq_off, void* dK, in
     const float* q_ptr = reinterpret_cast<const float*>(Q) + q_off;
     const float* k_ptr = reinterpret_cast<const float*>(K) + k_off;
     const float* v_ptr = reinterpret_cast<const float*>(V) + v_off;
-    tpu_internal::tpu_flash_attention_backward(q_ptr, k_ptr, v_ptr, o_ptr, do_ptr, dq_ptr, dk_ptr, dv_ptr, B, H, H_kv, Tq, Tk, D, scale);
+    tpu_internal::tpu_flash_attention_backward(q_ptr, k_ptr, v_ptr, o_ptr, do_ptr, dq_ptr, dk_ptr, dv_ptr, B, H, H_kv, Tq, Tk, D, scale, causal);
 }
 
 void TPUBackend::flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off,
@@ -373,15 +375,31 @@ void TPUBackend::cat_backward(void* grad_output, int64_t gout_off, void* grad_in
     }
 }
 
-void TPUBackend::moe_gate(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t) {}
-void TPUBackend::moe_gate_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* gate_weight, int64_t gw_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_gate_weight, int64_t ggw_off, int64_t N, int64_t D, int64_t E, int64_t top_k) {}
-void TPUBackend::moe_expert_forward(void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* output, int64_t out_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) {}
-void TPUBackend::moe_expert_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_expert, int64_t ge_off, void* grad_bias, int64_t gb_off, void* grad_probs, int64_t gp_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) {}
+void TPUBackend::moe_gate(void*, int64_t, void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::moe_gate not implemented");
+}
+void TPUBackend::moe_gate_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* gate_weight, int64_t gw_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_gate_weight, int64_t ggw_off, int64_t N, int64_t D, int64_t E, int64_t top_k) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::moe_gate_backward not implemented");
+}
+void TPUBackend::moe_expert_forward(void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* output, int64_t out_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::moe_expert_forward not implemented");
+}
+void TPUBackend::moe_expert_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_expert, int64_t ge_off, void* grad_bias, int64_t gb_off, void* grad_probs, int64_t gp_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::moe_expert_backward not implemented");
+}
 
-void* TPUBackend::start_recording() { return nullptr; }
-void* TPUBackend::stop_recording(void*) { return nullptr; }
-void TPUBackend::launch_graph(void*) {}
-void TPUBackend::free_graph(void*) {}
+void* TPUBackend::start_recording() {
+    throw std::runtime_error("[litetorch Error] TPUBackend::start_recording not implemented (CUDA graphs not supported on TPU)");
+}
+void* TPUBackend::stop_recording(void*) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::stop_recording not implemented (CUDA graphs not supported on TPU)");
+}
+void TPUBackend::launch_graph(void*) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::launch_graph not implemented (CUDA graphs not supported on TPU)");
+}
+void TPUBackend::free_graph(void*) {
+    throw std::runtime_error("[litetorch Error] TPUBackend::free_graph not implemented (CUDA graphs not supported on TPU)");
+}
 
 void* TPUBackend::get_comm_stream() { return nullptr; }
 void TPUBackend::sync_stream(void*) {}

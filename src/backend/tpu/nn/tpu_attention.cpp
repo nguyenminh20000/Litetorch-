@@ -8,7 +8,7 @@ namespace litetorch {
 namespace tpu_internal {
 
 void tpu_flash_attention_forward(const float* Q, const float* K, const float* V, float* O,
-                                 int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+                                 int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     if (!Q || !K || !V || !O) return;
 
     int64_t group_ratio = H / H_kv;
@@ -28,7 +28,8 @@ void tpu_flash_attention_forward(const float* Q, const float* K, const float* V,
 
         const float* q_vec = Q + b * (H * Tq * D) + h * (Tq * D) + i * D;
         float max_score = -1e9f;
-        for (int64_t j = 0; j < Tk; ++j) {
+        int64_t j_lim = causal && i + 1 < Tk ? i + 1 : Tk;
+        for (int64_t j = 0; j < j_lim; ++j) {
             const float* k_vec = K + b * (H_kv * Tk * D) + h_kv * (Tk * D) + j * D;
             float dot = 0.0f;
             for (int64_t d = 0; d < D; ++d) {
@@ -40,19 +41,19 @@ void tpu_flash_attention_forward(const float* Q, const float* K, const float* V,
         }
 
         float sum_exp = 0.0f;
-        for (int64_t j = 0; j < Tk; ++j) {
+        for (int64_t j = 0; j < j_lim; ++j) {
             scores[j] = std::exp(scores[j] - max_score);
             sum_exp += scores[j];
         }
 
         float inv_sum = 1.0f / (sum_exp + 1e-8f);
-        for (int64_t j = 0; j < Tk; ++j) {
+        for (int64_t j = 0; j < j_lim; ++j) {
             scores[j] *= inv_sum;
         }
 
         float* out_vec = O + b * (H * Tq * D) + h * (Tq * D) + i * D;
         std::memset(out_vec, 0, D * sizeof(float));
-        for (int64_t j = 0; j < Tk; ++j) {
+        for (int64_t j = 0; j < j_lim; ++j) {
             float sc = scores[j];
             if (sc <= 0.0f) continue;
             const float* v_vec = V + b * (H_kv * Tk * D) + h_kv * (Tk * D) + j * D;
@@ -65,7 +66,7 @@ void tpu_flash_attention_forward(const float* Q, const float* K, const float* V,
 
 void tpu_flash_attention_backward(const float* Q, const float* K, const float* V, const float* O, const float* dO,
                                   float* dQ, float* dK, float* dV,
-                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale) {
+                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) {
     if (!Q || !K || !V || !O || !dO || !dQ || !dK || !dV) return;
 
     std::memset(dQ, 0, B * H * Tq * D * sizeof(float));
@@ -106,7 +107,8 @@ void tpu_flash_attention_backward(const float* Q, const float* K, const float* V
             float* dq_vec = dQ + b * (H * Tq * D) + h * (Tq * D) + i * D;
 
             float max_score = -1e9f;
-            for (int64_t j = 0; j < Tk; ++j) {
+            int64_t j_lim = causal && i + 1 < Tk ? i + 1 : Tk;
+            for (int64_t j = 0; j < j_lim; ++j) {
                 const float* k_vec = k_base + j * D;
                 float dot = 0.0f;
                 for (int64_t d = 0; d < D; ++d) {
@@ -118,13 +120,13 @@ void tpu_flash_attention_backward(const float* Q, const float* K, const float* V
             }
 
             float sum_exp = 0.0f;
-            for (int64_t j = 0; j < Tk; ++j) {
+            for (int64_t j = 0; j < j_lim; ++j) {
                 scores[j] = std::exp(scores[j] - max_score);
                 sum_exp += scores[j];
             }
 
             float inv_sum = 1.0f / (sum_exp + 1e-8f);
-            for (int64_t j = 0; j < Tk; ++j) {
+            for (int64_t j = 0; j < j_lim; ++j) {
                 scores[j] *= inv_sum;
             }
 
@@ -133,7 +135,7 @@ void tpu_flash_attention_backward(const float* Q, const float* K, const float* V
                 Di += do_vec[d] * o_vec[d];
             }
 
-            for (int64_t j = 0; j < Tk; ++j) {
+            for (int64_t j = 0; j < j_lim; ++j) {
                 float P_j = scores[j];
                 const float* v_vec = v_base + j * D;
                 const float* k_vec = k_base + j * D;

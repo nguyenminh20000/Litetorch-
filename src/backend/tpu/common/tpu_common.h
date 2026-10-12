@@ -40,10 +40,10 @@ void tpu_systolic_matmul_ex(const float* A, bool trans_a, int64_t lda,
 void tpu_systolic_bmm(const float* A, const float* B, float* C, int64_t B_batch, int64_t M, int64_t N, int64_t K);
 
 void tpu_flash_attention_forward(const float* Q, const float* K, const float* V, float* O,
-                                 int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale);
+                                 int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal);
 void tpu_flash_attention_backward(const float* Q, const float* K, const float* V, const float* O, const float* dO,
                                   float* dQ, float* dK, float* dV,
-                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale);
+                                  int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal);
 
 void tpu_adamw_update(float* p, const float* g, float* m, float* v, int64_t size,
                       float lr, float beta1, float beta2, float eps, float weight_decay,
