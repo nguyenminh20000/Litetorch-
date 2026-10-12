@@ -854,10 +854,10 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> sort_impl(
             if (vx != vy) return descending ? (vx > vy) : (vx < vy);
             return x < y;
         });
-        int64_t obase = o * dim_size;
+        int64_t dstride = in_strides[(size_t)d];
         for (int64_t k = 0; k < dim_size; ++k) {
-            out_vals[(size_t)(obase + k)] = data[(size_t)(base + order[(size_t)k] * in_strides[(size_t)d])];
-            out_idx[(size_t)(obase + k)] = (float)order[(size_t)k];
+            out_vals[(size_t)(base + k * dstride)] = data[(size_t)(base + order[(size_t)k] * dstride)];
+            out_idx[(size_t)(base + k * dstride)] = (float)order[(size_t)k];
         }
     });
     auto vals = Tensor::create(a_c->shape, a_c->device);
@@ -969,10 +969,9 @@ public:
         std::vector<float> idxd = index->to_vector();
         int64_t ndim = (int64_t)input_shape.size();
         auto in_strides = default_strides(input_shape);
-        auto idx_strides = default_strides(index->shape);
-        int64_t dim_size = input_shape[(size_t)dim];
-        std::vector<float> gi(gd.size(), 0.0f);
-        for (size_t i = 0; i < gd.size(); ++i) {
+        std::vector<float> gi = gd;
+        size_t nidx = idxd.size();
+        for (size_t i = 0; i < nidx; ++i) {
             size_t rem = i;
             int64_t pos = 0;
             for (int64_t dd = ndim - 1; dd >= 0; --dd) {
@@ -981,7 +980,7 @@ public:
                 int64_t sc = (dd == dim) ? (int64_t)idxd[i] : c;
                 pos += sc * in_strides[(size_t)dd];
             }
-            gi[(size_t)pos] = gd[i];
+            gi[(size_t)pos] = 0.0f;
         }
         auto grad_input = Tensor::create(input_shape, grad_output->device);
         write_vec(grad_input, gi);
