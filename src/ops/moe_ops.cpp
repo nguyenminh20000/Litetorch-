@@ -27,8 +27,8 @@ public:
         int64_t D = input->shape[1];
         int64_t E = gate_weight->shape[0];
 
-        auto grad_input = Tensor::zeros(input->shape, input->device, false);
-        auto grad_gate_weight = Tensor::zeros(gate_weight->shape, gate_weight->device, false);
+        auto grad_input = Tensor::zeros(input->shape, input->device, false, input->dtype);
+        auto grad_gate_weight = Tensor::zeros(gate_weight->shape, gate_weight->device, false, gate_weight->dtype);
 
         bool run_gpu = false;
         if (grad_output->device.type == DeviceType::GPU) {

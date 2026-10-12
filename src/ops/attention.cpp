@@ -151,7 +151,24 @@ public:
 
         auto scale_tensor = Tensor::from_vector({scale}, {1}, q->device);
         auto scaled_scores = Ops::mul(scores_4d, scale_tensor);
-        auto attn = Ops::softmax(scaled_scores, -1);
+        // The forward applies the causal mask before softmax; the recomputed
+        // attention here must do the same, otherwise dQ/dK/dV are computed
+        // against the unmasked probability matrix (wrong grads for causal).
+        std::shared_ptr<Tensor> masked_scores = scaled_scores;
+        if (causal) {
+            auto sv = scaled_scores->to_vector();
+            const float neg_inf = -std::numeric_limits<float>::infinity();
+            for (int64_t b = 0; b < B; ++b) {
+                for (int64_t h = 0; h < H; ++h) {
+                    for (int64_t i = 0; i < Tq; ++i) {
+                        float* row = &sv[((b * H + h) * Tq + i) * Tk];
+                        for (int64_t j = i + 1; j < Tk; ++j) row[j] = neg_inf;
+                    }
+                }
+            }
+            masked_scores = Tensor::from_vector(sv, {B, H, Tq, Tk}, q->device);
+        }
+        auto attn = Ops::softmax(masked_scores, -1);
 
         auto attn_3d = attn->is_contiguous() ? attn->view({B * H, Tq, Tk}) : attn->contiguous()->view({B * H, Tq, Tk});
         auto v_3d = v_rep->is_contiguous() ? v_rep->view({B * H, Tk, D}) : v_rep->contiguous()->view({B * H, Tk, D});
