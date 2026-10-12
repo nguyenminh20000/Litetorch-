@@ -185,9 +185,57 @@ extern "C" __global__ void make_contiguous_kernel(
     dst[dst_offset + gid] = src[src_idx];
 }
 
+extern "C" __global__ void make_contiguous_kernel_fp16(
+    const __half* src, int src_offset,
+    __half* dst, int dst_offset,
+    int ndims,
+    Int8Val shape_val,
+    Int8Val strides_val,
+    int total_elements)
+{
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= total_elements) return;
+
+    int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
+    int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
+
+    int src_idx = src_offset;
+    int temp = gid;
+    for (int d = ndims - 1; d >= 0; --d) {
+        int coord = temp % shape[d];
+        temp /= shape[d];
+        src_idx += coord * strides[d];
+    }
+    dst[dst_offset + gid] = src[src_idx];
+}
+
 extern "C" __global__ void copy_to_strided_kernel(
     const float* src, int src_offset,
     float* dst, int dst_offset,
+    int ndims,
+    Int8Val shape_val,
+    Int8Val strides_val,
+    int total_elements)
+{
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= total_elements) return;
+
+    int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
+    int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
+
+    int dst_idx = dst_offset;
+    int temp = gid;
+    for (int d = ndims - 1; d >= 0; --d) {
+        int coord = temp % shape[d];
+        temp /= shape[d];
+        dst_idx += coord * strides[d];
+    }
+    dst[dst_idx] = src[src_offset + gid];
+}
+
+extern "C" __global__ void copy_to_strided_kernel_fp16(
+    const __half* src, int src_offset,
+    __half* dst, int dst_offset,
     int ndims,
     Int8Val shape_val,
     Int8Val strides_val,

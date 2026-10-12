@@ -696,7 +696,9 @@ static const KernelMap& gpu_kernel_map() {
         m["leaky_relu_forward"] = (void*)&leaky_relu_forward;
         m["leaky_relu_backward_kernel"] = (void*)&leaky_relu_backward_kernel;
         m["make_contiguous_kernel"] = (void*)&make_contiguous_kernel;
+        m["make_contiguous_kernel_fp16"] = (void*)&make_contiguous_kernel_fp16;
         m["copy_to_strided_kernel"] = (void*)&copy_to_strided_kernel;
+        m["copy_to_strided_kernel_fp16"] = (void*)&copy_to_strided_kernel_fp16;
         m["conv2d_kernel"] = (void*)&conv2d_kernel;
         m["conv2d_backward_gb"] = (void*)&conv2d_backward_gb;
         m["conv2d_backward_gw"] = (void*)&conv2d_backward_gw;

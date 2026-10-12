@@ -521,7 +521,9 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
             strides_arr[i] = static_cast<int>(strides[i]);
         }
         
-        void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "make_contiguous_kernel");
+        void* kernel = (dtype == DataType::FP16)
+            ? rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "make_contiguous_kernel_fp16")
+            : rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "make_contiguous_kernel");
         
         cl_mem src_mem = gpu_data();
         cl_mem dst_mem = out->gpu_data();
@@ -965,7 +967,9 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
                 strides_arr[i] = static_cast<int>(strides[i]);
             }
 
-            void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "copy_to_strided_kernel");
+            void* kernel = (dtype == DataType::FP16)
+                ? rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "copy_to_strided_kernel_fp16")
+                : rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "copy_to_strided_kernel");
             cl_mem src_mem = src_cont->gpu_data();
             cl_mem dst_mem = gpu_data();
             int src_off = src_cont->offset;
