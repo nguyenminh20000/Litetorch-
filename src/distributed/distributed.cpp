@@ -20,9 +20,6 @@
 namespace litetorch {
 namespace distributed {
 
-static std::shared_ptr<Tensor> nccl_contig_in(std::shared_ptr<Tensor> t);
-static void nccl_contig_out(std::shared_ptr<Tensor> orig, std::shared_ptr<Tensor> tmp);
-
 static constexpr int32_t kDirectMagic = 0x4C54444D;
 static constexpr int32_t kRelayMagic = 0x4C54524D;
 
@@ -355,19 +352,18 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
         return;
     }
 
-    auto work = nccl_contig_in(tensor);
-    size_t N = work->numel();
-    size_t elem_sz = work->storage->element_size();
+    size_t N = tensor->numel();
+    size_t elem_sz = tensor->storage->element_size();
     std::vector<char> data(N * elem_sz);
 
-    if (work->device.type == DeviceType::GPU) {
-        rt_gpu_read(work->gpu_data(), N * elem_sz, data.data(), work->offset * elem_sz);
+    if (tensor->device.type == DeviceType::GPU) {
+        rt_gpu_read(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
     } else {
-        std::memcpy(data.data(), work->data_ptr(), N * elem_sz);
+        std::memcpy(data.data(), tensor->data_ptr(), N * elem_sz);
     }
 
     if (rank_ == 0) {
-        if (work->dtype == DataType::FP16) {
+        if (tensor->dtype == DataType::FP16) {
             std::vector<float> acc(N, 0.0f);
             uint16_t* data_ptr = reinterpret_cast<uint16_t*>(data.data());
             for (size_t j = 0; j < N; ++j) acc[j] += half_to_float(data_ptr[j]);
@@ -394,7 +390,7 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
-        } else if (work->dtype == DataType::BF16) {
+        } else if (tensor->dtype == DataType::BF16) {
             std::vector<float> acc(N, 0.0f);
             uint16_t* data_ptr = reinterpret_cast<uint16_t*>(data.data());
             for (size_t j = 0; j < N; ++j) {
@@ -431,7 +427,7 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
-        } else if (work->dtype == DataType::INT32) {
+        } else if (tensor->dtype == DataType::INT32) {
             std::vector<int32_t> acc(N, 0);
             int32_t* data_ptr = reinterpret_cast<int32_t*>(data.data());
             for (size_t j = 0; j < N; ++j) acc[j] += data_ptr[j];
@@ -458,9 +454,9 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
-        } else if (work->dtype == DataType::INT8 || work->dtype == DataType::INT16) {
+        } else if (tensor->dtype == DataType::INT8 || tensor->dtype == DataType::INT16) {
             std::vector<int32_t> acc(N, 0);
-            size_t isz = (work->dtype == DataType::INT8) ? 1 : 2;
+            size_t isz = (tensor->dtype == DataType::INT8) ? 1 : 2;
             for (size_t j = 0; j < N; ++j) {
                 int32_t v = 0;
                 if (isz == 1) v = reinterpret_cast<int8_t*>(data.data())[j];
@@ -497,7 +493,7 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
                     bytes_sent += s;
                 }
             }
-        } else if (work->dtype == DataType::FP32) {
+        } else if (tensor->dtype == DataType::FP32) {
             std::vector<float> acc(N, 0.0f);
             float* data_ptr = reinterpret_cast<float*>(data.data());
             for (size_t j = 0; j < N; ++j) acc[j] += data_ptr[j];
@@ -543,12 +539,11 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
         }
     }
 
-    if (work->device.type == DeviceType::GPU) {
-        rt_gpu_write(work->gpu_data(), N * elem_sz, data.data(), work->offset * elem_sz);
+    if (tensor->device.type == DeviceType::GPU) {
+        rt_gpu_write(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
     } else {
-        std::memcpy(work->data_ptr(), data.data(), N * elem_sz);
+        std::memcpy(tensor->data_ptr(), data.data(), N * elem_sz);
     }
-    nccl_contig_out(tensor, work);
 }
 
 void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
@@ -564,14 +559,13 @@ void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
 
     size_t N = tensor->numel();
     size_t elem_sz = tensor->storage->element_size();
-    auto work = nccl_contig_in(tensor);
     std::vector<char> data(N * elem_sz);
 
     if (rank_ == src) {
-        if (work->device.type == DeviceType::GPU) {
-            rt_gpu_read(work->gpu_data(), N * elem_sz, data.data(), work->offset * elem_sz);
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(data.data(), work->data_ptr(), N * elem_sz);
+            std::memcpy(data.data(), tensor->data_ptr(), N * elem_sz);
         }
     }
 
@@ -629,12 +623,11 @@ void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
     }
 
     if (rank_ != src) {
-        if (work->device.type == DeviceType::GPU) {
-            rt_gpu_write(work->gpu_data(), N * elem_sz, data.data(), work->offset * elem_sz);
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(work->data_ptr(), data.data(), N * elem_sz);
+            std::memcpy(tensor->data_ptr(), data.data(), N * elem_sz);
         }
-        nccl_contig_out(tensor, work);
     }
 }
 
@@ -696,13 +689,12 @@ void ProcessGroup::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Ten
 
     size_t S = shard->numel();
     size_t elem_sz = shard->storage->element_size();
-    auto shard_work = nccl_contig_in(shard);
     std::vector<char> data(S * elem_sz);
 
-    if (shard_work->device.type == DeviceType::GPU) {
-        rt_gpu_read(shard_work->gpu_data(), S * elem_sz, data.data(), shard_work->offset * elem_sz);
+    if (shard->device.type == DeviceType::GPU) {
+        rt_gpu_read(shard->gpu_data(), S * elem_sz, data.data(), shard->offset * elem_sz);
     } else {
-        std::memcpy(data.data(), shard_work->data_ptr(), S * elem_sz);
+        std::memcpy(data.data(), shard->data_ptr(), S * elem_sz);
     }
 
     std::vector<char> full_cpu(S * world_size_ * elem_sz);
@@ -743,13 +735,11 @@ void ProcessGroup::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Ten
         }
     }
 
-    auto full_work = nccl_contig_in(full);
-    if (full_work->device.type == DeviceType::GPU) {
-        rt_gpu_write(full_work->gpu_data(), S * world_size_ * elem_sz, full_cpu.data(), full_work->offset * elem_sz);
+    if (full->device.type == DeviceType::GPU) {
+        rt_gpu_write(full->gpu_data(), S * world_size_ * elem_sz, full_cpu.data(), full->offset * elem_sz);
     } else {
-        std::memcpy(full_work->data_ptr(), full_cpu.data(), S * world_size_ * elem_sz);
+        std::memcpy(full->data_ptr(), full_cpu.data(), S * world_size_ * elem_sz);
     }
-    nccl_contig_out(full, full_work);
 }
 
 void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full) {
@@ -782,7 +772,6 @@ void ProcessGroup::send_tensor(std::shared_ptr<Tensor> tensor, int dst) {
     size_t elem_sz = tensor->storage->element_size();
     int ndim = tensor->shape.size();
     int dtype_val = static_cast<int>(tensor->dtype);
-    auto work = nccl_contig_in(tensor);
 
     if (use_shm_ && shm_ctrl_ && shm_buffers_[rank_]) {
         int cur_step = shm_ctrl_->steps[rank_].load();
@@ -792,22 +781,22 @@ void ProcessGroup::send_tensor(std::shared_ptr<Tensor> tensor, int dst) {
         shm_buffers_[rank_][0] = static_cast<float>(ndim);
         shm_buffers_[rank_][1] = static_cast<float>(dtype_val);
         for (int i = 0; i < ndim; ++i) {
-            shm_buffers_[rank_][2 + i] = static_cast<float>(work->shape[i]);
+            shm_buffers_[rank_][2 + i] = static_cast<float>(tensor->shape[i]);
         }
 
-        if (work->device.type == DeviceType::GPU) {
-            rt_gpu_read(work->gpu_data(), N * elem_sz, shm_buffers_[rank_] + 2 + ndim, work->offset * elem_sz);
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_] + 2 + ndim, tensor->offset * elem_sz);
         } else {
-            std::memcpy(shm_buffers_[rank_] + 2 + ndim, work->data_ptr(), N * elem_sz);
+            std::memcpy(shm_buffers_[rank_] + 2 + ndim, tensor->data_ptr(), N * elem_sz);
         }
 
         shm_ctrl_->steps[rank_].store(cur_step + 1);
     } else {
         std::vector<char> temp_buf(N * elem_sz);
-        if (work->device.type == DeviceType::GPU) {
-            rt_gpu_read(work->gpu_data(), N * elem_sz, temp_buf.data(), work->offset * elem_sz);
+        if (tensor->device.type == DeviceType::GPU) {
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, temp_buf.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(temp_buf.data(), work->data_ptr(), N * elem_sz);
+            std::memcpy(temp_buf.data(), tensor->data_ptr(), N * elem_sz);
         }
         int32_t dmagic = kDirectMagic;
         int32_t snd_ndim = ndim;
@@ -1148,6 +1137,9 @@ void NCCLBridge::init_groups(int rank, int world_size, int tp_size, int pp_size)
     }
 #endif
 }
+
+static std::shared_ptr<Tensor> nccl_contig_in(std::shared_ptr<Tensor> t);
+static void nccl_contig_out(std::shared_ptr<Tensor> orig, std::shared_ptr<Tensor> tmp);
 
 void NCCLBridge::nccl_check(int res, const char* op) {
     if (res != 0) {
