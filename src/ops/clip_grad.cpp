@@ -1,4 +1,5 @@
 #include "litetorch/ops.h"
+#include "litetorch/autograd.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
