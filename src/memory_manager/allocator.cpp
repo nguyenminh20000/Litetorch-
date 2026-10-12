@@ -69,6 +69,12 @@ CachingAllocator::~CachingAllocator() {
     }
     free_cpu_blocks_.clear();
     cached_cpu_bytes_ = 0;
+    auto backend = BackendDispatcher::get().get_backend();
+    if (backend && backend->is_available()) {
+        for (auto& pair : free_gpu_blocks_) {
+            for (void* p : pair.second) backend->free(p);
+        }
+    }
     free_gpu_blocks_.clear();
     cached_gpu_bytes_ = 0;
 }

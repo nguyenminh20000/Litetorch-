@@ -559,6 +559,19 @@ void CLBackend::copy(cl_mem src, cl_mem dst, size_t size, size_t src_offset, siz
     }
 }
 
+void CLBackend::copy_async(cl_mem src, cl_mem dst, size_t size, size_t src_offset, size_t dst_offset) {
+    auto native = BackendDispatcher::get().get_backend();
+    if (native && native->is_available()) {
+        native->copy_async(src, dst, size, src_offset, dst_offset);
+        return;
+    }
+    if (!available_ || !src || !dst) return;
+    cl_int err = p_clEnqueueCopyBuffer(queue_, src, dst, src_offset, dst_offset, size, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        throw std::runtime_error("[litetorch Error] clEnqueueCopyBuffer (async) failed: " + std::to_string(err));
+    }
+}
+
 const char* CLBackend::kernel_name(KernelID id) {
     size_t i = static_cast<size_t>(id);
     size_t n = sizeof(g_precompiled_kernel_names) / sizeof(g_precompiled_kernel_names[0]);

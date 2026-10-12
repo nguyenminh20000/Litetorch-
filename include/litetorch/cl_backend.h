@@ -182,6 +182,7 @@ public:
     void read_async(cl_mem buffer, size_t size, void* host_ptr, size_t buffer_offset = 0);
     void write_async(cl_mem buffer, size_t size, const void* host_ptr, size_t buffer_offset = 0);
     void copy(cl_mem src, cl_mem dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0);
+    void copy_async(cl_mem src, cl_mem dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0);
 
     cl_kernel get_kernel(KernelID id);
     cl_kernel get_kernel(const std::string& program_name, const std::string& program_source, const std::string& kernel_name);
