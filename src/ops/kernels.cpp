@@ -2155,6 +2155,293 @@ __kernel void transpose_kernel(__global const float* src, int s_off, __global fl
     int c = idx - r * cols;
     dst[d_off + c * rows + r] = src[s_off + idx];
 }
+
+__kernel void rmsnorm_forward_kernel(__global const float* input, int in_off,
+                                     __global const float* weight, int w_off,
+                                     __global float* output, int out_off,
+                                     __global float* save_inv_rms, int sr_off,
+                                     int N, int M, float eps) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float sum = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        float v = input[in_off + (long)r * M + c];
+        sum += v * v;
+    }
+    float inv_rms = 1.0f / sqrt(sum / (float)M + eps);
+    save_inv_rms[sr_off + r] = inv_rms;
+    for (int c = 0; c < M; ++c) {
+        output[out_off + (long)r * M + c] = input[in_off + (long)r * M + c] * inv_rms * weight[w_off + c];
+    }
+}
+
+__kernel void rmsnorm_forward_half_kernel(__global const ushort* input, int in_off,
+                                          __global const ushort* weight, int w_off,
+                                          __global ushort* output, int out_off,
+                                          __global float* save_inv_rms, int sr_off,
+                                          int N, int M, float eps) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float sum = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        float v = half_to_float(input[in_off + (long)r * M + c]);
+        sum += v * v;
+    }
+    float inv_rms = 1.0f / sqrt(sum / (float)M + eps);
+    save_inv_rms[sr_off + r] = inv_rms;
+    for (int c = 0; c < M; ++c) {
+        float x = half_to_float(input[in_off + (long)r * M + c]);
+        float w = half_to_float(weight[w_off + c]);
+        output[out_off + (long)r * M + c] = float_to_half(x * inv_rms * w);
+    }
+}
+
+__kernel void rmsnorm_backward_dx_kernel(__global const float* input, int in_off,
+                                         __global const float* grad_output, int gout_off,
+                                         __global const float* weight, int w_off,
+                                         __global float* grad_input, int gin_off,
+                                         __global const float* save_inv_rms, int sr_off,
+                                         int N, int M) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float inv_rms = save_inv_rms[sr_off + r];
+    float dot = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        dot += grad_output[gout_off + (long)r * M + c] * weight[w_off + c] * input[in_off + (long)r * M + c];
+    }
+    float coef = inv_rms * inv_rms * inv_rms / (float)M * dot;
+    for (int c = 0; c < M; ++c) {
+        float w = weight[w_off + c];
+        grad_input[gin_off + (long)r * M + c] = inv_rms * grad_output[gout_off + (long)r * M + c] * w - input[in_off + (long)r * M + c] * coef;
+    }
+}
+
+__kernel void rmsnorm_backward_dw_kernel(__global const float* input, int in_off,
+                                         __global const float* grad_output, int gout_off,
+                                         __global float* grad_weight, int gw_off,
+                                         __global const float* save_inv_rms, int sr_off,
+                                         int N, int M) {
+    int c = get_global_id(0);
+    if (c >= M) return;
+    float sum = 0.0f;
+    for (int r = 0; r < N; ++r) {
+        float inv_rms = save_inv_rms[sr_off + r];
+        sum += grad_output[gout_off + (long)r * M + c] * input[in_off + (long)r * M + c] * inv_rms;
+    }
+    grad_weight[gw_off + c] = sum;
+}
+
+__kernel void softmax_fast_kernel(__global const float* A, int a_off,
+                                  __global float* B, int b_off,
+                                  int dim_size, int outer_size) {
+    int row = get_global_id(0);
+    if (row >= outer_size) return;
+    float m = -3.4028235e38f;
+    for (int i = 0; i < dim_size; ++i) {
+        float v = A[a_off + (long)row * dim_size + i];
+        m = fmax(m, v);
+    }
+    float s = 0.0f;
+    for (int i = 0; i < dim_size; ++i) {
+        float e = exp(A[a_off + (long)row * dim_size + i] - m);
+        B[b_off + (long)row * dim_size + i] = e;
+        s += e;
+    }
+    float inv = 1.0f / s;
+    for (int i = 0; i < dim_size; ++i) {
+        B[b_off + (long)row * dim_size + i] *= inv;
+    }
+}
+
+__kernel void layer_norm_fast_kernel(__global const float* input, int in_off,
+                                     __global const float* weight, int w_off, int has_weight,
+                                     __global const float* bias, int b_off, int has_bias,
+                                     __global float* output, int out_off,
+                                     __global float* save_mean, int sm_off,
+                                     __global float* save_var, int sv_off,
+                                     int N, int M, float eps) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float mean = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        mean += input[in_off + (long)r * M + c];
+    }
+    mean /= M;
+    float var = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        float diff = input[in_off + (long)r * M + c] - mean;
+        var += diff * diff;
+    }
+    var /= M;
+    float inv_std = 1.0f / sqrt(var + eps);
+    save_mean[sm_off + r] = mean;
+    save_var[sv_off + r] = inv_std;
+    for (int c = 0; c < M; ++c) {
+        long idx = (long)r * M + c;
+        float x_hat = (input[in_off + idx] - mean) * inv_std;
+        float w = has_weight ? weight[w_off + c] : 1.0f;
+        float b = has_bias ? bias[b_off + c] : 0.0f;
+        output[out_off + idx] = w * x_hat + b;
+    }
+}
+
+__kernel void layer_norm_backward_fused_kernel(__global const float* input, int in_off,
+                                               __global const float* grad_output, int gout_off,
+                                               __global const float* weight, int w_off, int has_weight,
+                                               __global float* grad_input, int gin_off,
+                                               __global float* grad_weight, int gw_off, int has_dw,
+                                               __global float* grad_bias, int gb_off, int has_db,
+                                               __global const float* save_mean, int sm_off,
+                                               __global const float* save_var, int sv_off,
+                                               int N, int M) {
+    int r = get_global_id(0);
+    if (r >= N) return;
+    float mean = save_mean[sm_off + r];
+    float inv_std = save_var[sv_off + r];
+    float sum_dy = 0.0f;
+    float sum_dy_xhat = 0.0f;
+    for (int c = 0; c < M; ++c) {
+        long idx = (long)r * M + c;
+        float dy = grad_output[gout_off + idx];
+        float x_hat = (input[in_off + idx] - mean) * inv_std;
+        float w = has_weight ? weight[w_off + c] : 1.0f;
+        sum_dy += dy * w;
+        sum_dy_xhat += dy * w * x_hat;
+    }
+    for (int c = 0; c < M; ++c) {
+        long idx = (long)r * M + c;
+        float dy = grad_output[gout_off + idx];
+        float x_hat = (input[in_off + idx] - mean) * inv_std;
+        float w = has_weight ? weight[w_off + c] : 1.0f;
+        grad_input[gin_off + idx] = inv_std * (dy * w - (sum_dy + x_hat * sum_dy_xhat) / M);
+        if (has_dw) atomic_add_float(&grad_weight[gw_off + c], dy * x_hat);
+        if (has_db) atomic_add_float(&grad_bias[gb_off + c], dy);
+    }
+}
+
+__kernel void im2col_flat_kernel(__global const float* im, int im_off,
+                                 int N, int C, int H, int W,
+                                 int KH, int KW, int padding, int stride,
+                                 int H_out, int W_out,
+                                 __global float* col, int col_off) {
+    long idx = get_global_id(0);
+    long HW_out = (long)H_out * W_out;
+    long NHW = (long)N * HW_out;
+    long K = (long)C * KH * KW;
+    long total = K * NHW;
+    if (idx >= total) return;
+    long k = idx / NHW;
+    long j = idx - k * NHW;
+    long n = j / HW_out;
+    long hw = j - n * HW_out;
+    long h_out = hw / W_out;
+    long w_out = hw - h_out * W_out;
+    long kw = k % KW;
+    long khw = k / KW;
+    long kh = khw % KH;
+    long c = khw / KH;
+    long im_row = h_out * stride - padding + kh;
+    long im_col = w_out * stride - padding + kw;
+    float v = 0.0f;
+    if (im_row >= 0 && im_row < H && im_col >= 0 && im_col < W) {
+        v = im[im_off + ((n * C + c) * H + im_row) * W + im_col];
+    }
+    col[col_off + idx] = v;
+}
+
+__kernel void transpose_conv_out_kernel(__global const float* src, int s_off,
+                                        __global float* dst, int d_off,
+                                        int N, int C, int H, int W) {
+    long idx = get_global_id(0);
+    long HW = (long)H * W;
+    long total = (long)N * C * HW;
+    if (idx >= total) return;
+    long tmp = idx;
+    long hw = tmp % HW; tmp /= HW;
+    long c = tmp % C; tmp /= C;
+    long n = tmp;
+    dst[d_off + idx] = src[s_off + (c * N * HW + n * HW + hw)];
+}
+
+__kernel void transpose_conv_out_inv_kernel(__global const float* src, int s_off,
+                                            __global float* dst, int d_off,
+                                            int N, int C, int H, int W) {
+    long idx = get_global_id(0);
+    long HW = (long)H * W;
+    long NHW = (long)N * HW;
+    long total = (long)C * NHW;
+    if (idx >= total) return;
+    long tmp = idx;
+    long hw = tmp % HW; tmp /= HW;
+    long n = tmp % N; tmp /= N;
+    long c = tmp;
+    long src_idx = ((n * C + c) * H + hw / W) * W + hw % W;
+    dst[d_off + idx] = src[s_off + src_idx];
+}
+
+__kernel void col2im_kernel(__global const float* col, int col_off,
+                            __global float* im, int im_off,
+                            int N, int C, int H, int W,
+                            int KH, int KW, int pad, int stride,
+                            int H_out, int W_out) {
+    long idx = get_global_id(0);
+    long K = (long)C * KH * KW;
+    long HW_out = (long)H_out * W_out;
+    long NHW = (long)N * HW_out;
+    long total = K * NHW;
+    if (idx >= total) return;
+    long tmp = idx;
+    long hw_out = tmp % HW_out; tmp /= HW_out;
+    long n = tmp % N; tmp /= N;
+    long k = tmp;
+    long kw = k % KW; tmp = k / KW;
+    long kh = tmp % KH; tmp /= KH;
+    long c = tmp;
+    long ho = hw_out / W_out;
+    long wo = hw_out % W_out;
+    long h = ho * stride - pad + kh;
+    long w = wo * stride - pad + kw;
+    if (h >= 0 && h < H && w >= 0 && w < W) {
+        long im_idx = ((n * C + c) * H + h) * W + w;
+        atomic_add_float(&im[im_off + im_idx], col[col_off + idx]);
+    }
+}
+
+__kernel void im2col_batched_kernel(__global const float* im, int im_off,
+                                    int N, int C, int H, int W,
+                                    int KH, int KW, int padding, int stride, int dilation,
+                                    int H_out, int W_out,
+                                    __global float* col, int col_off) {
+    long idx = get_global_id(0);
+    long HW_out = (long)H_out * W_out;
+    long K = (long)C * KH * KW;
+    long total = (long)N * K * HW_out;
+    if (idx >= total) return;
+    long hw_out = idx % HW_out; long tmp = idx / HW_out;
+    long k = tmp % K; long n = tmp / K;
+    long kw = k % KW; tmp = k / KW;
+    long kh = tmp % KH; tmp /= KH;
+    long c = tmp;
+    long h_out = hw_out / W_out;
+    long w_out = hw_out % W_out;
+    long im_row = h_out * stride - padding + kh * dilation;
+    long im_col = w_out * stride - padding + kw * dilation;
+    float v = 0.0f;
+    if (im_row >= 0 && im_row < H && im_col >= 0 && im_col < W) {
+        v = im[im_off + ((n * C + c) * H + im_row) * W + im_col];
+    }
+    col[col_off + idx] = v;
+}
+
+__kernel void broadcast_batch_kernel(__global const float* src, int s_off,
+                                     __global float* dst, int d_off,
+                                     int batch, int rows, int cols) {
+    long idx = get_global_id(0);
+    long inner = (long)rows * cols;
+    long total = (long)batch * inner;
+    if (idx >= total) return;
+    dst[d_off + idx] = src[s_off + idx % inner];
+}
 )litetorch_raw_cl";
 
 }
