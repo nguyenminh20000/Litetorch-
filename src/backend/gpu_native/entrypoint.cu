@@ -725,6 +725,7 @@ static const KernelMap& gpu_kernel_map() {
         m["copy_to_strided_kernel_fp16"] = (void*)&copy_to_strided_kernel_fp16;
         m["conv2d_kernel"] = (void*)&conv2d_kernel;
         m["conv2d_backward_gb"] = (void*)&conv2d_backward_gb;
+        m["conv2d_backward_gb_half"] = (void*)&conv2d_backward_gb_half;
         m["conv2d_backward_gw"] = (void*)&conv2d_backward_gw;
         m["conv2d_backward_gdx"] = (void*)&conv2d_backward_gdx;
         m["im2col_kernel"] = (void*)&im2col_kernel;
@@ -840,6 +841,9 @@ extern "C" void* gpu_get_kernel(const char* name) {
     if (std::strcmp(name, "conv2d_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_cudnn : nullptr;
     if (std::strcmp(name, "conv2d_backward_data_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_data_cudnn : nullptr;
     if (std::strcmp(name, "conv2d_backward_filter_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_filter_cudnn : nullptr;
+    if (std::strcmp(name, "conv2d_cudnn_half") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_cudnn_half : nullptr;
+    if (std::strcmp(name, "conv2d_backward_data_cudnn_half") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_data_cudnn_half : nullptr;
+    if (std::strcmp(name, "conv2d_backward_filter_cudnn_half") == 0) return g_cudnn_available ? (void*)&gpu_conv2d_backward_filter_cudnn_half : nullptr;
     if (std::strcmp(name, "softmax_cudnn") == 0) return g_cudnn_available ? (void*)&gpu_softmax_cudnn : nullptr;
 #endif
 #ifdef USE_MIOPEN
