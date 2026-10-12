@@ -4,6 +4,8 @@
 #include <cstring>
 // === W1-T2 tensor-api: includes ===
 #include <pybind11/numpy.h>
+#include <algorithm>
+#include <cctype>
 // === W1-T2 tensor-api ===
 
 #include "litetorch/device.h"
@@ -91,7 +93,105 @@ public:
             index
         );
     }
+
+    bool is_python_backed() const override { return true; }
 };
+
+struct EnableGradContext {
+    bool prev = true;
+    bool active = false;
+    void enter() {
+        if (!active) {
+            prev = Autograd::is_grad_enabled();
+            Autograd::set_grad_enabled(true);
+            active = true;
+        }
+    }
+    void exit() {
+        if (active) {
+            Autograd::set_grad_enabled(prev);
+            active = false;
+        }
+    }
+};
+
+inline bool& inference_mode_flag() {
+    static thread_local bool flag = false;
+    return flag;
+}
+
+struct InferenceModeContext {
+    bool prev_grad = true;
+    bool prev_infer = false;
+    bool active = false;
+    void enter() {
+        if (!active) {
+            prev_grad = Autograd::is_grad_enabled();
+            prev_infer = inference_mode_flag();
+            Autograd::set_grad_enabled(false);
+            inference_mode_flag() = true;
+            active = true;
+        }
+    }
+    void exit() {
+        if (active) {
+            Autograd::set_grad_enabled(prev_grad);
+            inference_mode_flag() = prev_infer;
+            active = false;
+        }
+    }
+};
+
+inline bool gpu_available_for_autocast() {
+    if (std::getenv("LITETORCH_NO_NATIVE_GPU")) {
+        return litetorch::CLBackend::get().is_available();
+    }
+    auto backend = litetorch::BackendDispatcher::get().get_backend();
+    if (backend && backend->is_available()) {
+        return true;
+    }
+    return litetorch::CLBackend::get().is_available();
+}
+
+inline DataType parse_autocast_dtype(py::object dtype_obj, const std::string& device_type) {
+    if (dtype_obj.is_none()) {
+        return (device_type == "cpu") ? DataType::BF16 : DataType::FP16;
+    }
+    try {
+        return dtype_obj.cast<DataType>();
+    } catch (const py::cast_error&) {
+    }
+    std::string s = dtype_obj.cast<std::string>();
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    if (s == "float16" || s == "fp16" || s == "half") return DataType::FP16;
+    if (s == "bfloat16" || s == "bf16") return DataType::BF16;
+    if (s == "float32" || s == "fp32" || s == "float") return DataType::FP32;
+    throw std::invalid_argument("[litetorch Error] autocast: unsupported dtype '" + s + "'");
+}
+
+struct PyAutocast {
+    std::string device_type = "cuda";
+    DataType dtype = DataType::FP16;
+    bool enabled = true;
+    std::unique_ptr<amp::AutocastGuard> guard;
+
+    void enter() {
+        std::string dt = device_type;
+        std::transform(dt.begin(), dt.end(), dt.begin(), ::tolower);
+        if (dt == "cuda" || dt == "gpu") {
+            if (!gpu_available_for_autocast()) {
+                throw std::runtime_error("[litetorch Error] autocast('cuda') requested but no GPU backend is available on this build");
+            }
+        } else if (dt != "cpu") {
+            throw std::invalid_argument("[litetorch Error] autocast: device_type must be 'cuda' or 'cpu'");
+        }
+        guard = std::make_unique<amp::AutocastGuard>(enabled, dtype);
+    }
+    void exit() {
+        guard.reset();
+    }
+};
+
 
 PYBIND11_MODULE(litetorch, m) {
     m.doc() = "LiteTorch Python Bindings";
@@ -1656,6 +1756,23 @@ PYBIND11_MODULE(litetorch, m) {
         .def_static("is_enabled", &amp::AutocastGuard::is_enabled)
         .def_static("get_dtype", &amp::AutocastGuard::get_dtype);
 
+    py::class_<PyAutocast>(amp_mod, "autocast")
+        .def(py::init([](const std::string& device_type, py::object dtype_obj, bool enabled) {
+            PyAutocast s;
+            s.device_type = device_type;
+            s.dtype = parse_autocast_dtype(dtype_obj, device_type);
+            s.enabled = enabled;
+            return s;
+        }), py::arg("device_type") = "cuda", py::arg("dtype") = py::none(), py::arg("enabled") = true)
+        .def("__enter__", [](PyAutocast& self) -> PyAutocast& { self.enter(); return self; })
+        .def("__exit__", [](PyAutocast& self, py::object, py::object, py::object) { self.exit(); })
+        .def_property_readonly("device_type", [](const PyAutocast& self) { return self.device_type; })
+        .def_property_readonly("dtype", [](const PyAutocast& self) { return self.dtype; })
+        .def_property_readonly("enabled", [](const PyAutocast& self) { return self.enabled; });
+
+    amp_mod.def("is_autocast_enabled", &amp::AutocastGuard::is_enabled);
+    amp_mod.def("get_autocast_dtype", &amp::AutocastGuard::get_dtype);
+
     auto quant_mod = m.def_submodule("quantization", "LiteTorch Quantization");
     quant_mod.def("quantize_linear", &quantization::quantize_linear, py::arg("layer"));
 
@@ -1858,18 +1975,95 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("x", &data::TensorDataset::x)
         .def_readwrite("y", &data::TensorDataset::y);
 
+    py::class_<data::Sampler, std::shared_ptr<data::Sampler>>(data_mod, "Sampler")
+        .def("indices", &data::Sampler::indices)
+        .def("__len__", &data::Sampler::size);
+
+    py::class_<data::SequentialSampler, data::Sampler, std::shared_ptr<data::SequentialSampler>>(data_mod, "SequentialSampler")
+        .def(py::init<size_t>(), py::arg("n"))
+        .def("indices", &data::SequentialSampler::indices)
+        .def("__len__", &data::SequentialSampler::size);
+
+    py::class_<data::RandomSampler, data::Sampler, std::shared_ptr<data::RandomSampler>>(data_mod, "RandomSampler")
+        .def(py::init<size_t, bool, size_t, uint64_t>(),
+             py::arg("n"), py::arg("replacement") = false, py::arg("num_samples") = 0, py::arg("seed") = 0)
+        .def("indices", &data::RandomSampler::indices)
+        .def("__len__", &data::RandomSampler::size);
+
+    py::class_<data::BatchSampler, std::shared_ptr<data::BatchSampler>>(data_mod, "BatchSampler")
+        .def(py::init<std::shared_ptr<data::Sampler>, size_t, bool>(),
+             py::arg("sampler"), py::arg("batch_size"), py::arg("drop_last") = false)
+        .def("batches", &data::BatchSampler::batches)
+        .def("__len__", &data::BatchSampler::size)
+        .def_property_readonly("batch_size", &data::BatchSampler::batch_size)
+        .def_property_readonly("drop_last", &data::BatchSampler::drop_last);
+
+    py::class_<data::Subset, data::Dataset, std::shared_ptr<data::Subset>>(data_mod, "Subset")
+        .def(py::init<std::shared_ptr<data::Dataset>, std::vector<size_t>>(),
+             py::arg("dataset"), py::arg("indices"))
+        .def("size", &data::Subset::size)
+        .def("get", &data::Subset::get, py::arg("index"))
+        .def("__len__", &data::Subset::size)
+        .def("__getitem__", &data::Subset::get, py::arg("index"));
+
+    data_mod.def("random_split", &data::random_split,
+                 py::arg("dataset"), py::arg("lengths"), py::arg("seed") = 0);
+
     py::class_<data::DataLoader, std::shared_ptr<data::DataLoader>>(data_mod, "DataLoader")
-        .def(py::init<std::shared_ptr<data::Dataset>, size_t, bool, const Device&, size_t>(),
-             py::arg("dataset"), py::arg("batch_size"), py::arg("shuffle") = true, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("prefetch_limit") = 2)
+        .def(py::init([](std::shared_ptr<data::Dataset> dataset, size_t batch_size, bool shuffle,
+                         py::object device_obj, size_t prefetch_limit, size_t num_workers,
+                         bool drop_last, py::object sampler_obj, py::object collate_obj) {
+            Device dev = device_obj.is_none() ? Device(DeviceType::CPU, 0) : device_obj.cast<Device>();
+            std::shared_ptr<data::Sampler> sampler;
+            if (!sampler_obj.is_none()) {
+                sampler = sampler_obj.cast<std::shared_ptr<data::Sampler>>();
+            }
+            auto dl = std::make_shared<data::DataLoader>(
+                dataset, batch_size, shuffle, dev, prefetch_limit, num_workers, drop_last, sampler);
+            if (!collate_obj.is_none()) {
+                py::function f = collate_obj.cast<py::function>();
+                dl->set_collate_fn([f](const std::vector<std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>>& items) {
+                    py::list lst;
+                    for (auto& it : items) {
+                        lst.append(py::make_tuple(it.first, it.second));
+                    }
+                    py::tuple res = f(lst).cast<py::tuple>();
+                    return std::make_pair(res[0].cast<std::shared_ptr<Tensor>>(),
+                                          res[1].cast<std::shared_ptr<Tensor>>());
+                }, true);
+            }
+            return dl;
+        }), py::arg("dataset"), py::arg("batch_size"), py::arg("shuffle") = true,
+            py::arg("device") = py::none(), py::arg("prefetch_limit") = 2,
+            py::arg("num_workers") = 0, py::arg("drop_last") = false,
+            py::arg("sampler") = py::none(), py::arg("collate_fn") = py::none())
         .def("reset", &data::DataLoader::reset)
         .def("next", [](data::DataLoader& self) -> py::object {
             std::shared_ptr<Tensor> bx;
             std::shared_ptr<Tensor> by;
-            if (self.next(bx, by)) {
+            bool ok;
+            { py::gil_scoped_release rel; ok = self.next(bx, by); }
+            if (ok) {
                 return py::make_tuple(bx, by);
             }
             return py::none();
         })
+        .def("__iter__", [](data::DataLoader& self) -> data::DataLoader& {
+            self.reset();
+            return self;
+        })
+        .def("__next__", [](data::DataLoader& self) -> py::object {
+            std::shared_ptr<Tensor> bx;
+            std::shared_ptr<Tensor> by;
+            bool ok;
+            { py::gil_scoped_release rel; ok = self.next(bx, by); }
+            if (!ok) {
+                throw py::stop_iteration();
+            }
+            return py::make_tuple(bx, by);
+        })
+        .def("__len__", &data::DataLoader::num_batches)
+        .def("num_batches", &data::DataLoader::num_batches)
         .def("save_state", &data::DataLoader::save_state, py::arg("filepath"))
         .def("load_state", &data::DataLoader::load_state, py::arg("filepath"));
 
@@ -2052,6 +2246,20 @@ PYBIND11_MODULE(litetorch, m) {
         .def(py::init<>())
         .def("__enter__", [](NoGradContext& self) -> NoGradContext& { self.enter(); return self; })
         .def("__exit__", [](NoGradContext& self, py::object, py::object, py::object) { self.exit(); });
+
+    py::class_<EnableGradContext>(m, "enable_grad")
+        .def(py::init<>())
+        .def("__enter__", [](EnableGradContext& self) -> EnableGradContext& { self.enter(); return self; })
+        .def("__exit__", [](EnableGradContext& self, py::object, py::object, py::object) { self.exit(); });
+
+    py::class_<InferenceModeContext>(m, "inference_mode")
+        .def(py::init<>())
+        .def("__enter__", [](InferenceModeContext& self) -> InferenceModeContext& { self.enter(); return self; })
+        .def("__exit__", [](InferenceModeContext& self, py::object, py::object, py::object) { self.exit(); });
+
+    m.def("is_inference_mode", []() -> bool {
+        return inference_mode_flag();
+    });
 
     m.def("is_grad_enabled", []() -> bool {
         return Autograd::is_grad_enabled();

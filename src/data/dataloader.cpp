@@ -1,10 +1,13 @@
 #include "litetorch/data.h"
 #include "litetorch/ops.h"
+#include <pybind11/pybind11.h>
 #include <random>
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
+
+namespace py = pybind11;
 
 namespace litetorch {
 
@@ -38,47 +41,252 @@ uint32_t calculate_crc32(const void* data, size_t size, uint32_t initial_crc = 0
 
 namespace data {
 
-DataLoader::DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size, bool shuffle, const Device& device, size_t prefetch_limit)
-    : dataset(dataset), batch_size(batch_size), shuffle(shuffle), worker_stop(false), worker_index(0), epoch_id(0), generation_id(0), prefetch_limit(prefetch_limit), device(device) {
-    indices.resize(dataset->size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-        indices[i] = i;
+DataLoader::DataLoader(std::shared_ptr<Dataset> dataset, size_t batch_size, bool shuffle,
+                       const Device& device, size_t prefetch_limit, size_t num_workers,
+                       bool drop_last, std::shared_ptr<Sampler> sampler)
+    : dataset(dataset), batch_size(batch_size), shuffle(shuffle),
+      num_workers_(num_workers), drop_last_(drop_last), sampler_(sampler),
+      worker_stop(false), next_job_(0), in_flight_(0),
+      out_head_(0), num_batches_(0), generation_id(0),
+      current_index(0), epoch_id(0), prefetch_limit(prefetch_limit ? prefetch_limit : 1),
+      device(device) {
+    if (!dataset) {
+        throw std::invalid_argument("[litetorch Error] DataLoader requires a non-null dataset");
+    }
+    if (batch_size == 0) {
+        throw std::invalid_argument("[litetorch Error] DataLoader requires batch_size > 0");
+    }
+    if (sampler_ && shuffle) {
+        throw std::invalid_argument("[litetorch Error] DataLoader: sampler and shuffle are mutually exclusive");
     }
     reset();
-    worker_thread = std::thread(&DataLoader::worker_loop, this);
+    spawn_workers();
 }
 
 DataLoader::~DataLoader() {
+    stop_workers();
+}
+
+void DataLoader::spawn_workers() {
+    size_t nthreads = num_workers_ == 0 ? 1 : num_workers_;
+    for (size_t i = 0; i < nthreads; ++i) {
+        workers_.emplace_back(&DataLoader::worker_loop, this);
+    }
+}
+
+void DataLoader::stop_workers() {
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         worker_stop = true;
     }
     cv_cond.notify_all();
-    if (worker_thread.joinable()) {
-        worker_thread.join();
+    bool release_gil = Py_IsInitialized() && PyGILState_Check();
+    std::unique_ptr<py::gil_scoped_release> rel;
+    if (release_gil) rel = std::make_unique<py::gil_scoped_release>();
+    for (auto& t : workers_) {
+        if (t.joinable()) t.join();
     }
+    workers_.clear();
+}
+
+void DataLoader::refresh_indices() {
+    if (sampler_) {
+        indices = sampler_->indices();
+    } else {
+        indices.resize(dataset->size());
+        for (size_t i = 0; i < indices.size(); ++i) indices[i] = i;
+        if (shuffle) {
+            std::random_device rd;
+            std::mt19937 g(rd());
+            std::shuffle(indices.begin(), indices.end(), g);
+        }
+    }
+}
+
+size_t DataLoader::compute_num_batches() const {
+    size_t n = indices.size();
+    if (n == 0) return 0;
+    size_t full = n / batch_size;
+    size_t rem = n % batch_size;
+    if (rem == 0) return full;
+    return drop_last_ ? full : full + 1;
+}
+
+void DataLoader::reset() {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    refresh_indices();
+    num_batches_ = compute_num_batches();
+    current_index = 0;
+    out_head_ = 0;
+    next_job_ = 0;
+    in_flight_ = 0;
+    out_buffer_.clear();
+    epoch_id++;
+    generation_id++;
+    build_epoch_cache();
+    cv_cond.notify_all();
+}
+
+bool DataLoader::next(std::shared_ptr<Tensor>& batch_x, std::shared_ptr<Tensor>& batch_y) {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    cv_cond.wait(lock, [this]() {
+        return worker_stop.load() || out_head_ >= num_batches_ ||
+               out_buffer_.count(out_head_) > 0;
+    });
+    if (out_head_ >= num_batches_) {
+        return false;
+    }
+    auto it = out_buffer_.find(out_head_);
+    if (it == out_buffer_.end()) {
+        return false;
+    }
+    batch_x = it->second.x;
+    batch_y = it->second.y;
+    out_buffer_.erase(it);
+    out_head_++;
+    current_index = std::min(out_head_ * batch_size, indices.size());
+    lock.unlock();
+    cv_cond.notify_all();
+    return true;
+}
+
+void DataLoader::set_collate_fn(CollateFn fn, bool from_python) {
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    collate_fn_ = std::move(fn);
+    collate_from_python_ = from_python;
+}
+
+void DataLoader::worker_loop() {
+    while (!worker_stop.load()) {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        cv_cond.wait(lock, [this]() {
+            return worker_stop.load() ||
+                   (next_job_ < num_batches_ &&
+                    in_flight_ + out_buffer_.size() < prefetch_limit);
+        });
+        if (worker_stop.load()) break;
+        size_t b = next_job_++;
+        in_flight_++;
+        size_t gen = generation_id;
+        lock.unlock();
+
+        build_batch(b, gen);
+
+        lock.lock();
+        in_flight_--;
+        cv_cond.notify_all();
+    }
+}
+
+void DataLoader::build_batch(size_t batch_no, size_t gen) {
+    bool need_gil = collate_from_python_ || dataset->is_python_backed();
+    std::unique_ptr<py::gil_scoped_acquire> acq;
+    if (need_gil) acq = std::make_unique<py::gil_scoped_acquire>();
+
+    size_t start = batch_no * batch_size;
+    size_t end = std::min(start + batch_size, indices.size());
+    std::vector<size_t> batch_indices(indices.begin() + start, indices.begin() + end);
+    build_batch_inner(batch_no, batch_indices);
+}
+
+void DataLoader::build_batch_inner(size_t batch_no, const std::vector<size_t>& batch_indices) {
+    PrefetchBatch batch;
+    size_t batch_len = batch_indices.size();
+    auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
+
+    if (tensor_dataset && !collate_fn_) {
+        auto x_tensor = tensor_dataset->x;
+        auto y_tensor = tensor_dataset->y;
+
+        int64_t D = 1;
+        for (size_t d = 1; d < x_tensor->shape.size(); ++d) D *= x_tensor->shape[d];
+        int64_t Dy = 1;
+        for (size_t d = 1; d < y_tensor->shape.size(); ++d) Dy *= y_tensor->shape[d];
+
+        std::vector<int64_t> batch_x_shape = x_tensor->shape;
+        batch_x_shape[0] = (int64_t)batch_len;
+        std::vector<int64_t> batch_y_shape = y_tensor->shape;
+        batch_y_shape[0] = (int64_t)batch_len;
+
+        if (device.type != DeviceType::CPU && epoch_x_gpu && epoch_y_gpu) {
+            batch.x = std::make_shared<Tensor>(
+                epoch_x_gpu->storage, batch_x_shape, default_strides(batch_x_shape),
+                epoch_x_gpu->offset + (int64_t)(batch_no * batch_size) * D, device, false);
+            batch.y = std::make_shared<Tensor>(
+                epoch_y_gpu->storage, batch_y_shape, default_strides(batch_y_shape),
+                epoch_y_gpu->offset + (int64_t)(batch_no * batch_size) * Dy, device, false);
+        } else {
+            auto batch_x_cpu = Tensor::create(batch_x_shape, Device(DeviceType::CPU, 0), false, x_tensor->dtype);
+            auto batch_y_cpu = Tensor::create(batch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
+            size_t x_elem_sz = x_tensor->storage->element_size();
+            size_t y_elem_sz = y_tensor->storage->element_size();
+            char* bx_ptr = (char*)batch_x_cpu->data_ptr();
+            char* by_ptr = (char*)batch_y_cpu->data_ptr();
+            char* x_ptr = (char*)x_tensor->data_ptr();
+            char* y_ptr = (char*)y_tensor->data_ptr();
+            for (size_t i = 0; i < batch_len; ++i) {
+                size_t idx = batch_indices[i];
+                std::memcpy(bx_ptr + i * D * x_elem_sz, x_ptr + idx * D * x_elem_sz, D * x_elem_sz);
+                std::memcpy(by_ptr + i * Dy * y_elem_sz, y_ptr + idx * Dy * y_elem_sz, Dy * y_elem_sz);
+            }
+            batch.x = batch_x_cpu;
+            batch.y = batch_y_cpu;
+            if (device.type != DeviceType::CPU) {
+                batch.x = batch.x->to(device);
+                batch.y = batch.y->to(device);
+            }
+        }
+    } else {
+        std::vector<std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>> items;
+        items.reserve(batch_len);
+        for (size_t idx : batch_indices) {
+            items.push_back(dataset->get(idx));
+        }
+        if (collate_fn_) {
+            auto pr = collate_fn_(items);
+            batch.x = pr.first;
+            batch.y = pr.second;
+        } else {
+            std::vector<std::shared_ptr<Tensor>> xs;
+            std::vector<std::shared_ptr<Tensor>> ys;
+            xs.reserve(batch_len);
+            ys.reserve(batch_len);
+            for (auto& it : items) {
+                xs.push_back(Ops::unsqueeze(it.first, 0));
+                ys.push_back(Ops::unsqueeze(it.second, 0));
+            }
+            batch.x = Ops::cat(xs, 0);
+            batch.y = Ops::squeeze(Ops::cat(ys, 0), 1);
+        }
+        if (device.type != DeviceType::CPU) {
+            batch.x = batch.x->to(device);
+            batch.y = batch.y->to(device);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    if (gen == generation_id && !worker_stop.load()) {
+        out_buffer_[batch_no] = std::move(batch);
+    }
+    cv_cond.notify_all();
 }
 
 void DataLoader::build_epoch_cache() {
     auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
-    if (tensor_dataset && device.type != DeviceType::CPU) {
+    if (tensor_dataset && device.type != DeviceType::CPU && !collate_fn_) {
         size_t n = indices.size();
         auto x_tensor = tensor_dataset->x;
         auto y_tensor = tensor_dataset->y;
 
         int64_t D = 1;
-        for (size_t d = 1; d < x_tensor->shape.size(); ++d) {
-            D *= x_tensor->shape[d];
-        }
+        for (size_t d = 1; d < x_tensor->shape.size(); ++d) D *= x_tensor->shape[d];
         int64_t Dy = 1;
-        for (size_t d = 1; d < y_tensor->shape.size(); ++d) {
-            Dy *= y_tensor->shape[d];
-        }
+        for (size_t d = 1; d < y_tensor->shape.size(); ++d) Dy *= y_tensor->shape[d];
 
         std::vector<int64_t> epoch_x_shape = x_tensor->shape;
-        epoch_x_shape[0] = n;
+        epoch_x_shape[0] = (int64_t)n;
         std::vector<int64_t> epoch_y_shape = y_tensor->shape;
-        epoch_y_shape[0] = n;
+        epoch_y_shape[0] = (int64_t)n;
 
         auto epoch_x_cpu = Tensor::create(epoch_x_shape, Device(DeviceType::CPU, 0), false, x_tensor->dtype);
         auto epoch_y_cpu = Tensor::create(epoch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
@@ -104,153 +312,6 @@ void DataLoader::build_epoch_cache() {
     }
 }
 
-void DataLoader::reset() {
-    std::unique_lock<std::mutex> lock(queue_mutex);
-    current_index = 0;
-    worker_index = 0;
-    epoch_id++;
-    generation_id++;
-    if (shuffle) {
-        std::random_device rd;
-        std::mt19937 g(rd());
-        std::shuffle(indices.begin(), indices.end(), g);
-    }
-
-    build_epoch_cache();
-
-    while (!prefetch_queue.empty()) {
-        prefetch_queue.pop();
-    }
-    cv_cond.notify_all();
-}
-
-bool DataLoader::next(std::shared_ptr<Tensor>& batch_x, std::shared_ptr<Tensor>& batch_y) {
-    std::unique_lock<std::mutex> lock(queue_mutex);
-    cv_cond.wait(lock, [this]() {
-        return !prefetch_queue.empty() || current_index >= indices.size();
-    });
-
-    if (prefetch_queue.empty() && current_index >= indices.size()) {
-        return false;
-    }
-
-    auto batch = prefetch_queue.front();
-    prefetch_queue.pop();
-    cv_cond.notify_all();
-
-    batch_x = batch.x;
-    batch_y = batch.y;
-    current_index += static_cast<size_t>(batch.x->shape[0]);
-    return true;
-}
-
-void DataLoader::worker_loop() {
-    while (!worker_stop) {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        cv_cond.wait(lock, [this]() {
-            return worker_stop || (prefetch_queue.size() < prefetch_limit && worker_index < indices.size());
-        });
-
-        if (worker_stop) {
-            break;
-        }
-
-        size_t start = worker_index;
-        size_t end = std::min(start + batch_size, indices.size());
-        worker_index = end;
-        size_t batch_generation = generation_id;
-
-        std::vector<size_t> batch_indices(end - start);
-        std::copy(indices.begin() + start, indices.begin() + end, batch_indices.begin());
-        
-        auto local_x_gpu = epoch_x_gpu;
-        auto local_y_gpu = epoch_y_gpu;
-
-        lock.unlock();
-
-        PrefetchBatch batch;
-        auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
-        if (tensor_dataset) {
-            size_t batch_len = end - start;
-            auto x_tensor = tensor_dataset->x;
-            auto y_tensor = tensor_dataset->y;
-
-            int64_t D = 1;
-            for (size_t d = 1; d < x_tensor->shape.size(); ++d) {
-                D *= x_tensor->shape[d];
-            }
-            int64_t Dy = 1;
-            for (size_t d = 1; d < y_tensor->shape.size(); ++d) {
-                Dy *= y_tensor->shape[d];
-            }
-            
-            std::vector<int64_t> batch_x_shape = x_tensor->shape;
-            batch_x_shape[0] = batch_len;
-            std::vector<int64_t> batch_y_shape = y_tensor->shape;
-            batch_y_shape[0] = batch_len;
-
-            if (device.type != DeviceType::CPU) {
-                batch.x = std::make_shared<Tensor>(
-                    local_x_gpu->storage, 
-                    batch_x_shape, 
-                    default_strides(batch_x_shape), 
-                    local_x_gpu->offset + start * D, 
-                    device, 
-                    false
-                );
-                batch.y = std::make_shared<Tensor>(
-                    local_y_gpu->storage, 
-                    batch_y_shape, 
-                    default_strides(batch_y_shape), 
-                    local_y_gpu->offset + start * Dy, 
-                    device, 
-                    false
-                );
-            } else {
-                auto batch_x_cpu = Tensor::create(batch_x_shape, Device(DeviceType::CPU, 0), false, x_tensor->dtype);
-                auto batch_y_cpu = Tensor::create(batch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
-
-                size_t x_elem_sz = x_tensor->storage->element_size();
-                size_t y_elem_sz = y_tensor->storage->element_size();
-                char* bx_ptr = (char*)batch_x_cpu->data_ptr();
-                char* by_ptr = (char*)batch_y_cpu->data_ptr();
-                char* x_ptr = (char*)x_tensor->data_ptr();
-                char* y_ptr = (char*)y_tensor->data_ptr();
-
-                for (size_t i = 0; i < batch_len; ++i) {
-                    size_t idx = batch_indices[i];
-                    std::memcpy(bx_ptr + i * D * x_elem_sz, x_ptr + idx * D * x_elem_sz, D * x_elem_sz);
-                    std::memcpy(by_ptr + i * Dy * y_elem_sz, y_ptr + idx * Dy * y_elem_sz, Dy * y_elem_sz);
-                }
-                batch.x = batch_x_cpu;
-                batch.y = batch_y_cpu;
-            }
-        } else {
-            std::vector<std::shared_ptr<Tensor>> xs;
-            std::vector<std::shared_ptr<Tensor>> ys;
-            for (size_t i = start; i < end; ++i) {
-                auto pair = dataset->get(batch_indices[i - start]);
-                xs.push_back(Ops::unsqueeze(pair.first, 0));
-                ys.push_back(Ops::unsqueeze(pair.second, 0));
-            }
-
-            batch.x = Ops::cat(xs, 0);
-            batch.y = Ops::squeeze(Ops::cat(ys, 0), 1);
-
-            if (device.type != DeviceType::CPU) {
-                batch.x = batch.x->to(device);
-                batch.y = batch.y->to(device);
-            }
-        }
-
-        lock.lock();
-        if (batch_generation == generation_id) {
-            prefetch_queue.push(batch);
-            cv_cond.notify_all();
-        }
-    }
-}
-
 void DataLoader::save_state(const std::string& filepath) {
     std::lock_guard<std::mutex> lock(queue_mutex);
     std::ofstream out(filepath, std::ios::binary);
@@ -268,9 +329,9 @@ void DataLoader::save_state(const std::string& filepath) {
     out.write(reinterpret_cast<const char*>(&cur_idx), sizeof(cur_idx));
     running_crc = calculate_crc32(&cur_idx, sizeof(cur_idx), running_crc);
 
-    uint64_t wrk_idx = static_cast<uint64_t>(worker_index);
-    out.write(reinterpret_cast<const char*>(&wrk_idx), sizeof(wrk_idx));
-    running_crc = calculate_crc32(&wrk_idx, sizeof(wrk_idx), running_crc);
+    uint64_t head = static_cast<uint64_t>(out_head_);
+    out.write(reinterpret_cast<const char*>(&head), sizeof(head));
+    running_crc = calculate_crc32(&head, sizeof(head), running_crc);
 
     uint64_t ep_id = static_cast<uint64_t>(epoch_id);
     out.write(reinterpret_cast<const char*>(&ep_id), sizeof(ep_id));
@@ -319,9 +380,9 @@ void DataLoader::load_state(const std::string& filepath) {
     in.read(reinterpret_cast<char*>(&cur_idx), sizeof(cur_idx));
     running_crc = calculate_crc32(&cur_idx, sizeof(cur_idx), running_crc);
 
-    uint64_t wrk_idx;
-    in.read(reinterpret_cast<char*>(&wrk_idx), sizeof(wrk_idx));
-    running_crc = calculate_crc32(&wrk_idx, sizeof(wrk_idx), running_crc);
+    uint64_t head;
+    in.read(reinterpret_cast<char*>(&head), sizeof(head));
+    running_crc = calculate_crc32(&head, sizeof(head), running_crc);
 
     uint64_t ep_id;
     in.read(reinterpret_cast<char*>(&ep_id), sizeof(ep_id));
@@ -354,20 +415,20 @@ void DataLoader::load_state(const std::string& filepath) {
         throw std::runtime_error("[litetorch Error] Dataloader state file is corrupted (CRC32 checksum mismatch)");
     }
 
-    current_index = static_cast<size_t>(cur_idx);
-    epoch_id = static_cast<size_t>(ep_id);
-    generation_id++;
-    shuffle = (shfl != 0);
     if (loaded_indices.size() != dataset->size()) {
         throw std::runtime_error("[litetorch Error] Dataloader state indices size mismatch with dataset");
     }
     indices = std::move(loaded_indices);
+    num_batches_ = compute_num_batches();
+    shuffle = (shfl != 0);
+    epoch_id = static_cast<size_t>(ep_id);
+    generation_id++;
+    out_head_ = std::min(static_cast<size_t>(head), num_batches_);
+    next_job_ = out_head_;
+    in_flight_ = 0;
+    out_buffer_.clear();
+    current_index = static_cast<size_t>(cur_idx);
     build_epoch_cache();
-
-    while (!prefetch_queue.empty()) {
-        prefetch_queue.pop();
-    }
-    worker_index = current_index;
     cv_cond.notify_all();
 }
 
