@@ -106,7 +106,8 @@ std::shared_ptr<Tensor> ring_attention(
     std::shared_ptr<Tensor> q,
     std::shared_ptr<Tensor> k,
     std::shared_ptr<Tensor> v,
-    std::shared_ptr<distributed::ProcessGroup> pg
+    std::shared_ptr<distributed::ProcessGroup> pg,
+    bool causal = false
 );
 std::shared_ptr<Tensor> flash_decoding(
     std::shared_ptr<Tensor> q,
