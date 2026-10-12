@@ -272,10 +272,11 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
 #ifndef __HIP_PLATFORM_AMD__
 
 struct LtMatmulKey {
+    int dev;
     int64_t M, N, K, lda, ldb;
     bool trans_a, trans_b, tf32, has_bias;
     bool operator==(const LtMatmulKey& o) const {
-        return M == o.M && N == o.N && K == o.K && lda == o.lda && ldb == o.ldb &&
+        return dev == o.dev && M == o.M && N == o.N && K == o.K && lda == o.lda && ldb == o.ldb &&
                trans_a == o.trans_a && trans_b == o.trans_b && tf32 == o.tf32 && has_bias == o.has_bias;
     }
 };
@@ -284,6 +285,7 @@ struct LtMatmulKeyHash {
     size_t operator()(const LtMatmulKey& k) const {
         size_t h = 1469598103934665603ULL;
         auto mix = [&](int64_t v) { h ^= (size_t)v; h *= 1099511628211ULL; };
+        mix(k.dev);
         mix(k.M); mix(k.N); mix(k.K); mix(k.lda); mix(k.ldb);
         mix(k.trans_a ? 1 : 0); mix(k.trans_b ? 1 : 0); mix(k.tf32 ? 1 : 0); mix(k.has_bias ? 1 : 0);
         return h;
@@ -419,7 +421,7 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
     const float* b_ptr = (const float*)B + b_off;
     float* c_ptr = (float*)C + c_off;
     bool tf32 = gpu_is_tf32_enabled();
-    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, false};
+    LtMatmulKey key{current_device(), M, N, K, lda, ldb, trans_a, trans_b, tf32, false};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
     LtPlan plan{};
     bool have_plan = false;
@@ -497,7 +499,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     const float* bias_ptr = (const float*)BIAS + bias_off;
     float* c_ptr = (float*)C + c_off;
     bool tf32 = gpu_is_tf32_enabled();
-    LtMatmulKey key{M, N, K, lda, ldb, trans_a, trans_b, tf32, true};
+    LtMatmulKey key{current_device(), M, N, K, lda, ldb, trans_a, trans_b, tf32, true};
     cublasLtHandle_t lt_handle = get_cublaslt_handle();
     LtPlan plan{};
     bool have_plan = false;
@@ -531,7 +533,8 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
                     built = true;
                 }
             }
-            if (built && matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, a_ptr, b_ptr, c_ptr, key, &p.algo)) {
+            if (built && cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)) == CUBLAS_STATUS_SUCCESS &&
+                matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, a_ptr, b_ptr, c_ptr, key, &p.algo)) {
                 p.has_algo = true;
             }
             if (!p.has_algo) {
@@ -552,6 +555,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
         have_plan = plan.has_algo;
     }
     if (have_plan) {
+        std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
         LT_CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(plan.desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias_ptr, sizeof(bias_ptr)));
         void* ws = lt_workspace();
         float alpha = 1.0f, beta = 0.0f;

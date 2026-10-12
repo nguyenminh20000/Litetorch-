@@ -54,6 +54,7 @@ constexpr unsigned int kHostAllocPortable = 0x01;
 
 CachingAllocator::CachingAllocator()
     : max_cached_cpu_bytes_(128 * 1024 * 1024),
+      max_cached_gpu_bytes_(512 * 1024 * 1024),
       cached_cpu_bytes_(0),
       cached_gpu_bytes_(0) {}
 
@@ -90,8 +91,23 @@ void CachingAllocator::set_max_cpu_cache_size(size_t bytes) {
     }
 }
 
-size_t CachingAllocator::get_cached_cpu_bytes() const {
+void CachingAllocator::set_max_gpu_cache_size(size_t bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
+    max_cached_gpu_bytes_ = bytes;
+    auto backend = BackendDispatcher::get().get_backend();
+    bool can_free = backend && backend->is_available();
+    while (cached_gpu_bytes_ > max_cached_gpu_bytes_ && !free_gpu_blocks_.empty()) {
+        auto it = free_gpu_blocks_.begin();
+        size_t key_size = it->first.second;
+        if (can_free) {
+            for (void* p : it->second) backend->free(p);
+        }
+        cached_gpu_bytes_ -= key_size * it->second.size();
+        free_gpu_blocks_.erase(it);
+    }
+}
+
+size_t CachingAllocator::get_cached_cpu_bytes() const {    std::lock_guard<std::mutex> lock(mutex_);
     return cached_cpu_bytes_;
 }
 
@@ -203,7 +219,7 @@ void CachingAllocator::free_gpu(void* ptr) {
         size_t size = it->second.first;
         int dev = it->second.second;
         allocated_gpu_blocks_.erase(it);
-        if (cached_gpu_bytes_ + size <= 512 * 1024 * 1024) {
+        if (cached_gpu_bytes_ + size <= max_cached_gpu_bytes_) {
             free_gpu_blocks_[{dev, size}].push_back(ptr);
             cached_gpu_bytes_ += size;
         } else {

@@ -34,39 +34,43 @@ static inline void* get_scratch_storage(size_t required_bytes) {
     return sc.ptr;
 }
 
-extern "C" void gpu_sum_forward(void* A, int a_off, void* B, int b_off, int size) {
+extern "C" void gpu_sum_forward(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
     auto_set_device(A);
     if (size <= 0) return;
+    if (size > 2147483647LL) throw std::runtime_error("[litetorch Error] gpu_sum_forward: size exceeds INT_MAX");
     float* d_in = (float*)A + a_off;
     float* d_out = (float*)B + b_off;
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
 #ifndef __HIP_PLATFORM_AMD__
-    cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, size, dev_stream(current_device()));
+    cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, size, dev_stream(current_device()));
+    cudaError_t st = cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
+    if (st != cudaSuccess) throw std::runtime_error(std::string("[litetorch Error] cub::DeviceReduce::Sum failed: ") + cudaGetErrorString(st));
 #else
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, 0.0f, size, rocprim::plus<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, 0.0f, (int)size, rocprim::plus<float>(), dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, 0.0f, size, rocprim::plus<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, 0.0f, (int)size, rocprim::plus<float>(), dev_stream(current_device()));
 #endif
 }
 
-extern "C" void gpu_max_forward(void* A, int a_off, void* B, int b_off, int size) {
+extern "C" void gpu_max_forward(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
     auto_set_device(A);
     if (size <= 0) return;
+    if (size > 2147483647LL) throw std::runtime_error("[litetorch Error] gpu_max_forward: size exceeds INT_MAX");
     float* d_in = (float*)A + a_off;
     float* d_out = (float*)B + b_off;
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
 #ifndef __HIP_PLATFORM_AMD__
-    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, size, dev_stream(current_device()));
+    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, size, dev_stream(current_device()));
+    cudaError_t st = cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
+    if (st != cudaSuccess) throw std::runtime_error(std::string("[litetorch Error] cub::DeviceReduce::Max failed: ") + cudaGetErrorString(st));
 #else
     float initial_value = -1e38f;
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, size, rocprim::maximum<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, (int)size, rocprim::maximum<float>(), dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, size, rocprim::maximum<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, (int)size, rocprim::maximum<float>(), dev_stream(current_device()));
 #endif
 }

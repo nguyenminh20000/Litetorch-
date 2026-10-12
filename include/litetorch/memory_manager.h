@@ -8,6 +8,7 @@
 #include <list>
 #include <cstddef>
 #include <mutex>
+#include <atomic>
 
 namespace litetorch {
 
@@ -38,8 +39,8 @@ private:
     MemoryManager();
     ~MemoryManager() = default;
 
-    size_t gpu_limit_ = 512 * 1024 * 1024;
-    size_t gpu_used_ = 0;
+    std::atomic<size_t> gpu_limit_{512 * 1024 * 1024};
+    std::atomic<size_t> gpu_used_{0};
 
     std::list<StorageImpl*> lru_list_;
     std::unordered_set<StorageImpl*> active_gpu_storages_;

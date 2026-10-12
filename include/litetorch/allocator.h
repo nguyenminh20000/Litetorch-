@@ -21,6 +21,7 @@ public:
 
     void empty_cache();
     void set_max_cpu_cache_size(size_t bytes);
+    void set_max_gpu_cache_size(size_t bytes);
     size_t get_cached_cpu_bytes() const;
     size_t get_cached_gpu_bytes() const;
 
@@ -30,6 +31,7 @@ private:
 
     mutable std::mutex mutex_;
     size_t max_cached_cpu_bytes_;
+    size_t max_cached_gpu_bytes_;
     size_t cached_cpu_bytes_;
     std::multimap<size_t, void*> free_cpu_blocks_;
     std::map<void*, size_t> allocated_cpu_blocks_;
