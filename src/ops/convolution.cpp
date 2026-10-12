@@ -1120,11 +1120,24 @@ std::shared_ptr<Tensor> conv1d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
     }
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
-    auto in4 = input_c->view({N, C_in, L_in, 1});
+    int64_t Lp = L_in + 2 * padding;
+    std::shared_ptr<Tensor> padded = input_c;
+    if (padding > 0) {
+        auto zl = Tensor::zeros({N, C_in, padding}, input->device, false, DataType::FP32);
+        auto zr = Tensor::zeros({N, C_in, padding}, input->device, false, DataType::FP32);
+        padded = cat({zl, input_c, zr}, 2);
+    }
+    auto in4 = padded->view({N, C_in, Lp, 1});
     auto w4 = weight_c->view({C_out, C_in, K, 1});
-    auto out4 = conv2d(in4, w4, bias, stride, padding);
+    auto out4 = conv2d(in4, w4, bias, 1, 0);
+    int64_t L_full = Lp - K + 1;
     auto out4_c = out4->is_contiguous() ? out4 : out4->contiguous();
-    return out4_c->view({N, C_out, L_out});
+    auto out3 = out4_c->view({N, C_out, L_full});
+    if (stride == 1) return out3;
+    auto sub = narrow(out3, 2, 0, L_out * stride);
+    auto sub_c = sub->is_contiguous() ? sub : sub->contiguous();
+    auto sub4 = sub_c->view({N, C_out, L_out, stride});
+    return squeeze(narrow(sub4, 3, 0, 1), 3);
 }
 
 }

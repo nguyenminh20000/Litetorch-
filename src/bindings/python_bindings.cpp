@@ -1031,6 +1031,9 @@ PYBIND11_MODULE(litetorch, m) {
         }), py::arg("weight") = py::none(), py::arg("ignore_index") = -100, py::arg("reduction") = "mean", py::arg("label_smoothing") = 0.0f)
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::CrossEntropyLoss::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CrossEntropyLoss::forward))
+        .def("__call__", [](nn::CrossEntropyLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
         .def_readwrite("weight", &nn::CrossEntropyLoss::weight)
         .def_readwrite("ignore_index", &nn::CrossEntropyLoss::ignore_index)
         .def_readwrite("reduction", &nn::CrossEntropyLoss::reduction)
@@ -1119,6 +1122,9 @@ PYBIND11_MODULE(litetorch, m) {
         }), py::arg("weight") = py::none(), py::arg("ignore_index") = -100, py::arg("reduction") = "mean")
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::NLLLoss::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::NLLLoss::forward))
+        .def("__call__", [](nn::NLLLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
         .def_readwrite("weight", &nn::NLLLoss::weight)
         .def_readwrite("ignore_index", &nn::NLLLoss::ignore_index)
         .def_readwrite("reduction", &nn::NLLLoss::reduction);
@@ -1131,6 +1137,9 @@ PYBIND11_MODULE(litetorch, m) {
         }), py::arg("weight") = py::none(), py::arg("reduction") = "mean", py::arg("pos_weight") = py::none())
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::BCEWithLogitsLoss::forward))
         .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::BCEWithLogitsLoss::forward))
+        .def("__call__", [](nn::BCEWithLogitsLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+            return self.forward(input, target);
+        })
         .def_readwrite("weight", &nn::BCEWithLogitsLoss::weight)
         .def_readwrite("reduction", &nn::BCEWithLogitsLoss::reduction)
         .def_readwrite("pos_weight", &nn::BCEWithLogitsLoss::pos_weight);

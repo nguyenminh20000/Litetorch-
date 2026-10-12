@@ -136,7 +136,8 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> MultiHeadAttention::
     bool use_masks = (attn_mask != nullptr) || (key_padding_mask != nullptr);
     std::shared_ptr<Tensor> out_4d;
     std::shared_ptr<Tensor> attn_weights = nullptr;
-    if (qkv_proj && self_attn && dropout_p == 0.0 && !use_masks && !need_weights) {
+    if (qkv_proj && self_attn && dropout_p == 0.0 && !use_masks && !need_weights &&
+        query->device.type == DeviceType::GPU) {
         auto qkv = qkv_proj->forward(query);
         out_4d = Ops::flash_attention_qkv(ensure_contiguous(qkv), num_heads);
     } else {

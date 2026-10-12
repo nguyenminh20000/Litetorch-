@@ -293,7 +293,7 @@ class TestNLLLoss:
             m = nn.NLLLoss(weight=tv(w.tolist()), ignore_index=-100, reduction=reduction)
             out = to_np(m.forward(tv(logp.tolist()), tv(tgt.tolist())))
             ref = self.nll_ref(logp, tgt, w, -100, reduction)
-            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref), rtol=1e-5)
+            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref).ravel(), rtol=1e-5)
 
     def test_backward(self):
         N, C = 3, 4
@@ -366,7 +366,7 @@ class TestBCEWithLogitsLoss:
             m = nn.BCEWithLogitsLoss(reduction=reduction)
             out = to_np(m.forward(tv(x.tolist()), tv(y.tolist())))
             ref = self.bce_ref(x, y, None, reduction, None)
-            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref), rtol=1e-5)
+            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref).ravel(), rtol=1e-5)
 
     def test_backward(self):
         N, C = 2, 3
@@ -411,7 +411,7 @@ class TestCrossEntropyLabelSmoothing:
             m = nn.CrossEntropyLoss(reduction=reduction, label_smoothing=0.1)
             out = to_np(m.forward(tv(logits.tolist()), tv(tgt.tolist())))
             ref = self.ce_ref(logits, tgt, 0.1, reduction)
-            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref), rtol=1e-5)
+            np.testing.assert_allclose(out.ravel(), np.atleast_1d(ref).ravel(), rtol=1e-5)
 
     def test_ops_level(self):
         N, C = 3, 4
