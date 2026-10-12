@@ -208,7 +208,8 @@ const void* tensor_bytes(std::shared_ptr<Tensor> t, std::shared_ptr<Tensor>& hol
         t = holder;
     }
     t->storage->get_cpu_ptr();
-    return static_cast<const void*>(t->storage->cpu_data);
+    const char* base = static_cast<const char*>(static_cast<const void*>(t->storage->cpu_data));
+    return static_cast<const void*>(base + t->offset * t->storage->element_size());
 }
 
 }
@@ -241,7 +242,9 @@ void save_safetensors(const std::map<std::string, std::shared_ptr<Tensor>>& tens
     std::ofstream out(filepath, std::ios::binary);
     if (!out.is_open()) throw std::runtime_error("[litetorch Error] safetensors: cannot open file for writing: " + filepath);
     uint64_t hlen = header.size();
-    out.write(reinterpret_cast<const char*>(&hlen), 8);
+    unsigned char hlen_le[8];
+    for (int i = 0; i < 8; i++) hlen_le[i] = static_cast<unsigned char>((hlen >> (i * 8)) & 0xFF);
+    out.write(reinterpret_cast<const char*>(hlen_le), 8);
     out.write(header.data(), header.size());
     for (const auto& kv : ordered) {
         auto t = kv.second;
@@ -255,9 +258,11 @@ void save_safetensors(const std::map<std::string, std::shared_ptr<Tensor>>& tens
 std::map<std::string, std::shared_ptr<Tensor>> load_safetensors(const std::string& filepath) {
     std::ifstream in(filepath, std::ios::binary);
     if (!in.is_open()) throw std::runtime_error("[litetorch Error] safetensors: cannot open file for reading: " + filepath);
-    uint64_t hlen = 0;
-    in.read(reinterpret_cast<char*>(&hlen), 8);
+    unsigned char hlen_le[8];
+    in.read(reinterpret_cast<char*>(hlen_le), 8);
     if (!in) throw std::runtime_error("[litetorch Error] safetensors: failed to read header size");
+    uint64_t hlen = 0;
+    for (int i = 0; i < 8; i++) hlen |= (static_cast<uint64_t>(hlen_le[i]) << (i * 8));
     std::string header(hlen, '\0');
     in.read(&header[0], hlen);
     if (!in) throw std::runtime_error("[litetorch Error] safetensors: failed to read header");
@@ -370,27 +375,7 @@ void Module::load_pretrained(const std::string& path) {
         if (it == loaded.end()) throw std::runtime_error("[litetorch Error] load_pretrained: missing tensor " + key);
         auto src = it->second;
         if (src->shape != params[i]->shape) throw std::runtime_error("[litetorch Error] load_pretrained: shape mismatch for " + key);
-        auto dst = params[i];
-        if (!dst->is_contiguous()) dst = dst->contiguous();
-        src->storage->get_cpu_ptr();
-        dst->storage->get_cpu_ptr();
-        size_t nbytes = dst->numel() * dst->storage->element_size();
-        if (src->dtype == dst->dtype) {
-            std::memcpy(dst->storage->cpu_data, src->storage->cpu_data, nbytes);
-        } else if (src->dtype == DataType::FP32 && dst->dtype == DataType::FP16) {
-            float* s = static_cast<float*>(static_cast<void*>(src->storage->cpu_data));
-            uint16_t* d = static_cast<uint16_t*>(static_cast<void*>(dst->storage->cpu_data));
-            for (size_t j = 0; j < dst->numel(); j++) {
-                uint32_t bits;
-                std::memcpy(&bits, &s[j], 4);
-                d[j] = static_cast<uint16_t>((bits >> 16) & 0xFFFF);
-            }
-        } else {
-            throw std::runtime_error("[litetorch Error] load_pretrained: dtype conversion not supported for " + key);
-        }
-        if (dst->device.type == DeviceType::GPU) {
-            dst->storage->to(dst->device);
-        }
+        params[i]->copy_(src);
     }
 }
 
