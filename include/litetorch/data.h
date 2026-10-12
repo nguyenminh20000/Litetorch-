@@ -129,7 +129,7 @@ private:
 
     void worker_loop();
     void build_batch(size_t batch_no, size_t gen);
-    void build_batch_inner(size_t batch_no, const std::vector<size_t>& batch_indices);
+    void build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices);
     void build_epoch_cache();
     void refresh_indices();
     size_t compute_num_batches() const;

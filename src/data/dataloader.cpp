@@ -186,10 +186,10 @@ void DataLoader::build_batch(size_t batch_no, size_t gen) {
     size_t start = batch_no * batch_size;
     size_t end = std::min(start + batch_size, indices.size());
     std::vector<size_t> batch_indices(indices.begin() + start, indices.begin() + end);
-    build_batch_inner(batch_no, batch_indices);
+    build_batch_inner(batch_no, gen, batch_indices);
 }
 
-void DataLoader::build_batch_inner(size_t batch_no, const std::vector<size_t>& batch_indices) {
+void DataLoader::build_batch_inner(size_t batch_no, size_t gen, const std::vector<size_t>& batch_indices) {
     PrefetchBatch batch;
     size_t batch_len = batch_indices.size();
     auto tensor_dataset = std::dynamic_pointer_cast<TensorDataset>(dataset);
