@@ -157,6 +157,9 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
     size_t ndim_b = b->shape.size();
 
     if (ndim_a >= 3 && ndim_b >= 3) {
+        if (ndim_a != ndim_b) {
+            throw std::runtime_error("[litetorch Error] matmul rank mismatch: broadcasting batch dims not supported, a.ndim must equal b.ndim");
+        }
         for (size_t i = 0; i < ndim_a - 2; ++i) {
             if (a->shape[i] != b->shape[i]) {
                 throw std::runtime_error("[litetorch Error] Batch dimensions must match in high-dimensional matmul");
@@ -393,8 +396,8 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
     if (!bias || a->device.type != DeviceType::GPU || b->device.type != DeviceType::GPU) {
         auto out = matmul(a, b);
         if (bias) {
-            auto b_view = bias->view({1, bias->shape[0]});
-            out = Ops::add(out, b_view);
+            if (bias->device != out->device) bias = bias->to(out->device);
+            out = Ops::add(out, bias);
         }
         return out;
     }
@@ -405,8 +408,7 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
     if (bias->device != a->device) bias = bias->to(a->device);
     if (a->shape.size() != 2 || b->shape.size() != 2) {
         auto out = matmul(a, b);
-        auto b_view = bias->view({1, bias->shape[0]});
-        return Ops::add(out, b_view);
+        return Ops::add(out, bias);
     }
     if (a->shape[1] != b->shape[0] || bias->shape[0] != b->shape[1]) {
         throw std::runtime_error("[litetorch Error] Dimension mismatch in matmul_bias");
@@ -550,18 +552,20 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         }
     } else if (a_c->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
-        if (tpu && tpu->is_available()) {
+        // TPU kernels are FP32-only; non-FP32 dtypes fall through to the
+        // FP32-cast fallback below instead of corrupting memory.
+        if (tpu && tpu->is_available() && a_c->dtype == DataType::FP32 && b_c->dtype == DataType::FP32) {
             run_gpu = true;
             tpu->bmm(a_c->gpu_data(), a_c->offset, b_c->gpu_data(), b_c->offset, out->gpu_data(), out->offset, B, M, N, K);
         }
     }
     if (!run_gpu) {
-        if (a_c->dtype == DataType::FP16 || b_c->dtype == DataType::FP16) {
+        if (a_c->dtype != DataType::FP32 || b_c->dtype != DataType::FP32) {
             auto a_fp32 = a_c->cast(DataType::FP32);
             auto b_fp32 = b_c->cast(DataType::FP32);
             auto out_fp32 = bmm(a_fp32, b_fp32);
-            auto out_fp16 = out_fp32->cast(DataType::FP16);
-            out->copy_(out_fp16);
+            auto out_cast = out_fp32->cast(out->dtype);
+            out->copy_(out_cast);
         } else {
             float* A = a_c->data_ptr();
             float* B_ptr = b_c->data_ptr();
