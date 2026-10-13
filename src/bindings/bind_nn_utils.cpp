@@ -1,4 +1,5 @@
 #include "bindings_common.h"
+#include "litetorch/generate.h"
 
 void bind_nn_utils(py::module_& m) {
     auto nn_mod = m.attr("nn").cast<py::module_>();
@@ -9,6 +10,22 @@ void bind_nn_utils(py::module_& m) {
         utils_mod.def("weight_norm", &nn::utils::weight_norm, py::arg("v"), py::arg("g"), py::arg("dim") = 0);
         utils_mod.def("spectral_norm", &nn::utils::spectral_norm, py::arg("weight"), py::arg("n_power_iterations") = 1);
         // === end W3-T4 losses-misc ===
+
+        py::class_<nn::GenerateConfig>(nn_mod, "GenerateConfig")
+            .def(py::init<>())
+            .def_readwrite("max_new_tokens", &nn::GenerateConfig::max_new_tokens)
+            .def_readwrite("do_sample", &nn::GenerateConfig::do_sample)
+            .def_readwrite("temperature", &nn::GenerateConfig::temperature)
+            .def_readwrite("top_k", &nn::GenerateConfig::top_k)
+            .def_readwrite("top_p", &nn::GenerateConfig::top_p)
+            .def_readwrite("num_beams", &nn::GenerateConfig::num_beams)
+            .def_readwrite("repetition_penalty", &nn::GenerateConfig::repetition_penalty)
+            .def_readwrite("eos_token_id", &nn::GenerateConfig::eos_token_id)
+            .def_readwrite("stop_token_ids", &nn::GenerateConfig::stop_token_ids)
+            .def_readwrite("stop_sequences", &nn::GenerateConfig::stop_sequences)
+            .def_readwrite("seed", &nn::GenerateConfig::seed);
+        nn_mod.def("generate", &nn::generate, py::arg("model"), py::arg("prompt_tokens"),
+                   py::arg("config") = nn::GenerateConfig());
 
         py::class_<nn::GuidedDecoder>(nn_mod, "GuidedDecoder")
             .def(py::init<const std::vector<std::string>&>(), py::arg("vocabulary"))
