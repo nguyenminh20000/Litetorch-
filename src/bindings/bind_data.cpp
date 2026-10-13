@@ -1,5 +1,6 @@
 #include "bindings_common.h"
 #include "litetorch/async_checkpoint.h"
+#include "litetorch/trainer.h"
 
 void bind_data(py::module_& m) {
         auto data_mod = m.def_submodule("data", "LiteTorch Data Loading and Datasets");
@@ -183,4 +184,27 @@ void bind_data(py::module_& m) {
         m.def("arange", [](int64_t start, int64_t end, int64_t step, const Device& device, DataType dtype) {
             return Tensor::arange(start, end, step, device, dtype);
         }, py::arg("start"), py::arg("end"), py::arg("step") = 1, py::arg("device") = Device(DeviceType::CPU, 0), py::arg("dtype") = DataType::FP32);
+
+        // === Phase D4 (LT-ENG-047): Trainer ===
+        py::class_<trainer::TrainerConfig>(m, "TrainerConfig")
+            .def(py::init<>())
+            .def_readwrite("ckpt_dir", &trainer::TrainerConfig::ckpt_dir)
+            .def_readwrite("save_every_steps", &trainer::TrainerConfig::save_every_steps)
+            .def_readwrite("max_checkpoints", &trainer::TrainerConfig::max_checkpoints)
+            .def_readwrite("async_save", &trainer::TrainerConfig::async_save)
+            .def_readwrite("elastic", &trainer::TrainerConfig::elastic);
+
+        py::class_<trainer::Trainer, std::shared_ptr<trainer::Trainer>>(m, "Trainer")
+            .def(py::init<std::shared_ptr<nn::Module>, std::shared_ptr<optim::Optimizer>, trainer::TrainerConfig>(),
+                 py::arg("model"), py::arg("optimizer"), py::arg("config") = trainer::TrainerConfig())
+            .def("train_step", &trainer::Trainer::train_step)
+            .def("save_checkpoint", &trainer::Trainer::save_checkpoint, py::arg("step"))
+            .def("load_latest", &trainer::Trainer::load_latest)
+            .def("garbage_collect", &trainer::Trainer::garbage_collect)
+            .def("latest_step", &trainer::Trainer::latest_step)
+            .def("rank", &trainer::Trainer::rank)
+            .def("world_size", &trainer::Trainer::world_size)
+            .def("is_distributed", &trainer::Trainer::is_distributed)
+            .def("wait_pending_saves", &trainer::Trainer::wait_pending_saves);
+        // === end Phase D4 ===
 }
