@@ -135,6 +135,17 @@ std::shared_ptr<Tensor> w8a8_matmul(
     float x_scale,
     float w_scale
 );
+std::shared_ptr<Tensor> fp8_cast_scaled(std::shared_ptr<Tensor> x, float scale, DataType dtype = DataType::FP8_E4M3);
+std::shared_ptr<Tensor> fp8_uncast_scaled(std::shared_ptr<Tensor> x, float scale);
+std::shared_ptr<Tensor> fp8_matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b,
+                                    float a_scale, float b_scale, float out_scale,
+                                    DataType out_dtype = DataType::FP8_E4M3);
+std::shared_ptr<Tensor> int4_pack(std::shared_ptr<Tensor> x);
+std::shared_ptr<Tensor> int4_unpack(std::shared_ptr<Tensor> packed, int64_t numel);
+std::shared_ptr<Tensor> int4_weight_only_linear(std::shared_ptr<Tensor> x,
+                                                 std::shared_ptr<Tensor> packed_w,
+                                                 std::shared_ptr<Tensor> w_scale,
+                                                 std::shared_ptr<Tensor> bias = nullptr);
 // === W1-T4 ===
 std::shared_ptr<Tensor> conv1d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> avg_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride = -1, int padding = 0);

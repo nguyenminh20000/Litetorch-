@@ -145,6 +145,12 @@ void bind_ops(py::module_& m) {
         ops.def("paged_attention", &Ops::paged_attention);
         ops.def("scaled_matmul", &Ops::scaled_matmul, py::arg("a"), py::arg("b"), py::arg("a_scale"), py::arg("b_scale"), py::arg("bias") = nullptr, py::arg("out_dtype") = DataType::FP32);
         ops.def("w8a8_matmul", &Ops::w8a8_matmul, py::arg("x"), py::arg("w"), py::arg("x_scale"), py::arg("w_scale"));
+        ops.def("fp8_cast_scaled", &Ops::fp8_cast_scaled, py::arg("x"), py::arg("scale"), py::arg("dtype") = DataType::FP8_E4M3);
+        ops.def("fp8_uncast_scaled", &Ops::fp8_uncast_scaled, py::arg("x"), py::arg("scale"));
+        ops.def("fp8_matmul", &Ops::fp8_matmul, py::arg("a"), py::arg("b"), py::arg("a_scale"), py::arg("b_scale"), py::arg("out_scale"), py::arg("out_dtype") = DataType::FP8_E4M3);
+        ops.def("int4_pack", &Ops::int4_pack, py::arg("x"));
+        ops.def("int4_unpack", &Ops::int4_unpack, py::arg("packed"), py::arg("numel"));
+        ops.def("int4_weight_only_linear", &Ops::int4_weight_only_linear, py::arg("x"), py::arg("packed_w"), py::arg("w_scale"), py::arg("bias") = nullptr);
         ops.def("moe_gate", [](std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> gate_weight, int top_k) {
             std::shared_ptr<Tensor> indices_out;
             auto probs = Ops::moe_gate(input, gate_weight, top_k, indices_out);

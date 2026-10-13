@@ -82,6 +82,7 @@ static inline int launch_device(void** args, int arg_count) {
 #include "nn/softmax_kernels.cu"
 #include "nn/norm_kernels.cu"
 #include "nn/misc_kernels.cu"
+#include "nn/fp8_kernels.cu"
 #include "nn/flash_attention.cu"
 
 GPU_API(Stream_t) g_compute_stream = nullptr;

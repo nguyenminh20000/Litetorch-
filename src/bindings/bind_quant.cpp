@@ -24,4 +24,26 @@ void bind_quant(py::module_& m) {
             .def_readwrite("act_zero_point", &quantization::QATLinear::act_zero_point)
             .def_readwrite("bits", &quantization::QATLinear::bits)
             .def_readwrite("qat_enabled", &quantization::QATLinear::qat_enabled);
+
+        py::class_<quantization::PTQConfig>(quant_mod, "PTQConfig")
+            .def(py::init<>())
+            .def_readwrite("bits", &quantization::PTQConfig::bits)
+            .def_readwrite("per_channel", &quantization::PTQConfig::per_channel)
+            .def_readwrite("symmetric", &quantization::PTQConfig::symmetric);
+
+        py::class_<quantization::PreparedModel, std::shared_ptr<quantization::PreparedModel>>(quant_mod, "PreparedModel")
+            .def("calibrate", &quantization::PreparedModel::calibrate, py::arg("data_fn"), py::arg("num_batches") = 10)
+            .def_readwrite("model", &quantization::PreparedModel::model);
+
+        quant_mod.def("prepare", &quantization::prepare, py::arg("model"), py::arg("config") = quantization::PTQConfig());
+        quant_mod.def("convert", &quantization::convert, py::arg("prepared"));
+        quant_mod.def("quantize_dynamic_linear", [](std::shared_ptr<nn::Linear> l) {
+            return quantization::quantize_dynamic(l);
+        }, py::arg("linear"));
+        quant_mod.def("quantize_dynamic_lstm", [](std::shared_ptr<nn::LSTM> l) {
+            return quantization::quantize_dynamic(l);
+        }, py::arg("lstm"));
+        quant_mod.def("quantize_dynamic_gru", [](std::shared_ptr<nn::GRU> l) {
+            return quantization::quantize_dynamic(l);
+        }, py::arg("gru"));
 }

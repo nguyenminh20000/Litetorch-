@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <unordered_map>
 #include <string>
+#include <functional>
+#include <memory>
 
 namespace litetorch {
 namespace quantization {
@@ -140,6 +142,30 @@ public:
         if (bias) bias = bias->to(dev);
     }
 };
+
+struct PTQConfig {
+    int bits = 8;
+    bool per_channel = true;
+    bool symmetric = true;
+};
+
+class PreparedModel {
+public:
+    std::shared_ptr<nn::Module> model;
+    Calibrator calibrator;
+    PTQConfig config;
+
+    PreparedModel(std::shared_ptr<nn::Module> m, PTQConfig cfg) : model(m), config(cfg) {}
+    void calibrate(std::function<std::shared_ptr<Tensor>()> data_fn, int num_batches = 10);
+};
+
+std::shared_ptr<PreparedModel> prepare(std::shared_ptr<nn::Module> model, PTQConfig config = PTQConfig());
+std::shared_ptr<nn::Module> convert(std::shared_ptr<PreparedModel> prepared);
+
+class DynamicQuantLinear;
+std::shared_ptr<nn::Module> quantize_dynamic(std::shared_ptr<nn::Linear> linear);
+std::shared_ptr<nn::Module> quantize_dynamic(std::shared_ptr<nn::LSTM> lstm);
+std::shared_ptr<nn::Module> quantize_dynamic(std::shared_ptr<nn::GRU> gru);
 
 }
 }
