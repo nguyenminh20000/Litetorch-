@@ -23,13 +23,14 @@ std::shared_ptr<Tensor> Ops::bilinear(std::shared_ptr<Tensor> input1,
     if (x1shape.back() != in1_features || x2shape.back() != in2_features) {
         throw std::invalid_argument("[litetorch Error] bilinear feature mismatch");
     }
-    auto x1e = Ops::unsqueeze(input1, -1);
-    auto x2e = Ops::unsqueeze(Ops::unsqueeze(input2, 1), -1);
-    auto w = weight;
-    auto x1w = Ops::matmul(x1e, Ops::permute(w, {0, 2, 1}));
-    auto out = Ops::matmul(x1w, x2e);
-    out = Ops::squeeze(out, -1);
-    out = Ops::squeeze(out, -1);
+    auto x1e = Ops::expand(Ops::unsqueeze(Ops::unsqueeze(input1, 1), 1),
+        {x1shape[0], out_features, 1, in1_features});
+    auto we = Ops::expand(Ops::unsqueeze(weight, 0),
+        {x1shape[0], out_features, in1_features, in2_features});
+    auto t1 = Ops::squeeze(Ops::matmul(x1e, we), 2);
+    auto x2e = Ops::expand(Ops::unsqueeze(Ops::unsqueeze(input2, -1), 1),
+        {x1shape[0], out_features, in2_features, 1});
+    auto out = Ops::squeeze(Ops::squeeze(Ops::matmul(Ops::unsqueeze(t1, 2), x2e), -1), -1);
     if (bias) {
         out = Ops::add(out, bias);
     }

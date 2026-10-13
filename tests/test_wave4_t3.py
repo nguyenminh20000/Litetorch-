@@ -21,7 +21,14 @@ def vec(t):
     return t.to(CPU).to_vector()
 
 def t(data, shape, grad=False):
-    return lt.Tensor.from_vector(data, shape, CPU, grad)
+    flat = []
+    def rec(d):
+        if isinstance(d, (list, tuple)):
+            for v in d: rec(v)
+        else:
+            flat.append(d)
+    rec(data)
+    return lt.Tensor.from_vector(flat, shape, CPU, grad)
 
 def randt(shape, seed):
     random.seed(seed)

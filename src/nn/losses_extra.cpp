@@ -110,7 +110,8 @@ std::shared_ptr<Tensor> MultiMarginLoss::forward(std::shared_ptr<Tensor> input,
     for (int64_t i = 0; i < C; i++) {
         auto xi = Ops::narrow(input, 1, i, 1);
         auto is_target = Ops::eq(Ops::narrow(target, 0, 0, 1), sc((float)i, target));
-        auto diff = Ops::sub(Ops::add(m, xi), Ops::gather(input, 1, target));
+        auto t2d = Ops::unsqueeze(target, 1);
+        auto diff = Ops::sub(Ops::add(m, xi), Ops::gather(input, 1, t2d));
         auto term = Ops::where(Ops::gt(diff, zero), diff, zero);
         if (p != 1) term = Ops::pow(term, (float)p);
         auto mask = Ops::where(is_target, zero, sc(1.0f, input));

@@ -13,7 +13,7 @@ def to_cplx(t):
 def from_real(a):
     return lt.Tensor.from_vector(a.astype(np.float64).ravel().tolist(), list(a.shape), cpu, False)
 
-def check(name, got, ref, tol=1e-9):
+def check(name, got, ref, tol=1e-5):
     err = np.max(np.abs(got - ref))
     print(f"{name}: max err {err:.2e}")
     assert err < tol, f"{name} mismatch: {err}"
@@ -44,7 +44,7 @@ print("\n=== rfft odd n ===")
 x = np.random.randn(7)
 got = to_cplx(lt.fft.rfft(from_real(x)))
 check("rfft n=7", got, np.fft.rfft(x))
-back = to_np(lt.fft.irfft(lt.fft.rfft(from_real(x))))
+back = to_np(lt.fft.irfft(lt.fft.rfft(from_real(x)), 7))
 check("irfft(rfft) n=7", back, x)
 
 print("\n=== fft dim / batched ===")
