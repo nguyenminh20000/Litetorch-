@@ -2,7 +2,9 @@
 #include "litetorch/dist_checkpoint.h"
 #include "litetorch/elastic.h"
 #include "litetorch/flat_param.h"
+#include "litetorch/fsdp_tp.h"
 #include "litetorch/fsdp_wrapper.h"
+#include "litetorch/parallel_3d.h"
 #include "litetorch/rendezvous.h"
 
 void bind_distributed(py::module_& m) {
@@ -41,9 +43,40 @@ void bind_distributed(py::module_& m) {
         py::class_<distributed::DeviceMesh, std::shared_ptr<distributed::DeviceMesh>>(dist_mod, "DeviceMesh")
             .def(py::init<const std::vector<int>&, const std::string&>(), py::arg("shape"), py::arg("dim_names"))
             .def("get_rank", &distributed::DeviceMesh::get_rank, py::arg("coords"))
+            .def("get_coords", &distributed::DeviceMesh::get_coords, py::arg("rank"))
+            .def("get_dim_group", &distributed::DeviceMesh::get_dim_group, py::arg("dim"), py::arg("coords"))
+            .def("dim_size", &distributed::DeviceMesh::dim_size, py::arg("dim"))
+            .def("num_dims", &distributed::DeviceMesh::num_dims)
+            .def("numel", &distributed::DeviceMesh::numel)
             .def_readwrite("mesh_shape", &distributed::DeviceMesh::mesh_shape)
             .def_readwrite("mesh_dim_names", &distributed::DeviceMesh::mesh_dim_names)
             .def_readwrite("mesh_topology", &distributed::DeviceMesh::mesh_topology);
+
+        // === C5 (LT-ENG-046): 3D parallelism integration ===
+        py::class_<distributed::Parallel3D, std::unique_ptr<distributed::Parallel3D, py::nodelete>>(dist_mod, "Parallel3D")
+            .def_static("get", &distributed::Parallel3D::get, py::return_value_policy::reference)
+            .def("init", &distributed::Parallel3D::init, py::arg("rank"), py::arg("world_size"),
+                 py::arg("tp_size"), py::arg("pp_size"))
+            .def("reset", &distributed::Parallel3D::reset)
+            .def("is_initialized", &distributed::Parallel3D::is_initialized)
+            .def("tp_size", &distributed::Parallel3D::tp_size)
+            .def("pp_size", &distributed::Parallel3D::pp_size)
+            .def("dp_size", &distributed::Parallel3D::dp_size)
+            .def("global_rank", &distributed::Parallel3D::global_rank)
+            .def("world_size", &distributed::Parallel3D::world_size)
+            .def("tp_rank", &distributed::Parallel3D::tp_rank)
+            .def("pp_rank", &distributed::Parallel3D::pp_rank)
+            .def("dp_rank", &distributed::Parallel3D::dp_rank)
+            .def("coords", &distributed::Parallel3D::coords)
+            .def("tp_group", &distributed::Parallel3D::tp_group)
+            .def("pp_group", &distributed::Parallel3D::pp_group)
+            .def("dp_group", &distributed::Parallel3D::dp_group)
+            .def("wire_nccl", &distributed::Parallel3D::wire_nccl);
+
+        dist_mod.def("init_3d_parallel", &distributed::init_3d_parallel,
+                     py::arg("tp_size"), py::arg("pp_size") = 1);
+        dist_mod.def("shutdown_3d_parallel", &distributed::shutdown_3d_parallel);
+        // === end C5 ===
 
         py::enum_<distributed::PlacementType>(dist_mod, "PlacementType")
             .value("SHARD", distributed::PlacementType::SHARD)
@@ -83,6 +116,16 @@ void bind_distributed(py::module_& m) {
             .def("run_1f1b_with_backward", &distributed::PipelineParallelModule::run_1f1b_with_backward, py::arg("microbatches"), py::arg("loss_fn"))
             .def("parameters", &distributed::PipelineParallelModule::parameters)
             .def("to", &distributed::PipelineParallelModule::to, py::arg("device"));
+
+        py::class_<distributed::InterleavedPipelineModule, nn::Module, std::shared_ptr<distributed::InterleavedPipelineModule>>(dist_mod, "InterleavedPipelineModule")
+            .def(py::init<std::vector<std::shared_ptr<nn::Module>>>(), py::arg("chunks"))
+            .def("forward", &distributed::InterleavedPipelineModule::forward, py::arg("input"))
+            .def("schedule_interleaved_1f1b", &distributed::InterleavedPipelineModule::schedule_interleaved_1f1b, py::arg("microbatches"))
+            .def("train_step_interleaved_1f1b", &distributed::InterleavedPipelineModule::train_step_interleaved_1f1b, py::arg("microbatches"), py::arg("loss_fn") = nullptr)
+            .def("parameters", &distributed::InterleavedPipelineModule::parameters)
+            .def("to", &distributed::InterleavedPipelineModule::to, py::arg("device"))
+            .def("sync", &distributed::InterleavedPipelineModule::sync)
+            .def("num_chunks", &distributed::InterleavedPipelineModule::num_chunks);
 
         py::enum_<distributed::ReduceOp>(dist_mod, "ReduceOp")
             .value("SUM", distributed::ReduceOp::SUM)
@@ -210,6 +253,19 @@ void bind_distributed(py::module_& m) {
         dist_mod.def("fsdp_fully_shard", &distributed::FSDP::fully_shard, py::arg("module"));
         dist_mod.def("fsdp_set_prefetch_limit", &distributed::FSDP::set_prefetch_limit, py::arg("n"));
         // === end FSDP-B ===
+
+        // === Phase B4 (LT-ENG-044): FSDP-TP composition + state_dict ===
+        py::class_<distributed::FSDPTP>(dist_mod, "FSDPTP")
+            .def_static("init", &distributed::FSDPTP::init, py::arg("tp_size"), py::arg("dp_size"))
+            .def_static("is_initialized", &distributed::FSDPTP::is_initialized)
+            .def_static("tp_size", &distributed::FSDPTP::tp_size)
+            .def_static("dp_size", &distributed::FSDPTP::dp_size)
+            .def_static("tp_rank", &distributed::FSDPTP::tp_rank)
+            .def_static("dp_rank", &distributed::FSDPTP::dp_rank)
+            .def_static("fully_shard_tp", &distributed::FSDPTP::fully_shard_tp, py::arg("module"))
+            .def_static("state_dict", &distributed::FSDPTP::state_dict, py::arg("module"))
+            .def_static("load_state_dict", &distributed::FSDPTP::load_state_dict, py::arg("module"), py::arg("sd"));
+        // === end B4 ===
 
         // === Phase D3 (LT-ENG-038): elastic restart ===
         py::class_<distributed::rendezvous::RendezvousStore,
