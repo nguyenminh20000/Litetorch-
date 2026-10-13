@@ -48,6 +48,18 @@ LiteTorch tích hợp toàn bộ sức mạnh huấn luyện cốt lõi của **
 - **Hỗ trợ Autograd toàn diện cho JIT**: Tự động sinh đạo hàm giải tích (`Tracer::derivative`) và lan truyền gradient ngược qua `JITNode` trong cả quá trình Train và Inference.
 - **Hợp nhất đa toán tử (Multi-Op Fusion)**: Cung cấp sẵn các nhân gộp bộ nhớ (`lt.jit.fused_bias_relu`, `lt.jit.fused_bias_gelu`, `lt.jit.fused_residual_add`, `lt.jit.fused_residual_gelu`) giúp tối ưu triệt để băng thông VRAM.
 
+### 6. Stack Suy Luận (Inference): Lượng Tử Hóa, Phục Vụ & Hệ Sinh Thái
+- **Tính toán FP8 (I1)**: Ép kiểu E4M3/E5M2 với làm tròn tới chẵn gần nhất (`ops.fp8_cast_scaled`, `ops.fp8_uncast_scaled`) và nhân ma trận FP8 có scale (`ops.fp8_matmul`); nhân CUDA trong `src/backend/gpu_native/nn/fp8_kernels.cu`.
+- **INT4 Weight-Only (I1)**: Đóng/gỡ gói 2 nibble mỗi byte (`ops.int4_pack`, `ops.int4_unpack`) và GEMM giải lượng tử trực tiếp (`ops.int4_weight_only_linear`, group size tùy chỉnh).
+- **Lượng Tử Hóa Sau Huấn Luyện — PTQ (I1)**: `lt.quantization.prepare(model)` → `calibrate(data_fn)` → `lt.quantization.convert(prepared)` — pipeline PTQ INT8 tĩnh đầy đủ với thống kê activation/weight từ `Calibrator`.
+- **Lượng Tử Hóa Động (I1)**: `lt.quantization.quantize_dynamic_linear/lstm/gru` — trọng số INT8 tĩnh với activation lượng tử động theo từng token.
+- **QAT (Huấn luyện có nhận thức lượng tử)**: Wrapper `QATLinear` với đạo hàm autograd của `fake_quantize`.
+- **Hiệu Năng Suy Luận (I2)**: Chụp/phát lại CUDA graph (`lt.inference.capture_cuda_graph`) để loại bỏ độ trễ phát lệnh; gộp Conv+BN (`lt.inference.fold_conv_bn`, `lt.inference.fuse_conv_bn`); phát hiện hợp nhất LayerNorm.
+- **Vòng Lặp Sinh Token (I3)**: `lt.nn.generate(model, prompt_tokens, config)` với `GenerateConfig` (greedy, temperature, top-k, top-p, beam search, repetition penalty, chuỗi/token dừng, seed).
+- **lt-serve (I3)**: Máy chủ HTTP tương thích OpenAI (`tools/lt-serve`) — `/v1/completions` và `/v1/chat/completions` với streaming SSE, dựa trên continuous batching + paged attention.
+- **Xuất ONNX (I4)**: Trình dựng đồ thị `lt.onnx` (bảng 55 toán tử, trục động, thuộc tính có kiểu) và `export_onnx` để tương tác với các runtime khác.
+- **Tích Hợp HuggingFace (I4)**: `lt.hf.from_pretrained(repo_id)` — tải config + safetensors chia shard từ HF Hub (hoặc thư mục local), phân tích config.json, ánh xạ tên trọng số cho các họ Llama/GPT-2/BERT. Dùng gói Python `tokenizers` của HF cho tokenizer.
+
 ---
 
 ## Hướng Dẫn Cài Đặt Chi Tiết
@@ -264,6 +276,43 @@ print("Kết quả JIT Fused:", out.to_vector())
 
 # Dọn dẹp và giải phóng bộ đệm RAM/VRAM
 lt.empty_cache()
+```
+
+### 6. Suy Luận: Lượng Tử Hóa, Sinh Token & Phục Vụ
+
+```python
+import litetorch as lt
+
+# Lượng tử hóa động (trọng số INT8, activation động)
+linear = lt.nn.Linear(512, 512, True)
+q_linear = lt.quantization.quantize_dynamic_linear(linear)
+
+# PTQ tĩnh: prepare -> calibrate -> convert
+model = lt.nn.Sequential([lt.nn.Linear(512, 512, True), lt.nn.ReLU(), lt.nn.Linear(512, 10, True)])
+prepared = lt.quantization.prepare(model)
+prepared.calibrate(lambda i: [lt.randn([8, 512])], num_batches=10)
+q_model = lt.quantization.convert(prepared)
+
+# Tính toán FP8
+ops = lt.Ops
+x = lt.randn([4, 64])
+scale = 0.01
+xq = ops.fp8_cast_scaled(x, scale, lt.FP8_E4M3)
+xr = ops.fp8_uncast_scaled(xq, scale)
+
+# Sinh token
+cfg = lt.nn.GenerateConfig()
+cfg.max_new_tokens = 64
+cfg.do_sample = True
+cfg.temperature = 0.7
+cfg.top_p = 0.9
+tokens = lt.nn.generate(model, prompt_tokens, cfg)
+
+# Tải model HF (config + safetensors chia shard, ánh xạ tên cho llama/gpt2/bert)
+sd = lt.hf.from_pretrained("meta-llama/Llama-3.2-1B")
+
+# Phục vụ: tools/lt-serve --host 0.0.0.0 --port 8000 --weights model.safetensors
+#   POST /v1/completions  |  POST /v1/chat/completions  (streaming SSE)
 ```
 
 ---

@@ -48,6 +48,18 @@ LiteTorch delivers the core training capabilities of **PyTorch + Megatron-LM + D
 - **Full JIT Autograd Support**: Automatic symbolic differentiation (`Tracer::derivative`) and gradient backpropagation through `JITNode` across training and inference.
 - **Multi-Operator Fusion**: Fused elementwise, activation, and normalization kernels (`lt.jit.fused_bias_relu`, `lt.jit.fused_bias_gelu`, `lt.jit.fused_residual_add`, `lt.jit.fused_residual_gelu`) eliminating intermediate VRAM allocations.
 
+### 6. Inference Stack: Quantization, Serving & Ecosystem
+- **FP8 Compute (I1)**: E4M3/E5M2 cast with round-to-nearest-even (`ops.fp8_cast_scaled`, `ops.fp8_uncast_scaled`) and scaled FP8 matmul (`ops.fp8_matmul`); CUDA kernels in `src/backend/gpu_native/nn/fp8_kernels.cu`.
+- **INT4 Weight-Only (I1)**: 2-nibbles-per-byte pack/unpack (`ops.int4_pack`, `ops.int4_unpack`) and dequant-on-the-fly GEMM (`ops.int4_weight_only_linear`, configurable group size).
+- **Post-Training Quantization (I1)**: `lt.quantization.prepare(model)` → `calibrate(data_fn)` → `lt.quantization.convert(prepared)` — full static INT8 PTQ pipeline with `Calibrator`-based activation/weight stats.
+- **Dynamic Quantization (I1)**: `lt.quantization.quantize_dynamic_linear/lstm/gru` — static INT8 weights with per-token dynamic activation quantization.
+- **QAT (Quantization-Aware Training)**: `QATLinear` wrapper with `fake_quantize` autograd backward.
+- **Inference Performance (I2)**: CUDA graph capture/replay (`lt.inference.capture_cuda_graph`) to eliminate launch latency; Conv+BN folding (`lt.inference.fold_conv_bn`, `lt.inference.fuse_conv_bn`); LayerNorm fusion detection.
+- **Generate Loop (I3)**: `lt.nn.generate(model, prompt_tokens, config)` with `GenerateConfig` (greedy, temperature, top-k, top-p, beam search, repetition penalty, stop sequences/tokens, seed).
+- **lt-serve (I3)**: OpenAI-compatible HTTP server (`tools/lt-serve`) — `/v1/completions` and `/v1/chat/completions` with SSE streaming, backed by continuous batching + paged attention.
+- **ONNX Export (I4)**: `lt.onnx` graph builder (55-op table, dynamic axes, typed attrs) and `export_onnx` for runtime interop.
+- **HuggingFace Integration (I4)**: `lt.hf.from_pretrained(repo_id)` — downloads config + sharded safetensors from HF Hub (or local dir), parses config.json, remaps weight names for Llama/GPT-2/BERT families. Use HF `tokenizers` Python package for tokenization.
+
 ---
 
 ## Installation & Setup Guide
@@ -298,6 +310,43 @@ print("JIT Fused Output:", out.to_vector())
 
 # Reclaim host and device cached memory
 lt.empty_cache()
+```
+
+### 6. Inference: Quantize, Generate & Serve
+
+```python
+import litetorch as lt
+
+# Dynamic quantization (INT8 weights, dynamic activations)
+linear = lt.nn.Linear(512, 512, True)
+q_linear = lt.quantization.quantize_dynamic_linear(linear)
+
+# Static PTQ: prepare -> calibrate -> convert
+model = lt.nn.Sequential([lt.nn.Linear(512, 512, True), lt.nn.ReLU(), lt.nn.Linear(512, 10, True)])
+prepared = lt.quantization.prepare(model)
+prepared.calibrate(lambda i: [lt.randn([8, 512])], num_batches=10)
+q_model = lt.quantization.convert(prepared)
+
+# FP8 compute
+ops = lt.Ops
+x = lt.randn([4, 64])
+scale = 0.01
+xq = ops.fp8_cast_scaled(x, scale, lt.FP8_E4M3)
+xr = ops.fp8_uncast_scaled(xq, scale)
+
+# Token generation
+cfg = lt.nn.GenerateConfig()
+cfg.max_new_tokens = 64
+cfg.do_sample = True
+cfg.temperature = 0.7
+cfg.top_p = 0.9
+tokens = lt.nn.generate(model, prompt_tokens, cfg)
+
+# Load a HF model (config + sharded safetensors, name remap for llama/gpt2/bert)
+sd = lt.hf.from_pretrained("meta-llama/Llama-3.2-1B")
+
+# Serve: tools/lt-serve --host 0.0.0.0 --port 8000 --weights model.safetensors
+#   POST /v1/completions  |  POST /v1/chat/completions  (SSE streaming)
 ```
 
 ---
