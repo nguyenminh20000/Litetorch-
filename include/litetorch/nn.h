@@ -1154,6 +1154,57 @@ public:
 };
 // === end W3-T3 ===
 
+// === DT-A2 (LT-ENG-019): tensor-parallel attention + vocab-parallel embedding ===
+class TPAttention : public Module {
+public:
+    int embed_dim;
+    int num_heads;
+    int n_kv_heads;
+    int head_dim;
+    int tp_size;
+    int tp_rank;
+    int q_heads_per_rank;
+    int kv_heads_per_rank;
+    bool has_bias;
+
+    std::shared_ptr<Tensor> w_q;
+    std::shared_ptr<Tensor> b_q;
+    std::shared_ptr<Tensor> w_k;
+    std::shared_ptr<Tensor> b_k;
+    std::shared_ptr<Tensor> w_v;
+    std::shared_ptr<Tensor> b_v;
+    std::shared_ptr<Tensor> w_o;
+    std::shared_ptr<Tensor> b_o;
+
+    TPAttention(int embed_dim, int num_heads, int n_kv_heads = -1, bool has_bias = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class VocabParallelEmbedding : public Module {
+public:
+    int vocab_size;
+    int embed_dim;
+    int64_t padding_idx;
+    int tp_size;
+    int tp_rank;
+    int vocab_per_rank;
+    int64_t vocab_start;
+    int64_t vocab_end;
+
+    std::shared_ptr<Tensor> weight;
+
+    VocabParallelEmbedding(int vocab_size, int embed_dim, int64_t padding_idx = -1);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> logits(std::shared_ptr<Tensor> hidden);
+    std::shared_ptr<Tensor> sharded_cross_entropy(std::shared_ptr<Tensor> logits_shard,
+                                                  std::shared_ptr<Tensor> targets);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+// === end DT-A2 ===
+
 }
 
 }

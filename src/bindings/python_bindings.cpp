@@ -881,6 +881,34 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("weight", &nn::RowParallelLinear::weight)
         .def_readwrite("bias", &nn::RowParallelLinear::bias);
 
+    // === DT-A2 (LT-ENG-019) ===
+    py::class_<nn::TPAttention, nn::Module, std::shared_ptr<nn::TPAttention>>(nn_mod, "TPAttention")
+        .def(py::init<int, int, int, bool>(), py::arg("embed_dim"), py::arg("num_heads"),
+             py::arg("n_kv_heads") = -1, py::arg("has_bias") = true)
+        .def("forward", &nn::TPAttention::forward)
+        .def("parameters", &nn::TPAttention::parameters)
+        .def("to", &nn::TPAttention::to)
+        .def_readwrite("w_q", &nn::TPAttention::w_q)
+        .def_readwrite("b_q", &nn::TPAttention::b_q)
+        .def_readwrite("w_k", &nn::TPAttention::w_k)
+        .def_readwrite("b_k", &nn::TPAttention::b_k)
+        .def_readwrite("w_v", &nn::TPAttention::w_v)
+        .def_readwrite("b_v", &nn::TPAttention::b_v)
+        .def_readwrite("w_o", &nn::TPAttention::w_o)
+        .def_readwrite("b_o", &nn::TPAttention::b_o);
+
+    py::class_<nn::VocabParallelEmbedding, nn::Module, std::shared_ptr<nn::VocabParallelEmbedding>>(nn_mod, "VocabParallelEmbedding")
+        .def(py::init<int, int, int64_t>(), py::arg("vocab_size"), py::arg("embed_dim"),
+             py::arg("padding_idx") = -1)
+        .def("forward", &nn::VocabParallelEmbedding::forward)
+        .def("logits", &nn::VocabParallelEmbedding::logits)
+        .def("sharded_cross_entropy", &nn::VocabParallelEmbedding::sharded_cross_entropy)
+        .def("parameters", &nn::VocabParallelEmbedding::parameters)
+        .def("to", &nn::VocabParallelEmbedding::to)
+        .def_readwrite("weight", &nn::VocabParallelEmbedding::weight);
+
+    // === end DT-A2 ===
+
     py::class_<nn::Conv2d, nn::Module, std::shared_ptr<nn::Conv2d>>(nn_mod, "Conv2d")
         .def(py::init([](int in_channels, int out_channels, py::object kernel_size,
                          py::object stride, py::object padding, bool has_bias) {
@@ -1940,7 +1968,10 @@ PYBIND11_MODULE(litetorch, m) {
         .def_readwrite("beta1", &optim::AdamW::beta1)
         .def_readwrite("beta2", &optim::AdamW::beta2)
         .def_readwrite("eps", &optim::AdamW::eps)
-        .def_readwrite("weight_decay", &optim::AdamW::weight_decay);
+        .def_readwrite("weight_decay", &optim::AdamW::weight_decay)
+        .def_static("fused_launch_count", &optim::AdamW::fused_launch_count)
+        .def_static("single_launch_count", &optim::AdamW::single_launch_count)
+        .def_static("reset_launch_counts", &optim::AdamW::reset_launch_counts);
 
     py::class_<optim::AdamW8bit, optim::Optimizer, std::shared_ptr<optim::AdamW8bit>>(optim_mod, "AdamW8bit")
         .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.0f)
@@ -2333,6 +2364,15 @@ PYBIND11_MODULE(litetorch, m) {
 
     auto dist_mod = m.def_submodule("distributed", "LiteTorch Distributed Modules");
 
+    // === DT-A2 (LT-ENG-019): TP group init helper ===
+    dist_mod.def("init_tp_groups", [](int tp_size) {
+        auto& pg = distributed::ProcessGroup::get();
+        if (!pg.is_initialized())
+            throw std::runtime_error("[litetorch Error] init_tp_groups: init_process_group first");
+        distributed::NCCLBridge::get().init_groups(pg.get_rank(), pg.get_world_size(), tp_size, 1);
+    }, py::arg("tp_size"));
+    // === end DT-A2 ===
+
     py::class_<distributed::ProcessGroup>(dist_mod, "ProcessGroup")
         .def_static("get", &distributed::ProcessGroup::get, py::return_value_policy::reference)
         .def("init", &distributed::ProcessGroup::init, py::arg("rank"), py::arg("world_size"), py::arg("master_addr"), py::arg("master_port"))
@@ -2455,6 +2495,11 @@ PYBIND11_MODULE(litetorch, m) {
         .def("parameters", &distributed::DistributedDataParallel::parameters)
         .def("to", &distributed::DistributedDataParallel::to, py::arg("device"))
         .def_readwrite("reduce_op", &distributed::DistributedDataParallel::reduce_op);
+
+    // === DT-A1 (LT-ENG-018): tensor-parallel autograd collectives ===
+    dist_mod.def("tp_all_reduce", &distributed::tp_all_reduce_autograd, py::arg("tensor"));
+    dist_mod.def("tp_all_gather", &distributed::tp_all_gather_autograd, py::arg("shard"));
+    // === end DT-A1 ===
 
     auto jit_mod = m.def_submodule("jit", "LiteTorch JIT Compilation");
 
