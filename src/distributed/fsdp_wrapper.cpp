@@ -48,10 +48,6 @@ FSDPUnit::FSDPUnit(std::shared_ptr<nn::Module> mod) : module(mod) {
     for (auto& p : params) {
         p->shard = flat->local_shard();
     }
-    {
-        std::lock_guard<std::mutex> lk(g_units_mutex);
-        g_all_units.push_back(weak_from_this());
-    }
 }
 
 void FSDPUnit::prefetch_gather() {
@@ -195,6 +191,10 @@ void FSDP::fully_shard(std::shared_ptr<nn::Module> module) {
     if (params.empty()) return;
 
     auto unit = std::make_shared<FSDPUnit>(module);
+    {
+        std::lock_guard<std::mutex> lk(g_units_mutex);
+        g_all_units.push_back(unit);
+    }
 
     for (auto& p : params) {
         if (p->requires_grad) {

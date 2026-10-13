@@ -63,7 +63,7 @@ std::string recv_msg(int fd) {
     uint32_t n = ntohl(nnet);
     if (n > 16 * 1024 * 1024) throw std::runtime_error("launcher: message too large");
     std::string body(n, '\0');
-    if (n) recv_all(fd, body.data(), n);
+    if (n) recv_all(fd, &body[0], n);
     return body;
 }
 

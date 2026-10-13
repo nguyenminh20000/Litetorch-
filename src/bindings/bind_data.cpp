@@ -1,4 +1,5 @@
 #include "bindings_common.h"
+#include "litetorch/async_checkpoint.h"
 
 void bind_data(py::module_& m) {
         auto data_mod = m.def_submodule("data", "LiteTorch Data Loading and Datasets");
@@ -126,6 +127,15 @@ void bind_data(py::module_& m) {
         }, py::arg("filepath"));
         m.def("save_optimizer_state", &litetorch::save_optimizer_state, py::arg("optimizer"), py::arg("filepath"));
         m.def("load_optimizer_state", &litetorch::load_optimizer_state, py::arg("optimizer"), py::arg("filepath"));
+        py::class_<async_checkpoint::AsyncCheckpointSaver, std::shared_ptr<async_checkpoint::AsyncCheckpointSaver>>(m, "AsyncCheckpointSaver")
+            .def(py::init<>())
+            .def("save_async", [](async_checkpoint::AsyncCheckpointSaver& self, py::dict tensors, const std::string& filepath) {
+                std::map<std::string, std::shared_ptr<Tensor>> tm;
+                for (auto kv : tensors) tm[kv.first.cast<std::string>()] = kv.second.cast<std::shared_ptr<Tensor>>();
+                self.save_async(tm, filepath);
+            }, py::arg("tensors"), py::arg("filepath"))
+            .def("wait", &async_checkpoint::AsyncCheckpointSaver::wait)
+            .def("is_saving", &async_checkpoint::AsyncCheckpointSaver::is_saving);
 
         m.def("save", [](py::object obj, const std::string& filepath) {
             if (py::isinstance<nn::Module>(obj)) {
