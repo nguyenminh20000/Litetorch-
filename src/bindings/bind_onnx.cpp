@@ -16,7 +16,8 @@ void bind_onnx(py::module_& m) {
         .def(py::init<>())
         .def_readwrite("name", &litetorch::onnx::ValueInfo::name)
         .def_readwrite("shape", &litetorch::onnx::ValueInfo::shape)
-        .def_readwrite("dtype", &litetorch::onnx::ValueInfo::dtype);
+        .def_readwrite("dtype", &litetorch::onnx::ValueInfo::dtype)
+        .def_readwrite("dim_params", &litetorch::onnx::ValueInfo::dim_params);
     py::class_<litetorch::onnx::Node>(onnx_mod, "Node")
         .def(py::init<>())
         .def_readwrite("op_type", &litetorch::onnx::Node::op_type)
@@ -24,6 +25,9 @@ void bind_onnx(py::module_& m) {
         .def_readwrite("inputs", &litetorch::onnx::Node::inputs)
         .def_readwrite("outputs", &litetorch::onnx::Node::outputs)
         .def_readwrite("attrs", &litetorch::onnx::Node::attrs)
+        .def_readwrite("int_attrs", &litetorch::onnx::Node::int_attrs)
+        .def_readwrite("float_attrs", &litetorch::onnx::Node::float_attrs)
+        .def_readwrite("ints_attrs", &litetorch::onnx::Node::ints_attrs)
         .def_readwrite("domain", &litetorch::onnx::Node::domain);
     py::class_<litetorch::onnx::Graph>(onnx_mod, "Graph")
         .def(py::init<>())
@@ -34,6 +38,19 @@ void bind_onnx(py::module_& m) {
              py::arg("name"), py::arg("shape"), py::arg("dtype") = litetorch::DataType::FP32)
         .def("add_node", &litetorch::onnx::Graph::add_node,
              py::arg("op_type"), py::arg("inputs"), py::arg("outputs"),
+             py::arg("attrs") = std::map<std::string, std::string>(),
+             py::arg("domain") = "")
+        .def("add_dynamic_input", &litetorch::onnx::Graph::add_dynamic_input,
+             py::arg("name"), py::arg("shape"), py::arg("dim_params"),
+             py::arg("dtype") = litetorch::DataType::FP32)
+        .def("add_dynamic_output", &litetorch::onnx::Graph::add_dynamic_output,
+             py::arg("name"), py::arg("shape"), py::arg("dim_params"),
+             py::arg("dtype") = litetorch::DataType::FP32)
+        .def("add_node_typed", &litetorch::onnx::Graph::add_node_typed,
+             py::arg("op_type"), py::arg("inputs"), py::arg("outputs"),
+             py::arg("int_attrs") = std::map<std::string, int64_t>(),
+             py::arg("float_attrs") = std::map<std::string, float>(),
+             py::arg("ints_attrs") = std::map<std::string, std::vector<int64_t>>(),
              py::arg("attrs") = std::map<std::string, std::string>(),
              py::arg("domain") = "")
         .def("add_initializer", &litetorch::onnx::Graph::add_initializer,
@@ -49,8 +66,12 @@ void bind_onnx(py::module_& m) {
                  py::arg("graph"), py::arg("path"));
     onnx_mod.def("trace_module", &litetorch::onnx::trace_module,
                  py::arg("model"), py::arg("example_input"));
+    onnx_mod.def("trace_module_dynamic", &litetorch::onnx::trace_module_dynamic,
+                 py::arg("model"), py::arg("example_input"), py::arg("dynamic_axes"));
     onnx_mod.def("export", &litetorch::onnx::export_module,
                  py::arg("model"), py::arg("args"), py::arg("path"));
+    onnx_mod.def("export_dynamic", &litetorch::onnx::export_module_dynamic,
+                 py::arg("model"), py::arg("args"), py::arg("path"), py::arg("dynamic_axes"));
 
     auto prof_mod = m.def_submodule("profiler", "LiteTorch CPU profiler (minimal)");
     prof_mod.def("enable", &litetorch::profiler::enable);
