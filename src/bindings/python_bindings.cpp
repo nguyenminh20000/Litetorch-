@@ -288,6 +288,14 @@ struct PyAutocast {
 PYBIND11_MODULE(litetorch, m) {
     m.doc() = "LiteTorch Python Bindings";
 
+    m.def("build_commit", []() {
+#ifdef LITETORCH_BUILD_COMMIT
+        return std::string(LITETORCH_BUILD_COMMIT);
+#else
+        return std::string("unknown");
+#endif
+    });
+
     py::enum_<DeviceType>(m, "DeviceType")
         .value("CPU", DeviceType::CPU)
         .value("GPU", DeviceType::GPU)

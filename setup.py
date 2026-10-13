@@ -16,6 +16,18 @@ except ImportError:
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def _build_commit():
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=15, cwd=SCRIPT_DIR,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
 def _cudnn_link_files(shared_libs):
     by_base = {}
     for path in sorted(shared_libs):
@@ -183,11 +195,14 @@ class BuildExt(build_ext):
     def build_extensions(self):
         self.parallel = int(os.environ.get("LT_BUILD_JOBS", os.cpu_count() or 4))
         compiler_type = self.compiler.compiler_type
+        build_commit = _build_commit()
         for ext in self.extensions:
             if compiler_type == "msvc":
-                ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
+                ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj",
+                                          '/DLITETORCH_BUILD_COMMIT="%s"' % build_commit]
             else:
-                ext.extra_compile_args = ["-std=c++14", "-O1", "-fPIC"]
+                ext.extra_compile_args = ["-std=c++14", "-O1", "-fPIC",
+                                          '-DLITETORCH_BUILD_COMMIT="%s"' % build_commit]
                 if os.environ.get("LITETORCH_TPU_PJRT") == "1":
                     ext.extra_compile_args.append("-DLITETORCH_TPU_PJRT")
                 if sys.platform.startswith("win"):
