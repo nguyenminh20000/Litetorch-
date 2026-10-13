@@ -217,6 +217,17 @@ std::tuple<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Ten
     std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> wq,
     std::shared_ptr<Tensor> wk, std::shared_ptr<Tensor> wv);
 // === end LT-ENG-022 ===
+
+// === W4-T3 (LT-ENG-028): bilinear, fold, unfold ===
+std::shared_ptr<Tensor> bilinear(std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2,
+    std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr);
+std::shared_ptr<Tensor> fold(std::shared_ptr<Tensor> input, const std::vector<int64_t>& output_size,
+    const std::vector<int64_t>& kernel_size, const std::vector<int64_t>& dilation,
+    const std::vector<int64_t>& padding, const std::vector<int64_t>& stride);
+std::shared_ptr<Tensor> unfold(std::shared_ptr<Tensor> input, const std::vector<int64_t>& kernel_size,
+    const std::vector<int64_t>& dilation, const std::vector<int64_t>& padding,
+    const std::vector<int64_t>& stride);
+// === end W4-T3 ===
 }
 }
 

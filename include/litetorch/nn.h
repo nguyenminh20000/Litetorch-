@@ -1205,6 +1205,245 @@ public:
 };
 // === end DT-A2 ===
 
+// === W4-T3 (LT-ENG-028): extra activations ===
+class ReLU6 : public Module {
+public:
+    ReLU6() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class RReLU : public Module {
+public:
+    float lower;
+    float upper;
+    RReLU(float lower = 0.125f, float upper = 0.3333333333333333f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class CELU : public Module {
+public:
+    float alpha;
+    CELU(float alpha = 1.0f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class SELU : public Module {
+public:
+    SELU() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Mish : public Module {
+public:
+    Mish() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Softplus : public Module {
+public:
+    float beta;
+    float threshold;
+    Softplus(float beta = 1.0f, float threshold = 20.0f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Softshrink : public Module {
+public:
+    float lambd;
+    Softshrink(float lambd = 0.5f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Hardshrink : public Module {
+public:
+    float lambd;
+    Hardshrink(float lambd = 0.5f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Tanhshrink : public Module {
+public:
+    Tanhshrink() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Softsign : public Module {
+public:
+    Softsign() = default;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Hardtanh : public Module {
+public:
+    float min_val;
+    float max_val;
+    Hardtanh(float min_val = -1.0f, float max_val = 1.0f);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Threshold : public Module {
+public:
+    float threshold;
+    float value;
+    Threshold(float threshold, float value);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+// === end W4-T3 activations ===
+
+// === W4-T3 (LT-ENG-028): extra losses ===
+class HingeEmbeddingLoss : public Module {
+public:
+    float margin;
+    std::string reduction;
+    HingeEmbeddingLoss(float margin = 1.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class CosineEmbeddingLoss : public Module {
+public:
+    float margin;
+    std::string reduction;
+    CosineEmbeddingLoss(float margin = 0.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2,
+                                    std::shared_ptr<Tensor> target);
+};
+
+class MarginRankingLoss : public Module {
+public:
+    float margin;
+    std::string reduction;
+    MarginRankingLoss(float margin = 0.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2,
+                                    std::shared_ptr<Tensor> target);
+};
+
+class MultiMarginLoss : public Module {
+public:
+    int p;
+    float margin;
+    std::string reduction;
+    MultiMarginLoss(int p = 1, float margin = 1.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class MultiLabelMarginLoss : public Module {
+public:
+    std::string reduction;
+    MultiLabelMarginLoss(const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class SoftMarginLoss : public Module {
+public:
+    std::string reduction;
+    SoftMarginLoss(const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class MultiLabelSoftMarginLoss : public Module {
+public:
+    std::string reduction;
+    MultiLabelSoftMarginLoss(const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class TripletMarginLoss : public Module {
+public:
+    float margin;
+    int p;
+    float eps;
+    bool swap;
+    std::string reduction;
+    TripletMarginLoss(float margin = 1.0f, int p = 2, float eps = 1e-6f, bool swap = false,
+                      const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> anchor, std::shared_ptr<Tensor> positive,
+                                    std::shared_ptr<Tensor> negative);
+};
+
+class TripletMarginWithDistanceLoss : public Module {
+public:
+    float margin;
+    std::string reduction;
+    TripletMarginWithDistanceLoss(float margin = 1.0f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> anchor, std::shared_ptr<Tensor> positive,
+                                    std::shared_ptr<Tensor> negative);
+};
+
+class PoissonNLLLoss : public Module {
+public:
+    bool log_input;
+    bool full;
+    float eps;
+    std::string reduction;
+    PoissonNLLLoss(bool log_input = true, bool full = false, float eps = 1e-8f,
+                   const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
+};
+
+class GaussianNLLLoss : public Module {
+public:
+    bool full;
+    float eps;
+    std::string reduction;
+    GaussianNLLLoss(bool full = false, float eps = 1e-6f, const std::string& reduction = "mean");
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target,
+                                    std::shared_ptr<Tensor> var);
+};
+// === end W4-T3 losses ===
+
+// === W4-T3 (LT-ENG-028): Bilinear, Fold, Unfold ===
+class Bilinear : public Module {
+public:
+    int in1_features;
+    int in2_features;
+    int out_features;
+    std::shared_ptr<Tensor> weight;
+    std::shared_ptr<Tensor> bias;
+    Bilinear(int in1_features, int in2_features, int out_features, bool bias = true);
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2);
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+};
+
+class Fold : public Module {
+public:
+    std::vector<int64_t> output_size;
+    std::vector<int64_t> kernel_size;
+    std::vector<int64_t> dilation;
+    std::vector<int64_t> padding;
+    std::vector<int64_t> stride;
+    Fold(const std::vector<int64_t>& output_size, const std::vector<int64_t>& kernel_size,
+         const std::vector<int64_t>& dilation = {1, 1}, const std::vector<int64_t>& padding = {0, 0},
+         const std::vector<int64_t>& stride = {1, 1});
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+
+class Unfold : public Module {
+public:
+    std::vector<int64_t> kernel_size;
+    std::vector<int64_t> dilation;
+    std::vector<int64_t> padding;
+    std::vector<int64_t> stride;
+    Unfold(const std::vector<int64_t>& kernel_size,
+           const std::vector<int64_t>& dilation = {1, 1}, const std::vector<int64_t>& padding = {0, 0},
+           const std::vector<int64_t>& stride = {1, 1});
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+};
+// === end W4-T3 misc ===
+
 }
 
 }
