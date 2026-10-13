@@ -1,0 +1,261 @@
+#include "bindings_common.h"
+
+void bind_nn_utils(py::module_& m) {
+    auto nn_mod = m.attr("nn").cast<py::module_>();
+        auto utils_mod = nn_mod.def_submodule("utils", "LiteTorch nn.utils");
+        utils_mod.def("clip_grad_value_", &nn::utils::clip_grad_value_, py::arg("parameters"), py::arg("clip_value"));
+        utils_mod.def("parameters_to_vector", &nn::utils::parameters_to_vector, py::arg("parameters"));
+        utils_mod.def("vector_to_parameters", &nn::utils::vector_to_parameters, py::arg("vec"), py::arg("parameters"));
+        utils_mod.def("weight_norm", &nn::utils::weight_norm, py::arg("v"), py::arg("g"), py::arg("dim") = 0);
+        utils_mod.def("spectral_norm", &nn::utils::spectral_norm, py::arg("weight"), py::arg("n_power_iterations") = 1);
+        // === end W3-T4 losses-misc ===
+
+        py::class_<nn::GuidedDecoder>(nn_mod, "GuidedDecoder")
+            .def(py::init<const std::vector<std::string>&>(), py::arg("vocabulary"))
+            .def("apply_mask", &nn::GuidedDecoder::apply_mask, py::arg("logits"), py::arg("prefix"), py::arg("target_pattern"))
+            .def_readwrite("vocab", &nn::GuidedDecoder::vocab);
+
+        py::class_<nn::Request, std::shared_ptr<nn::Request>>(nn_mod, "Request")
+            .def(py::init<uint64_t, const std::vector<int64_t>&, int64_t>(), py::arg("id"), py::arg("prompt"), py::arg("max_new_tokens") = 32)
+            .def_readwrite("id", &nn::Request::id)
+            .def_readwrite("prompt_tokens", &nn::Request::prompt_tokens)
+            .def_readwrite("generated_tokens", &nn::Request::generated_tokens)
+            .def_readwrite("max_new_tokens", &nn::Request::max_new_tokens)
+            .def_readwrite("prefill_processed", &nn::Request::prefill_processed)
+            .def_readwrite("is_finished", &nn::Request::is_finished)
+            .def_readwrite("block_ids", &nn::Request::block_ids);
+
+        py::class_<nn::ServingScheduler, std::shared_ptr<nn::ServingScheduler>>(nn_mod, "ServingScheduler")
+            .def(py::init<int, int, int, int>(), py::arg("num_blocks"), py::arg("block_size"), py::arg("max_num_seqs"), py::arg("max_num_batched_tokens"))
+            .def("add_request", &nn::ServingScheduler::add_request)
+            .def("step", &nn::ServingScheduler::step)
+            .def("get_block_table_tensor", &nn::ServingScheduler::get_block_table_tensor)
+            .def("get_context_lens_tensor", &nn::ServingScheduler::get_context_lens_tensor)
+            .def_readwrite("block_size", &nn::ServingScheduler::block_size)
+            .def_readwrite("max_num_seqs", &nn::ServingScheduler::max_num_seqs)
+            .def_readwrite("max_num_batched_tokens", &nn::ServingScheduler::max_num_batched_tokens)
+            .def_readwrite("pending_queue", &nn::ServingScheduler::pending_queue)
+            .def_readwrite("running_queue", &nn::ServingScheduler::running_queue)
+            .def_readwrite("free_blocks", &nn::ServingScheduler::free_blocks)
+            .def_readwrite("num_blocks", &nn::ServingScheduler::num_blocks);
+
+        py::class_<nn::PrefixCache>(nn_mod, "PrefixCache")
+            .def_static("get", &nn::PrefixCache::get, py::return_value_policy::reference)
+            .def("put", &nn::PrefixCache::put)
+            .def("get_cache", &nn::PrefixCache::get_cache)
+            .def("clear", &nn::PrefixCache::clear);
+
+        py::class_<nn::SpeculativeEngine, std::shared_ptr<nn::SpeculativeEngine>>(nn_mod, "SpeculativeEngine")
+            .def(py::init<std::shared_ptr<nn::Module>, std::shared_ptr<nn::Module>>())
+            .def("generate", &nn::SpeculativeEngine::generate, py::arg("prompt"), py::arg("max_new_tokens"), py::arg("lookahead") = 4)
+            .def_readwrite("draft_model", &nn::SpeculativeEngine::draft_model)
+            .def_readwrite("target_model", &nn::SpeculativeEngine::target_model);
+
+        py::class_<nn::MedusaHead, nn::Module, std::shared_ptr<nn::MedusaHead>>(nn_mod, "MedusaHead")
+            .def(py::init<int, int>())
+            .def("forward", &nn::MedusaHead::forward)
+            .def("parameters", &nn::MedusaHead::parameters)
+            .def("to", &nn::MedusaHead::to)
+            .def_readwrite("weight", &nn::MedusaHead::weight)
+            .def_readwrite("bias", &nn::MedusaHead::bias);
+
+        py::class_<nn::MedusaEngine, std::shared_ptr<nn::MedusaEngine>>(nn_mod, "MedusaEngine")
+            .def(py::init<std::shared_ptr<nn::Module>, const std::vector<std::shared_ptr<nn::MedusaHead>>&>())
+            .def("generate", &nn::MedusaEngine::generate, py::arg("prompt"), py::arg("max_new_tokens"), py::arg("lookahead") = 2)
+            .def_readwrite("base_model", &nn::MedusaEngine::base_model)
+            .def_readwrite("medusa_heads", &nn::MedusaEngine::medusa_heads);
+
+        auto init_mod = nn_mod.def_submodule("init", "Weight initialization");
+        init_mod.def("kaiming_uniform_", &nn::init::kaiming_uniform_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("mode") = "fan_in", py::arg("nonlinearity") = "relu");
+        init_mod.def("kaiming_normal_", &nn::init::kaiming_normal_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("mode") = "fan_in", py::arg("nonlinearity") = "relu");
+        init_mod.def("xavier_uniform_", &nn::init::xavier_uniform_, py::arg("tensor"), py::arg("gain") = 1.0f);
+        init_mod.def("xavier_normal_", &nn::init::xavier_normal_, py::arg("tensor"), py::arg("gain") = 1.0f);
+        init_mod.def("normal_", &nn::init::normal_, py::arg("tensor"), py::arg("mean") = 0.0f, py::arg("std") = 1.0f);
+        init_mod.def("uniform_", &nn::init::uniform_, py::arg("tensor"), py::arg("a") = 0.0f, py::arg("b") = 1.0f);
+        init_mod.def("zeros_", &nn::init::zeros_, py::arg("tensor"));
+        init_mod.def("ones_", &nn::init::ones_, py::arg("tensor"));
+        init_mod.def("fill_", &nn::init::fill_, py::arg("tensor"), py::arg("value"));
+        // === W3-T4 losses-misc ===
+        init_mod.def("trunc_normal_", &nn::init::trunc_normal_, py::arg("tensor"), py::arg("mean") = 0.0f,
+            py::arg("std") = 1.0f, py::arg("a") = -2.0f, py::arg("b") = 2.0f);
+        init_mod.def("orthogonal_", &nn::init::orthogonal_, py::arg("tensor"), py::arg("gain") = 1.0f);
+        // === end W3-T4 losses-misc ===
+
+        // === W4-T3 (LT-ENG-028): extra activations ===
+        py::class_<nn::ReLU6, nn::Module, std::shared_ptr<nn::ReLU6>>(nn_mod, "ReLU6")
+            .def(py::init<>())
+            .def("forward", &nn::ReLU6::forward);
+        py::class_<nn::RReLU, nn::Module, std::shared_ptr<nn::RReLU>>(nn_mod, "RReLU")
+            .def(py::init<float, float>(), py::arg("lower") = 0.125f, py::arg("upper") = 0.3333333333333333f)
+            .def("forward", &nn::RReLU::forward)
+            .def_readwrite("lower", &nn::RReLU::lower)
+            .def_readwrite("upper", &nn::RReLU::upper);
+        py::class_<nn::CELU, nn::Module, std::shared_ptr<nn::CELU>>(nn_mod, "CELU")
+            .def(py::init<float>(), py::arg("alpha") = 1.0f)
+            .def("forward", &nn::CELU::forward)
+            .def_readwrite("alpha", &nn::CELU::alpha);
+        py::class_<nn::SELU, nn::Module, std::shared_ptr<nn::SELU>>(nn_mod, "SELU")
+            .def(py::init<>())
+            .def("forward", &nn::SELU::forward);
+        py::class_<nn::Mish, nn::Module, std::shared_ptr<nn::Mish>>(nn_mod, "Mish")
+            .def(py::init<>())
+            .def("forward", &nn::Mish::forward);
+        py::class_<nn::Softplus, nn::Module, std::shared_ptr<nn::Softplus>>(nn_mod, "Softplus")
+            .def(py::init<float, float>(), py::arg("beta") = 1.0f, py::arg("threshold") = 20.0f)
+            .def("forward", &nn::Softplus::forward)
+            .def_readwrite("beta", &nn::Softplus::beta)
+            .def_readwrite("threshold", &nn::Softplus::threshold);
+        py::class_<nn::Softshrink, nn::Module, std::shared_ptr<nn::Softshrink>>(nn_mod, "Softshrink")
+            .def(py::init<float>(), py::arg("lambd") = 0.5f)
+            .def("forward", &nn::Softshrink::forward)
+            .def_readwrite("lambd", &nn::Softshrink::lambd);
+        py::class_<nn::Hardshrink, nn::Module, std::shared_ptr<nn::Hardshrink>>(nn_mod, "Hardshrink")
+            .def(py::init<float>(), py::arg("lambd") = 0.5f)
+            .def("forward", &nn::Hardshrink::forward)
+            .def_readwrite("lambd", &nn::Hardshrink::lambd);
+        py::class_<nn::Tanhshrink, nn::Module, std::shared_ptr<nn::Tanhshrink>>(nn_mod, "Tanhshrink")
+            .def(py::init<>())
+            .def("forward", &nn::Tanhshrink::forward);
+        py::class_<nn::Softsign, nn::Module, std::shared_ptr<nn::Softsign>>(nn_mod, "Softsign")
+            .def(py::init<>())
+            .def("forward", &nn::Softsign::forward);
+        py::class_<nn::Hardtanh, nn::Module, std::shared_ptr<nn::Hardtanh>>(nn_mod, "Hardtanh")
+            .def(py::init<float, float>(), py::arg("min_val") = -1.0f, py::arg("max_val") = 1.0f)
+            .def("forward", &nn::Hardtanh::forward)
+            .def_readwrite("min_val", &nn::Hardtanh::min_val)
+            .def_readwrite("max_val", &nn::Hardtanh::max_val);
+        py::class_<nn::Threshold, nn::Module, std::shared_ptr<nn::Threshold>>(nn_mod, "Threshold")
+            .def(py::init<float, float>(), py::arg("threshold"), py::arg("value"))
+            .def("forward", &nn::Threshold::forward)
+            .def_readwrite("threshold", &nn::Threshold::threshold)
+            .def_readwrite("value", &nn::Threshold::value);
+        // === end W4-T3 activations ===
+
+        // === W4-T3 (LT-ENG-028): extra losses ===
+        py::class_<nn::HingeEmbeddingLoss, nn::Module, std::shared_ptr<nn::HingeEmbeddingLoss>>(nn_mod, "HingeEmbeddingLoss")
+            .def(py::init<float, const std::string&>(), py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::HingeEmbeddingLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::HingeEmbeddingLoss::forward))
+            .def_readwrite("margin", &nn::HingeEmbeddingLoss::margin)
+            .def_readwrite("reduction", &nn::HingeEmbeddingLoss::reduction);
+        py::class_<nn::CosineEmbeddingLoss, nn::Module, std::shared_ptr<nn::CosineEmbeddingLoss>>(nn_mod, "CosineEmbeddingLoss")
+            .def(py::init<float, const std::string&>(), py::arg("margin") = 0.0f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
+            .def_readwrite("margin", &nn::CosineEmbeddingLoss::margin)
+            .def_readwrite("reduction", &nn::CosineEmbeddingLoss::reduction);
+        py::class_<nn::MarginRankingLoss, nn::Module, std::shared_ptr<nn::MarginRankingLoss>>(nn_mod, "MarginRankingLoss")
+            .def(py::init<float, const std::string&>(), py::arg("margin") = 0.0f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MarginRankingLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MarginRankingLoss::forward))
+            .def_readwrite("margin", &nn::MarginRankingLoss::margin)
+            .def_readwrite("reduction", &nn::MarginRankingLoss::reduction);
+        py::class_<nn::MultiMarginLoss, nn::Module, std::shared_ptr<nn::MultiMarginLoss>>(nn_mod, "MultiMarginLoss")
+            .def(py::init<int, float, const std::string&>(), py::arg("p") = 1, py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
+            .def_readwrite("p", &nn::MultiMarginLoss::p)
+            .def_readwrite("margin", &nn::MultiMarginLoss::margin)
+            .def_readwrite("reduction", &nn::MultiMarginLoss::reduction);
+        py::class_<nn::MultiLabelMarginLoss, nn::Module, std::shared_ptr<nn::MultiLabelMarginLoss>>(nn_mod, "MultiLabelMarginLoss")
+            .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiLabelMarginLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiLabelMarginLoss::forward))
+            .def_readwrite("reduction", &nn::MultiLabelMarginLoss::reduction);
+        py::class_<nn::SoftMarginLoss, nn::Module, std::shared_ptr<nn::SoftMarginLoss>>(nn_mod, "SoftMarginLoss")
+            .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::SoftMarginLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::SoftMarginLoss::forward))
+            .def_readwrite("reduction", &nn::SoftMarginLoss::reduction);
+        py::class_<nn::MultiLabelSoftMarginLoss, nn::Module, std::shared_ptr<nn::MultiLabelSoftMarginLoss>>(nn_mod, "MultiLabelSoftMarginLoss")
+            .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiLabelSoftMarginLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiLabelSoftMarginLoss::forward))
+            .def_readwrite("reduction", &nn::MultiLabelSoftMarginLoss::reduction);
+        py::class_<nn::TripletMarginLoss, nn::Module, std::shared_ptr<nn::TripletMarginLoss>>(nn_mod, "TripletMarginLoss")
+            .def(py::init<float, int, float, bool, const std::string&>(), py::arg("margin") = 1.0f, py::arg("p") = 2, py::arg("eps") = 1e-6f, py::arg("swap") = false, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TripletMarginLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TripletMarginLoss::forward))
+            .def_readwrite("margin", &nn::TripletMarginLoss::margin)
+            .def_readwrite("reduction", &nn::TripletMarginLoss::reduction);
+        py::class_<nn::TripletMarginWithDistanceLoss, nn::Module, std::shared_ptr<nn::TripletMarginWithDistanceLoss>>(nn_mod, "TripletMarginWithDistanceLoss")
+            .def(py::init<float, const std::string&>(), py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TripletMarginWithDistanceLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TripletMarginWithDistanceLoss::forward))
+            .def_readwrite("margin", &nn::TripletMarginWithDistanceLoss::margin)
+            .def_readwrite("reduction", &nn::TripletMarginWithDistanceLoss::reduction);
+        py::class_<nn::PoissonNLLLoss, nn::Module, std::shared_ptr<nn::PoissonNLLLoss>>(nn_mod, "PoissonNLLLoss")
+            .def(py::init<bool, bool, float, const std::string&>(), py::arg("log_input") = true, py::arg("full") = false, py::arg("eps") = 1e-8f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::PoissonNLLLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::PoissonNLLLoss::forward))
+            .def_readwrite("reduction", &nn::PoissonNLLLoss::reduction);
+        py::class_<nn::GaussianNLLLoss, nn::Module, std::shared_ptr<nn::GaussianNLLLoss>>(nn_mod, "GaussianNLLLoss")
+            .def(py::init<bool, float, const std::string&>(), py::arg("full") = false, py::arg("eps") = 1e-6f, py::arg("reduction") = "mean")
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::GaussianNLLLoss::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::GaussianNLLLoss::forward))
+            .def_readwrite("reduction", &nn::GaussianNLLLoss::reduction);
+        // === end W4-T3 losses ===
+
+        // === W4-T3 (LT-ENG-028): Bilinear, Fold, Unfold ===
+        py::class_<nn::Bilinear, nn::Module, std::shared_ptr<nn::Bilinear>>(nn_mod, "Bilinear")
+            .def(py::init<int, int, int, bool>(), py::arg("in1_features"), py::arg("in2_features"), py::arg("out_features"), py::arg("bias") = true)
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::Bilinear::forward))
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::Bilinear::forward));
+        py::class_<nn::Fold, nn::Module, std::shared_ptr<nn::Fold>>(nn_mod, "Fold")
+            .def(py::init<const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&>(),
+                 py::arg("output_size"), py::arg("kernel_size"), py::arg("dilation") = std::vector<int64_t>{1, 1},
+                 py::arg("padding") = std::vector<int64_t>{0, 0}, py::arg("stride") = std::vector<int64_t>{1, 1})
+            .def("forward", &nn::Fold::forward);
+        py::class_<nn::Unfold, nn::Module, std::shared_ptr<nn::Unfold>>(nn_mod, "Unfold")
+            .def(py::init<const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&>(),
+                 py::arg("kernel_size"), py::arg("dilation") = std::vector<int64_t>{1, 1},
+                 py::arg("padding") = std::vector<int64_t>{0, 0}, py::arg("stride") = std::vector<int64_t>{1, 1})
+            .def("forward", &nn::Unfold::forward);
+        // === end W4-T3 misc ===
+
+        // === W1-T5 functional ===
+        auto functional_mod = nn_mod.def_submodule("functional", "LiteTorch nn.functional");
+        functional_mod.def("dropout", &functional::dropout,
+            py::arg("x"), py::arg("p") = 0.5, py::arg("training") = true);
+        functional_mod.def("linear", &functional::linear,
+            py::arg("x"), py::arg("weight"), py::arg("bias") = nullptr);
+        functional_mod.def("pad", &functional::pad,
+            py::arg("x"), py::arg("pad"), py::arg("mode") = "constant", py::arg("value") = 0.0);
+        functional_mod.def("interpolate",
+            [](std::shared_ptr<Tensor> x, py::object size, py::object scale_factor,
+               const std::string& mode, bool align_corners) {
+                std::vector<int64_t> sz;
+                std::vector<double> sf;
+                if (!size.is_none()) {
+                    if (py::isinstance<py::int_>(size)) {
+                        sz.push_back(size.cast<int64_t>());
+                    } else {
+                        for (auto v : size.cast<py::sequence>()) sz.push_back(v.cast<int64_t>());
+                    }
+                }
+                if (!scale_factor.is_none()) {
+                    if (py::isinstance<py::float_>(scale_factor) ||
+                        py::isinstance<py::int_>(scale_factor)) {
+                        sf.push_back(scale_factor.cast<double>());
+                    } else {
+                        for (auto v : scale_factor.cast<py::sequence>()) sf.push_back(v.cast<double>());
+                    }
+                }
+                return functional::interpolate(x, sz, sf, mode, align_corners);
+            },
+            py::arg("x"), py::arg("size") = py::none(), py::arg("scale_factor") = py::none(),
+            py::arg("mode") = "nearest", py::arg("align_corners") = false);
+        functional_mod.def("nll_loss", &functional::nll_loss,
+            py::arg("input"), py::arg("target"), py::arg("weight") = nullptr,
+            py::arg("reduction") = "mean", py::arg("ignore_index") = -100);
+        functional_mod.def("bce_with_logits", &functional::bce_with_logits,
+            py::arg("input"), py::arg("target"), py::arg("reduction") = "mean");
+        functional_mod.def("normalize", &functional::normalize,
+            py::arg("x"), py::arg("p") = 2.0, py::arg("dim") = 1, py::arg("eps") = 1e-12);
+        functional_mod.def("glu", &functional::glu,
+            py::arg("x"), py::arg("dim") = -1);
+        functional_mod.def("elu", &functional::elu,
+            py::arg("x"), py::arg("alpha") = 1.0);
+        // === end W1-T5 functional ===
+}

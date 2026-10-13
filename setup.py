@@ -182,7 +182,7 @@ class BuildExt(build_ext):
         if os.environ.get("LT_BUILD_JOBS") == "1":
             orig_compile = self.compiler._compile
             def _lowmem_compile(obj, src, ext_, cc_args, extra_postargs, pp_opts):
-                if src.endswith("python_bindings.cpp"):
+                if src.endswith("python_bindings.cpp") or "/bind_" in src.replace(os.sep, "/"):
                     extra_postargs = [a for a in (extra_postargs or []) if not a.startswith("-O")] + ["-O1"]
                 return orig_compile(obj, src, ext_, cc_args, extra_postargs, pp_opts)
             self.compiler._compile = _lowmem_compile
