@@ -32,7 +32,21 @@ void maybe_barrier() {
 }
 
 void ensure_dir(const std::string& path) {
-    mkdir(path.c_str(), 0755);
+    if (path.empty()) return;
+    std::string cur;
+    size_t i = 0;
+    if (path[0] == '/') { cur = "/"; i = 1; }
+    while (i <= path.size()) {
+        size_t j = path.find('/', i);
+        if (j == std::string::npos) j = path.size();
+        std::string part = path.substr(i, j - i);
+        if (!part.empty()) {
+            cur += part;
+            mkdir(cur.c_str(), 0755);
+            cur += "/";
+        }
+        i = j + 1;
+    }
 }
 
 std::string json_escape_str(const std::string& s) {

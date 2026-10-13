@@ -277,6 +277,9 @@ def run_attempt(args, script_args, nnodes, nproc, node_rank, master_addr, timeou
         print("lt-run: rendezvous server failed: %s" % server_err[0], file=sys.stderr)
         return 1, -1
 
+    if server_thread is not None:
+        server_thread.join(timeout=10)
+
     rank_offset = int(assign["rank_offset"])
     world_size = int(assign["world_size"])
 

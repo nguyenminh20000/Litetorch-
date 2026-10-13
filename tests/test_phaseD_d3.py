@@ -39,6 +39,8 @@ def check_results(res, label):
             if k == "exception":
                 print(f"[FAIL] {label} rank{rank} exception: {v}", flush=True)
                 ok = False
+            elif k == "my_rank":
+                print(f"[INFO] {label} rank{rank} my_rank={v}", flush=True)
             elif v is not True:
                 print(f"[FAIL] {label} rank{rank} {k}={v}", flush=True)
                 ok = False
@@ -52,7 +54,7 @@ def worker_rdzv(rank, world_size, port, out):
     try:
         c = lt.distributed.RendezvousClient("127.0.0.1", port, 15)
         my = c.add("next_rank", 1) - 1
-        r["rank_assign"] = my == rank
+        r["my_rank"] = my
         c.set(f"rank{rank}/addr", f"10.0.0.{rank}")
         peer = 1 - rank if world_size == 2 else rank
         val = c.get(f"rank{peer}/addr", 15)
@@ -78,7 +80,14 @@ def test_rendezvous_store():
     if res is None or len(res) != 2:
         print("[FAIL] rdzv workers hung", flush=True)
         return False
-    return check_results(res, "rdzv")
+    ok = check_results(res, "rdzv")
+    assigned = sorted(res[r].get("my_rank", -1) for r in res)
+    if assigned != [0, 1]:
+        print(f"[FAIL] rdzv atomic rank assignment: got {assigned}, want [0, 1]", flush=True)
+        ok = False
+    else:
+        print("[PASS] rdzv atomic rank assignment {0, 1}", flush=True)
+    return ok
 
 
 def test_heartbeat():
