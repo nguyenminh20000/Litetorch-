@@ -96,11 +96,14 @@ std::shared_ptr<Tensor> Normal::sample(const std::vector<int64_t>& sample_shape)
 }
 
 std::shared_ptr<Tensor> Normal::log_prob(std::shared_ptr<Tensor> value) {
-    auto v = broadcast_param(value, batch_shape());
-    auto out = make_tensor(batch_shape());
+    auto bs = broadcast_shapes({loc, scale, value});
+    auto l = broadcast_param(loc, bs);
+    auto s = broadcast_param(scale, bs);
+    auto v = broadcast_param(value, bs);
+    auto out = make_tensor(bs);
     float* vd = v->data_ptr() + v->offset;
-    float* ld = loc->data_ptr() + loc->offset;
-    float* sd = scale->data_ptr() + scale->offset;
+    float* ld = l->data_ptr() + l->offset;
+    float* sd = s->data_ptr() + s->offset;
     float* od = out->data_ptr() + out->offset;
     size_t n = out->numel();
     for (size_t i = 0; i < n; i++) {

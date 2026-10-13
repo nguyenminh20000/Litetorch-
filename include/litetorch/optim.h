@@ -6,6 +6,7 @@
 #include <memory>
 #include <map>
 #include <string>
+#include <functional>
 
 namespace litetorch {
 namespace optim {
@@ -128,6 +129,38 @@ public:
     std::vector<std::shared_ptr<Tensor>> square_avg;
 
     RMSprop(const std::vector<std::shared_ptr<Tensor>>& params, double lr = 1e-2, float alpha = 0.99f, float eps = 1e-8f, float weight_decay = 0.0f);
+    void step() override;
+    double get_lr() const override { return lr; }
+    void set_lr(double new_lr) override { lr = new_lr; }
+};
+
+class Adadelta : public Optimizer {
+public:
+    double lr;
+    float rho;
+    float eps;
+    float weight_decay;
+    std::vector<std::shared_ptr<Tensor>> square_avg;
+    std::vector<std::shared_ptr<Tensor>> acc_delta;
+
+    Adadelta(const std::vector<std::shared_ptr<Tensor>>& params, double lr = 1.0, float rho = 0.9f, float eps = 1e-6f, float weight_decay = 0.0f);
+    void step() override;
+    double get_lr() const override { return lr; }
+    void set_lr(double new_lr) override { lr = new_lr; }
+};
+
+class Adamax : public Optimizer {
+public:
+    double lr;
+    float beta1;
+    float beta2;
+    float eps;
+    float weight_decay;
+    int step_count = 0;
+    std::vector<std::shared_ptr<Tensor>> exp_avg;
+    std::vector<std::shared_ptr<Tensor>> exp_inf;
+
+    Adamax(const std::vector<std::shared_ptr<Tensor>>& params, double lr = 2e-3, float beta1 = 0.9f, float beta2 = 0.999f, float eps = 1e-8f, float weight_decay = 0.0f);
     void step() override;
     double get_lr() const override { return lr; }
     void set_lr(double new_lr) override { lr = new_lr; }
@@ -270,6 +303,83 @@ public:
     bool is_better(float a, float best_val) const;
     std::map<std::string, double> state_dict() const;
     void load_state_dict(const std::map<std::string, double>& state);
+};
+
+class LambdaLR {
+public:
+    Optimizer* optimizer;
+    std::function<double(int)> lr_lambda;
+    double base_lr;
+    int last_epoch = 0;
+
+    LambdaLR(Optimizer* optimizer, std::function<double(int)> lr_lambda);
+    void step();
+    double get_last_lr() const;
+};
+
+class LinearLR {
+public:
+    Optimizer* optimizer;
+    float start_factor;
+    float end_factor;
+    int total_iters;
+    double base_lr;
+    int last_epoch = 0;
+
+    LinearLR(Optimizer* optimizer, float start_factor = 1.0f / 3, float end_factor = 1.0f, int total_iters = 5);
+    void step();
+    double get_last_lr() const;
+};
+
+class PolynomialLR {
+public:
+    Optimizer* optimizer;
+    int total_iters;
+    float power;
+    double base_lr;
+    int last_epoch = 0;
+
+    PolynomialLR(Optimizer* optimizer, int total_iters = 5, float power = 1.0f);
+    void step();
+    double get_last_lr() const;
+};
+
+class CosineAnnealingWarmRestarts {
+public:
+    Optimizer* optimizer;
+    int T_0;
+    int T_mult;
+    float eta_min;
+    double base_lr;
+    int last_epoch = 0;
+    int T_cur = 0;
+    int T_i;
+
+    CosineAnnealingWarmRestarts(Optimizer* optimizer, int T_0, int T_mult = 1, float eta_min = 0.0f);
+    void step();
+    double get_last_lr() const;
+};
+
+class OneCycleLR {
+public:
+    Optimizer* optimizer;
+    double max_lr;
+    int total_steps;
+    float pct_start;
+    std::string anneal_strategy;
+    float div_factor;
+    float final_div_factor;
+    double initial_lr;
+    double min_lr;
+    int step_size_up;
+    int last_epoch = 0;
+
+    OneCycleLR(Optimizer* optimizer, double max_lr, int total_steps = -1, int epochs = -1,
+               int steps_per_epoch = -1, float pct_start = 0.3f,
+               const std::string& anneal_strategy = "cos", float div_factor = 25.0f,
+               float final_div_factor = 10000.0f);
+    void step();
+    double get_last_lr() const;
 };
 
 }
