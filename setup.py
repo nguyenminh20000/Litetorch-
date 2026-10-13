@@ -187,7 +187,7 @@ class BuildExt(build_ext):
             if compiler_type == "msvc":
                 ext.extra_compile_args = ["/std:c++14", "/O2", "/EHsc", "/bigobj"]
             else:
-                ext.extra_compile_args = ["-std=c++14", "-O3", "-fPIC"]
+                ext.extra_compile_args = ["-std=c++14", "-O1", "-fPIC"]
                 if os.environ.get("LITETORCH_TPU_PJRT") == "1":
                     ext.extra_compile_args.append("-DLITETORCH_TPU_PJRT")
                 if sys.platform.startswith("win"):

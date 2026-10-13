@@ -425,4 +425,7 @@ public:
 }
 }
 
+// === DT-A1 (LT-ENG-018): tensor-parallel collectives; see litetorch/tp_collectives.h ===
+#include "litetorch/tp_collectives.h"
+
 #endif
