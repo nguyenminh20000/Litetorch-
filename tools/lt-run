@@ -181,6 +181,10 @@ def main():
     ap.add_argument("--rdzv-timeout", "--rdzv_timeout", dest="rdzv_timeout", type=int, default=300)
     ap.add_argument("--standalone", action="store_true")
     ap.add_argument("--no-prefix", action="store_true", help="do not prefix worker output with rank")
+    ap.add_argument("--max-restarts", "--max_restarts", dest="max_restarts", type=int, default=0,
+                    help="restart all workers up to N times on failure (elastic training)")
+    ap.add_argument("--restart-delay", "--restart_delay", dest="restart_delay", type=int, default=5,
+                    help="seconds to wait before a restart attempt")
     ap.add_argument("script", help="training script to run")
     ap.add_argument("script_args", nargs=argparse.REMAINDER)
     args = ap.parse_args()
@@ -216,6 +220,31 @@ def main():
         return 2
 
     timeout = args.rdzv_timeout
+    max_restarts = args.max_restarts
+    if max_restarts < 0:
+        print("lt-run: --max-restarts must be >= 0", file=sys.stderr)
+        return 2
+
+    attempt = 0
+    while True:
+        rc, failed_rank = run_attempt(args, script_args, nnodes, nproc, node_rank,
+                                      master_addr, timeout, attempt)
+        if rc == 0:
+            return 0
+        if rc == 130:
+            return 130
+        if attempt >= max_restarts:
+            print("lt-run: worker rank %d exited with code %d; no restarts left" %
+                  (failed_rank, rc), file=sys.stderr)
+            return rc
+        attempt += 1
+        print("lt-run: attempt %d failed (rank %d rc=%d); restarting in %ds (%d/%d)" %
+              (attempt - 1, failed_rank, rc, args.restart_delay, attempt, max_restarts),
+              file=sys.stderr)
+        time.sleep(args.restart_delay)
+
+
+def run_attempt(args, script_args, nnodes, nproc, node_rank, master_addr, timeout, attempt):
     server = None
     server_thread = None
     server_err = []
@@ -235,7 +264,7 @@ def main():
     else:
         if not args.master_port:
             print("lt-run: non-zero node-rank requires --master-port", file=sys.stderr)
-            return 2
+            return 2, -1
         master_port = args.master_port
         actual_master_addr = master_addr
 
@@ -243,10 +272,10 @@ def main():
         assign = rendezvous_client(actual_master_addr, master_port, node_rank, nproc, nnodes, timeout)
     except Exception as e:  # noqa: BLE001
         print("lt-run: rendezvous failed: %s" % e, file=sys.stderr)
-        return 1
+        return 1, -1
     if server_err:
         print("lt-run: rendezvous server failed: %s" % server_err[0], file=sys.stderr)
-        return 1
+        return 1, -1
 
     rank_offset = int(assign["rank_offset"])
     world_size = int(assign["world_size"])
@@ -268,6 +297,7 @@ def main():
             "GROUP_RANK": str(rank),
             "ROLE_RANK": str(rank),
             "ROLE_NAME": "worker",
+            "RESTART_ATTEMPT": str(attempt),
         })
         p = subprocess.Popen(
             [sys.executable, "-u", args.script] + script_args,
@@ -321,14 +351,12 @@ def main():
             time.sleep(0.2)
     except KeyboardInterrupt:
         kill_all()
-        return 130
+        return 130, -1
 
     if server_thread is not None:
         server_thread.join(timeout=5)
 
-    if exit_code != 0:
-        print("lt-run: worker rank %d exited with code %d" % (failed_rank, exit_code), file=sys.stderr)
-    return exit_code
+    return exit_code, failed_rank
 
 
 if __name__ == "__main__":

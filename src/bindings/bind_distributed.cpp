@@ -1,6 +1,9 @@
 #include "bindings_common.h"
 #include "litetorch/dist_checkpoint.h"
+#include "litetorch/elastic.h"
 #include "litetorch/flat_param.h"
+#include "litetorch/fsdp_wrapper.h"
+#include "litetorch/rendezvous.h"
 
 void bind_distributed(py::module_& m) {
         auto dist_mod = m.def_submodule("distributed", "LiteTorch Distributed Modules");
@@ -197,4 +200,66 @@ void bind_distributed(py::module_& m) {
                 return out;
             });
         dist_mod.def("make_flat_param", &distributed::make_flat_param, py::arg("params"));
+
+        // === FSDP-B (LT-ENG-035): FSDP with prefetch + overlap ===
+        py::class_<distributed::FSDPUnit, std::shared_ptr<distributed::FSDPUnit>>(dist_mod, "FSDPUnit")
+            .def("prefetch_gather", &distributed::FSDPUnit::prefetch_gather)
+            .def("ensure_gathered", &distributed::FSDPUnit::ensure_gathered)
+            .def("release_gathered", &distributed::FSDPUnit::release_gathered)
+            .def("is_gathered", &distributed::FSDPUnit::is_gathered);
+        dist_mod.def("fsdp_fully_shard", &distributed::FSDP::fully_shard, py::arg("module"));
+        dist_mod.def("fsdp_set_prefetch_limit", &distributed::FSDP::set_prefetch_limit, py::arg("n"));
+        // === end FSDP-B ===
+
+        // === Phase D3 (LT-ENG-038): elastic restart ===
+        py::class_<distributed::rendezvous::RendezvousStore,
+                   std::shared_ptr<distributed::rendezvous::RendezvousStore>>(dist_mod, "RendezvousStore")
+            .def(py::init<const std::string&, int>(), py::arg("bind_addr"), py::arg("port"))
+            .def("port", &distributed::rendezvous::RendezvousStore::port)
+            .def("run", &distributed::rendezvous::RendezvousStore::run,
+                 py::call_guard<py::gil_scoped_release>())
+            .def("stop", &distributed::rendezvous::RendezvousStore::stop);
+        py::class_<distributed::rendezvous::RendezvousClient,
+                   std::shared_ptr<distributed::rendezvous::RendezvousClient>>(dist_mod, "RendezvousClient")
+            .def(py::init<const std::string&, int, int>(),
+                 py::arg("addr"), py::arg("port"), py::arg("timeout_sec") = 30)
+            .def("set", &distributed::rendezvous::RendezvousClient::set,
+                 py::arg("key"), py::arg("value"))
+            .def("get", &distributed::rendezvous::RendezvousClient::get,
+                 py::arg("key"), py::arg("timeout_sec") = -1)
+            .def("add", &distributed::rendezvous::RendezvousClient::add,
+                 py::arg("key"), py::arg("delta"))
+            .def("heartbeat", &distributed::rendezvous::RendezvousClient::heartbeat, py::arg("rank"))
+            .def("get_heartbeats", &distributed::rendezvous::RendezvousClient::get_heartbeats);
+        dist_mod.def("rendezvous_free_port", &distributed::rendezvous::free_port);
+
+        py::class_<distributed::elastic::HeartbeatAgent,
+                   std::shared_ptr<distributed::elastic::HeartbeatAgent>>(dist_mod, "HeartbeatAgent")
+            .def(py::init<const std::string&, int, int, int>(),
+                 py::arg("store_addr"), py::arg("store_port"), py::arg("rank"),
+                 py::arg("interval_ms") = 1000)
+            .def("start", &distributed::elastic::HeartbeatAgent::start)
+            .def("stop", &distributed::elastic::HeartbeatAgent::stop)
+            .def("running", &distributed::elastic::HeartbeatAgent::running);
+        dist_mod.def("detect_dead_ranks", &distributed::elastic::detect_dead_ranks,
+            py::arg("store_addr"), py::arg("store_port"), py::arg("timeout_ms"));
+        dist_mod.def("save_consistent", [](py::dict local_shards, py::dict shard_specs,
+                                           const std::string& ckpt_dir, int64_t step) {
+            std::map<std::string, std::shared_ptr<Tensor>> shards;
+            for (auto kv : local_shards)
+                shards[kv.first.cast<std::string>()] = kv.second.cast<std::shared_ptr<Tensor>>();
+            std::map<std::string, dist_checkpoint::TensorShardInfo> specs;
+            for (auto kv : shard_specs)
+                specs[kv.first.cast<std::string>()] = kv.second.cast<dist_checkpoint::TensorShardInfo>();
+            distributed::elastic::save_consistent(shards, specs, ckpt_dir, step);
+        }, py::arg("local_shards"), py::arg("shard_specs"), py::arg("ckpt_dir"), py::arg("step"));
+        dist_mod.def("latest_consistent_step", &distributed::elastic::latest_consistent_step,
+            py::arg("ckpt_dir"));
+        dist_mod.def("load_latest", [](py::dict local_shards, const std::string& ckpt_dir) {
+            std::map<std::string, std::shared_ptr<Tensor>> shards;
+            for (auto kv : local_shards)
+                shards[kv.first.cast<std::string>()] = kv.second.cast<std::shared_ptr<Tensor>>();
+            distributed::elastic::load_latest(shards, ckpt_dir);
+        }, py::arg("local_shards"), py::arg("ckpt_dir"));
+        // === end Phase D3 ===
 }
