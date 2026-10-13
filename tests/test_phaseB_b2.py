@@ -52,7 +52,9 @@ def worker(rank, world_size, port, out):
 
         ref = make_linear(4, 8, 100)
         ref_w = lt.Tensor.from_vector(w_before, [8, 4], cpu)
+        ref_w.requires_grad = True
         ref_b = lt.Tensor.from_vector(b_before, [8], cpu)
+        ref_b.requires_grad = True
         ref.weight = ref_w
         ref.bias = ref_b
         y_ref = ref(x)

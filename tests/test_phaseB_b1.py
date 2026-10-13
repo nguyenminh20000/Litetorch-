@@ -24,7 +24,7 @@ def worker(rank, world_size, port, out):
     try:
         p1 = lt.Tensor.from_vector([float(i + 1) for i in range(6)], [2, 3], cpu)
         p2 = lt.Tensor.from_vector([0.5 * (i + 1) for i in range(4)], [4], cpu)
-        p3 = lt.Tensor.from_vector([float(rank)], [1], cpu)
+        p3 = lt.Tensor.from_vector([9.0], [1], cpu)
 
         fp = lt.distributed.FlatParameter([p1, p2, p3])
         r["flat_meta_count"] = len(fp.metadata()) == 3
@@ -34,17 +34,18 @@ def worker(rank, world_size, port, out):
         r["flat_numel"] = fp.flat_numel() == 12 and fp.shard_numel() == 6 and fp.unpadded_numel() == 11
 
         shard = fp.local_shard()
-        full_cat = [float(i + 1) for i in range(6)] + [0.5 * (i + 1) for i in range(4)] + [float(rank)]
-        expect_shard = full_cat[rank * 6:(rank + 1) * 6]
+        full_cat = [float(i + 1) for i in range(6)] + [0.5 * (i + 1) for i in range(4)] + [9.0]
+        full_padded = full_cat + [0.0]
+        expect_shard = full_padded[rank * 6:(rank + 1) * 6]
         r["flat_shard_init"] = allclose(shard.to_vector(), expect_shard)
 
         fp.all_gather_flat()
-        r["flat_all_gather"] = allclose(fp.full_buffer().to_vector(), full_cat)
+        r["flat_all_gather"] = allclose(fp.full_buffer().to_vector(), full_padded)
 
         views = fp.param_views()
         r["flat_views"] = (allclose(views[0].to_vector(), full_cat[0:6]) and
                            allclose(views[1].to_vector(), full_cat[6:10]) and
-                           views[2].to_vector() == [float(rank)] and
+                           views[2].to_vector() == [9.0] and
                            list(views[0].shape) == [2, 3])
 
         grad_full = lt.Tensor.from_vector([1.0] * 12, [12], cpu)

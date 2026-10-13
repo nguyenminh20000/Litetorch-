@@ -146,26 +146,35 @@ public:
 
     FSDPBackwardNode(std::shared_ptr<Node> orig, std::shared_ptr<FSDPUnit> u)
         : Node("FSDPBackward"), orig_creator(orig), unit(u) {
-        if (orig) this->next_nodes = { orig };
+        if (orig) {
+            this->inputs = orig->inputs;
+            this->next_nodes = orig->next_nodes;
+        }
     }
 
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
-        std::unique_ptr<NoGradGuard> ng;
-        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        {
+            std::unique_ptr<NoGradGuard> ng;
+            if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
 
-        auto& stack = FSDPUnit::forward_stack();
-        if (!stack.empty() && stack.back().get() == unit.get()) {
-            stack.pop_back();
-        }
-        if (!stack.empty()) {
-            stack.back()->prefetch_gather();
-        }
+            auto& stack = FSDPUnit::forward_stack();
+            if (!stack.empty() && stack.back().get() == unit.get()) {
+                stack.pop_back();
+            }
+            if (!stack.empty()) {
+                stack.back()->prefetch_gather();
+            }
 
-        unit->ensure_gathered();
+            unit->ensure_gathered();
+        }
 
         std::vector<std::shared_ptr<Tensor>> out;
         if (orig_creator) {
             out = orig_creator->backward(grad_output);
+            if (!Autograd::is_create_graph_) {
+                orig_creator->saved_tensors.clear();
+                orig_creator->output = SavedTensor();
+            }
         } else {
             out = { grad_output };
         }
