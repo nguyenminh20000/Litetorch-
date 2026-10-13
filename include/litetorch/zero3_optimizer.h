@@ -4,6 +4,8 @@
 #include "litetorch/optim.h"
 #include "litetorch/distributed.h"
 #include <unordered_map>
+#include <memory>
+#include <vector>
 
 namespace litetorch {
 namespace optim {
@@ -22,9 +24,11 @@ public:
     void zero_grad();
 
 private:
-    std::unordered_map<Tensor*, std::shared_ptr<Tensor>> m;
-    std::unordered_map<Tensor*, std::shared_ptr<Tensor>> v;
-    int t = 0;
+    std::unordered_map<Tensor*, std::shared_ptr<Tensor>> master;
+    std::vector<std::shared_ptr<Tensor>> master_list;
+    std::unordered_map<Tensor*, size_t> master_index;
+    std::unique_ptr<AdamW> adamw_;
+    void ensure_masters();
 };
 
 }
