@@ -42,6 +42,8 @@
 #include "litetorch/linalg.h"
 // === W3-T2 distributions: includes ===
 #include "litetorch/distributions.h"
+// === DPO (LT-ENG-039): includes ===
+#include "litetorch/dpo.h"
 
 
 

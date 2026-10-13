@@ -364,4 +364,28 @@ void bind_nn_layers(py::module_& m) {
             .def_readwrite("reduction", &nn::CTCLoss::reduction)
             .def_readwrite("zero_infinity", &nn::CTCLoss::zero_infinity);
 
+        // === DPO (LT-ENG-039) ===
+        py::class_<nn::DPOLoss, nn::Module, std::shared_ptr<nn::DPOLoss>>(nn_mod, "DPOLoss")
+            .def(py::init<float, bool, const std::string&>(), py::arg("beta") = 0.1f,
+                 py::arg("reference_free") = false, py::arg("reduction") = "mean")
+            .def("forward", [](nn::DPOLoss& self, std::shared_ptr<Tensor> policy_chosen_logps,
+                               std::shared_ptr<Tensor> policy_rejected_logps,
+                               std::shared_ptr<Tensor> ref_chosen_logps,
+                               std::shared_ptr<Tensor> ref_rejected_logps) {
+                return self.forward(policy_chosen_logps, policy_rejected_logps,
+                                    ref_chosen_logps, ref_rejected_logps);
+            }, py::arg("policy_chosen_logps"), py::arg("policy_rejected_logps"),
+               py::arg("ref_chosen_logps") = nullptr, py::arg("ref_rejected_logps") = nullptr)
+            .def("__call__", [](nn::DPOLoss& self, std::shared_ptr<Tensor> policy_chosen_logps,
+                                std::shared_ptr<Tensor> policy_rejected_logps,
+                                std::shared_ptr<Tensor> ref_chosen_logps,
+                                std::shared_ptr<Tensor> ref_rejected_logps) {
+                return self.forward(policy_chosen_logps, policy_rejected_logps,
+                                    ref_chosen_logps, ref_rejected_logps);
+            }, py::arg("policy_chosen_logps"), py::arg("policy_rejected_logps"),
+               py::arg("ref_chosen_logps") = nullptr, py::arg("ref_rejected_logps") = nullptr)
+            .def_readwrite("beta", &nn::DPOLoss::beta)
+            .def_readwrite("reference_free", &nn::DPOLoss::reference_free)
+            .def_readwrite("reduction", &nn::DPOLoss::reduction);
+        // === end DPO ===
 }

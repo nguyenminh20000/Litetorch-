@@ -193,4 +193,11 @@ void bind_nn_utils(py::module_& m) {
         functional_mod.def("elu", &functional::elu,
             py::arg("x"), py::arg("alpha") = 1.0);
         // === end W1-T5 functional ===
+        // === DPO (LT-ENG-039) ===
+        functional_mod.def("dpo_loss", &functional::dpo_loss,
+            py::arg("policy_chosen_logps"), py::arg("policy_rejected_logps"),
+            py::arg("ref_chosen_logps") = nullptr, py::arg("ref_rejected_logps") = nullptr,
+            py::arg("beta") = 0.1f, py::arg("reference_free") = false,
+            py::arg("reduction") = "mean");
+        // === end DPO ===
 }
