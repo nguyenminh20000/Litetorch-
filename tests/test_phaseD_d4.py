@@ -15,7 +15,7 @@ def make_model():
     return m
 
 def param_snapshot(model):
-    return {k: v.clone() for k, v in model.state_dict()}
+    return {k: v.clone() for k, v in model.state_dict().items()}
 
 def maxdiff(a, b):
     return Ops.abs(a - b).max().item()
@@ -32,11 +32,11 @@ def test_save_load_roundtrip(tmp):
     tr.save_checkpoint(10)
     path = os.path.join(cfg.ckpt_dir, "step-10.safetensors")
     ok &= check("save: file written", os.path.exists(path))
-    for k, v in model.state_dict():
+    for k, v in model.state_dict().items():
         lt.nn.init.fill_(v, 0.0)
     step = tr.load_latest()
     ok &= check("load: returns step", step == 10, f"step={step}")
-    for k, v in model.state_dict():
+    for k, v in model.state_dict().items():
         ok &= check(f"load: {k} restored", maxdiff(v, ref[k]) == 0.0)
     return ok
 
@@ -86,7 +86,7 @@ def test_train_step(tmp):
         loss = Ops.sum(out * out)
         loss.backward()
         tr.train_step()
-    changed = any(maxdiff(v, before[k]) > 0 for k, v in model.state_dict())
+    changed = any(maxdiff(v, before[k]) > 0 for k, v in model.state_dict().items())
     ok &= check("train_step: params updated", changed)
     tr.save_checkpoint(1)
     ok &= check("train: checkpoint saved", tr.latest_step() == 1)

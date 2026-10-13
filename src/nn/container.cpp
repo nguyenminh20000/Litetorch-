@@ -9,10 +9,28 @@
 namespace litetorch {
 namespace nn {
 
-Sequential::Sequential(const std::vector<std::shared_ptr<Module>>& modules) : modules(modules) {}
+Sequential::Sequential(const std::vector<std::shared_ptr<Module>>& modules) {
+    for (auto& module : modules) add(module);
+}
 
 void Sequential::add(std::shared_ptr<Module> module) {
-    modules.push_back(module);
+    add_module(std::to_string(modules.size()), module);
+}
+
+void Sequential::add_module(const std::string& name, std::shared_ptr<Module> module) {
+    if (!module) throw std::runtime_error("[litetorch Error] Sequential::add_module got null module for '" + name + "'");
+    size_t idx = 0;
+    bool found = false;
+    for (auto& kv : named_children()) {
+        if (kv.first == name) { found = true; break; }
+        ++idx;
+    }
+    Module::add_module(name, module);
+    if (found) {
+        if (idx < modules.size()) modules[idx] = module;
+    } else {
+        modules.push_back(module);
+    }
 }
 
 std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
@@ -66,14 +84,14 @@ void Sequential::to(const Device& device) {
 }
 
 void Sequential::train() {
-    Module::train();
+    training = true;
     for (auto& module : modules) {
         module->train();
     }
 }
 
 void Sequential::eval() {
-    Module::eval();
+    training = false;
     for (auto& module : modules) {
         module->eval();
     }
