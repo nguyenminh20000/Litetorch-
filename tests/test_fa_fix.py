@@ -1,6 +1,6 @@
 import math
 import litetorch as lt
-from litetorch import ops
+from litetorch import Ops
 
 def check(name, cond, detail=""):
     print(f"[{'PASS' if cond else 'FAIL'}] {name} {detail}")
@@ -85,11 +85,11 @@ def test_cpu_regression():
     q = lt.Tensor.randn([B, H, T, Dd], d, True)
     k = lt.Tensor.randn([B, H, T, Dd], d, True)
     v = lt.Tensor.randn([B, H, T, Dd], d, True)
-    out = ops.flash_attention(q, k, v, causal=False)
+    out = Ops.flash_attention(q, k, v, causal=False)
     gv = out.to_vector()
     ok_fwd = all(math.isfinite(x) for x in gv) and len(gv) == B * H * T * Dd
     check("cpu_regression: forward finite", ok_fwd)
-    loss = ops.reduce_sum(out)
+    loss = Ops.sum(out)
     loss.backward()
     gq = q.grad.to_vector() if q.grad is not None else []
     ok_bwd = len(gq) == B * H * T * Dd and all(math.isfinite(x) for x in gq)
@@ -97,7 +97,7 @@ def test_cpu_regression():
     q2 = lt.Tensor.randn([B, H, T, Dd], d, True)
     k2 = lt.Tensor.randn([B, H, T, Dd], d, True)
     v2 = lt.Tensor.randn([B, H, T, Dd], d, True)
-    out2 = ops.flash_attention(q2, k2, v2, causal=True)
+    out2 = Ops.flash_attention(q2, k2, v2, causal=True)
     gv2 = out2.to_vector()
     check("cpu_regression: causal forward finite", all(math.isfinite(x) for x in gv2))
 

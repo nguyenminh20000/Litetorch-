@@ -120,8 +120,12 @@ std::shared_ptr<Tensor> VocabParallelEmbedding::forward(std::shared_ptr<Tensor> 
 
     std::vector<int64_t> gshape = in_c->shape;
     gshape.push_back(embed_dim);
-    auto idx_exp = Ops::unsqueeze(safe_ids, -1)->expand(gshape);
-    auto gathered = Ops::gather(weight, 0, idx_exp);
+    int64_t n_total = 1;
+    for (size_t i = 0; i < in_c->shape.size(); ++i) n_total *= in_c->shape[i];
+    auto flat_ids = safe_ids->view({n_total});
+    auto flat_idx = Ops::unsqueeze(flat_ids, -1)->expand({n_total, embed_dim});
+    auto flat_gathered = Ops::gather(weight, 0, flat_idx);
+    auto gathered = flat_gathered->view(gshape);
     std::vector<int64_t> mshape = in_c->shape;
     mshape.push_back(1);
     auto m = mask->view(mshape)->expand(gshape);

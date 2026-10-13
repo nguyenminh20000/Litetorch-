@@ -21,9 +21,9 @@ def ref_attn_np(x, wq, bq, wk, bk, wv, bv, wo, bo, H, KV, D):
     q = x @ wq.T + bq
     k = x @ wk.T + bk
     v = x @ wv.T + bv
-    q4 = q.reshape(B, T, H, D).transpose(0, 2, 1, 3)
-    k4 = k.reshape(B, T, KV, D).transpose(0, 2, 1, 3)
-    v4 = v.reshape(B, T, KV, D).transpose(0, 2, 1, 3)
+    q4 = q.reshape([B, T, H, D]).transpose(0, 2, 1, 3)
+    k4 = k.reshape([B, T, KV, D]).transpose(0, 2, 1, 3)
+    v4 = v.reshape([B, T, KV, D]).transpose(0, 2, 1, 3)
     rep = H // KV
     k4 = np.repeat(k4, rep, axis=1)
     v4 = np.repeat(v4, rep, axis=1)
@@ -31,7 +31,7 @@ def ref_attn_np(x, wq, bq, wk, bk, wv, bv, wo, bo, H, KV, D):
     e = np.exp(s - s.max(axis=-1, keepdims=True))
     p = e / e.sum(axis=-1, keepdims=True)
     c = p @ v4
-    cf = c.transpose(0, 2, 1, 3).reshape(B, T, H * D)
+    cf = c.transpose(0, 2, 1, 3).reshape([B, T, H * D])
     return cf @ wo.T + bo
 
 
@@ -101,20 +101,20 @@ def worker(rank, world_size, port, out):
     xr = lt.Tensor.from_vector(x_np.flatten().tolist(), [B, T, E], cpu, True)
 
     def rlin(xx, w, b):
-        return lt.ops.add(lt.ops.matmul(xx, w.transpose(0, 1)), b.view(1, H2 * D))
+        return lt.Ops.add(lt.Ops.matmul(xx, w.transpose(0, 1)), b.view([1, H2 * D]))
 
     q = rlin(xr, wqr, bqr)
     k = rlin(xr, wkr, bkr)
     v = rlin(xr, wvr, bvr)
-    q4 = q.view(B, T, H2, D).transpose(1, 2).reshape(B * H2, T, D)
-    k4 = k.view(B, T, H2, D).transpose(1, 2).reshape(B * H2, T, D)
-    v4 = v.view(B, T, H2, D).transpose(1, 2).reshape(B * H2, T, D)
-    s = lt.ops.bmm(q4, k4.transpose(1, 2))
-    s = lt.ops.mul(s, lt.Tensor.from_vector([1.0 / np.sqrt(D)], [1], cpu))
-    p = lt.ops.softmax(s, -1)
-    c = lt.ops.bmm(p, v4)
-    cf = c.view(B, H2, T, D).transpose(1, 2).reshape(B, T, H2 * D)
-    ro = lt.ops.add(lt.ops.matmul(cf, wor.transpose(0, 1)), bor.view(1, 1, E))
+    q4 = q.view([B, T, H2, D]).transpose(1, 2).reshape([B * H2, T, D])
+    k4 = k.view([B, T, H2, D]).transpose(1, 2).reshape([B * H2, T, D])
+    v4 = v.view([B, T, H2, D]).transpose(1, 2).reshape([B * H2, T, D])
+    s = lt.Ops.bmm(q4, k4.transpose(1, 2))
+    s = lt.Ops.mul(s, lt.Tensor.from_vector([1.0 / np.sqrt(D)], [1], cpu))
+    p = lt.Ops.softmax(s, -1)
+    c = lt.Ops.bmm(p, v4)
+    cf = c.view([B, H2, T, D]).transpose(1, 2).reshape([B, T, H2 * D])
+    ro = lt.Ops.add(lt.Ops.matmul(cf, wor.transpose(0, 1)), bor.view([1, 1, E]))
     loss_ref = ro.sum()
     loss_ref.backward()
 
@@ -175,8 +175,8 @@ def worker(rank, world_size, port, out):
 
     wfull = lt.Tensor.from_vector(wfull_np.flatten().tolist(), [V, Dd], cpu, True)
     hnr = lt.Tensor.from_vector(hn_np.flatten().tolist(), [N, Dd], cpu, True)
-    full_logits = lt.ops.matmul(hnr, wfull.transpose(0, 1))
-    ref_loss = lt.ops.cross_entropy_loss(full_logits, tgt)
+    full_logits = lt.Ops.matmul(hnr, wfull.transpose(0, 1))
+    ref_loss = lt.Ops.cross_entropy_loss(full_logits, tgt)
     r["ce_fwd"] = abs(loss.item() - ref_loss.item()) < 1e-4
 
     loss.backward()

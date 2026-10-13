@@ -168,8 +168,7 @@ static std::shared_ptr<Tensor> linear_shard(std::shared_ptr<Tensor> x,
     auto w_t = ensure_contig(w)->transpose(0, 1);
     auto out = Ops::matmul(x, w_t);
     if (b) {
-        std::vector<int64_t> bs = {1};
-        for (size_t i = 1; i < out->shape.size(); ++i) bs.push_back(out->shape[i]);
+        std::vector<int64_t> bs(out->shape.size(), 1);
         bs.back() = b->shape[0];
         auto bv = b->view(bs);
         out = Ops::add(out, bv);
