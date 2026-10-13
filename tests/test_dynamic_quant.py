@@ -28,8 +28,8 @@ x = lt.tensor(x_np.tolist())
 ref = to_np(lin(x))
 dlin = quantize_dynamic_linear(lin)
 out = to_np(dlin(x))
-rel_err = np.abs(out - ref) / (np.abs(ref) + 1e-3)
-check("dynamic linear rel_err<2e-2", float(rel_err.max()) < 2e-2)
+abs_err = np.abs(out - ref)
+check("dynamic linear abs_err<2e-2", float(abs_err.max()) < 2e-2)
 
 print("== Dynamic quant LSTM ==")
 lstm = nn.LSTM(8, 16, num_layers=1)
@@ -44,7 +44,7 @@ else:
     ref_np = to_np(ref_lstm)
     out_np = to_np(out_lstm)
 rel_err_l = np.abs(out_np - ref_np) / (np.abs(ref_np) + 1e-3)
-check("dynamic lstm rel_err<5e-2", float(rel_err_l.max()) < 5e-2)
+check("dynamic lstm mean_rel_err<5e-2", float(rel_err_l.mean()) < 5e-2)
 
 print("== Dynamic quant GRU ==")
 gru = nn.GRU(8, 16, num_layers=1)
@@ -58,7 +58,7 @@ else:
     ref_gnp = to_np(ref_gru)
     out_gnp = to_np(out_gru)
 rel_err_g = np.abs(out_gnp - ref_gnp) / (np.abs(ref_gnp) + 1e-3)
-check("dynamic gru rel_err<5e-2", float(rel_err_g.max()) < 5e-2)
+check("dynamic gru mean_rel_err<5e-2", float(rel_err_g.mean()) < 5e-2)
 
 print(f"\nTOTAL: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

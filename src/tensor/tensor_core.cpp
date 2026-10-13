@@ -61,6 +61,16 @@ uint8_t float_to_fp8_e4m3(float val) {
         return (sign << 7) | 0x7E;
     }
     uint32_t m = mant >> 20;
+    uint32_t round_bit = (mant >> 19) & 1;
+    uint32_t sticky = mant & 0x7FFFF;
+    if (round_bit && (sticky || (m & 1))) {
+        m++;
+        if (m >= 8) {
+            m = 0;
+            new_exp++;
+            if (new_exp >= 15) return (sign << 7) | 0x7E;
+        }
+    }
     return (sign << 7) | (new_exp << 3) | m;
 }
 
@@ -99,6 +109,16 @@ uint8_t float_to_fp8_e5m2(float val) {
         return (sign << 7) | 0x7B;
     }
     uint32_t m = mant >> 21;
+    uint32_t round_bit = (mant >> 20) & 1;
+    uint32_t sticky = mant & 0xFFFFF;
+    if (round_bit && (sticky || (m & 1))) {
+        m++;
+        if (m >= 4) {
+            m = 0;
+            new_exp++;
+            if (new_exp >= 31) return (sign << 7) | 0x7B;
+        }
+    }
     return (sign << 7) | (new_exp << 2) | m;
 }
 

@@ -154,6 +154,16 @@ __device__ inline unsigned char dev_float_to_fp8_e4m3(float val) {
         return static_cast<unsigned char>((sign_bit << 7) | 0x7E);
     }
     unsigned int m = mant_bits >> 20;
+    unsigned int round_bit = (mant_bits >> 19) & 1;
+    unsigned int sticky = mant_bits & 0x7FFFF;
+    if (round_bit && (sticky || (m & 1))) {
+        m++;
+        if (m >= 8) {
+            m = 0;
+            new_exp++;
+            if (new_exp >= 15) return static_cast<unsigned char>((sign_bit << 7) | 0x7E);
+        }
+    }
     return static_cast<unsigned char>((sign_bit << 7) | (new_exp << 3) | m);
 }
 
@@ -191,6 +201,16 @@ __device__ inline unsigned char dev_float_to_fp8_e5m2(float val) {
         return static_cast<unsigned char>((sign_bit << 7) | 0x7B);
     }
     unsigned int m = mant_bits >> 21;
+    unsigned int round_bit = (mant_bits >> 20) & 1;
+    unsigned int sticky = mant_bits & 0xFFFFF;
+    if (round_bit && (sticky || (m & 1))) {
+        m++;
+        if (m >= 4) {
+            m = 0;
+            new_exp++;
+            if (new_exp >= 31) return static_cast<unsigned char>((sign_bit << 7) | 0x7B);
+        }
+    }
     return static_cast<unsigned char>((sign_bit << 7) | (new_exp << 2) | m);
 }
 

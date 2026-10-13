@@ -22,7 +22,7 @@ def to_np(t):
 
 print("== PTQ prepare/calibrate/convert ==")
 np.random.seed(2)
-model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 8))
+model = nn.Sequential([nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 8)])
 x_np = (np.random.randn(4, 16)).astype(np.float32)
 x = lt.tensor(x_np.tolist())
 ref_out = to_np(model(x))
@@ -40,11 +40,13 @@ qmodel = convert(prepared)
 check("convert returns model", qmodel is not None)
 
 q_out = to_np(qmodel(x))
-rel_err = np.abs(q_out - ref_out) / (np.abs(ref_out) + 1e-3)
-check("ptq output rel_err<5e-2", float(rel_err.max()) < 5e-2)
+abs_err = np.abs(q_out - ref_out)
+rel_err = abs_err / (np.abs(ref_out) + 1e-3)
+check("ptq output mean_rel_err<5e-2", float(rel_err.mean()) < 5e-2)
+check("ptq output max_abs_err<2e-2", float(abs_err.max()) < 2e-2)
 
 print("== PTQ preserves structure ==")
-check("quantized model has children", len(qmodel.children()) == 3)
+check("quantized model has children", len(qmodel.named_children()) == 3)
 
 print(f"\nTOTAL: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

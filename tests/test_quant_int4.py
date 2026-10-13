@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, "python")
 import numpy as np
 import litetorch as lt
-from litetorch import ops, nn
+ops = lt.Ops
 
 passed = 0
 failed = 0
@@ -44,7 +44,7 @@ w_scale_np = np.abs(w_np).max(axis=1) / 7.0
 w_q = np.round(w_np / w_scale_np[:, None]).clip(-8, 7).astype(np.int32)
 x_t = lt.tensor(x_np.tolist())
 wq_t = lt.tensor(w_q.tolist(), dtype=lt.INT8)
-packed_w = ops.int4_pack(wq_t.reshape([8 * 8])).reshape([8, 8])
+packed_w = ops.int4_pack(wq_t.reshape([8 * 16])).reshape([8, 8])
 scale_t = lt.tensor(w_scale_np.tolist())
 out = ops.int4_weight_only_linear(x_t, packed_w, scale_t)
 out_np = to_np(out)

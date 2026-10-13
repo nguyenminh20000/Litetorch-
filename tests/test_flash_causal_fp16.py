@@ -1,6 +1,8 @@
+import sys
+sys.path.insert(0, "python")
 import math
 import litetorch as lt
-from litetorch import ops
+ops = lt.Ops
 
 def manual_causal_attention(q, k, v):
     B, H, T, D = q.shape
