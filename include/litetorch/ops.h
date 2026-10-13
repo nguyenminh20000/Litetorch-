@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <tuple>
 
 namespace litetorch {
 namespace Ops {
@@ -209,8 +210,14 @@ std::shared_ptr<Tensor> flatten(std::shared_ptr<Tensor> a, int64_t start_dim = 0
 std::shared_ptr<Tensor> repeat(std::shared_ptr<Tensor> a, const std::vector<int64_t>& repeats);
 std::shared_ptr<Tensor> narrow(std::shared_ptr<Tensor> a, int64_t dim, int64_t start, int64_t length);
 std::shared_ptr<Tensor> t(std::shared_ptr<Tensor> a);
+
+// === LT-ENG-022 fused MFU kernels ===
+std::shared_ptr<Tensor> fused_swiglu(std::shared_ptr<Tensor> gate, std::shared_ptr<Tensor> up);
+std::tuple<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> fused_qkv_proj(
+    std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> wq,
+    std::shared_ptr<Tensor> wk, std::shared_ptr<Tensor> wv);
+// === end LT-ENG-022 ===
 }
-// === end W1-T1 core-ops ===
 }
 
 #endif

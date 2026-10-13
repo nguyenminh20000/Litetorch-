@@ -813,6 +813,10 @@ PYBIND11_MODULE(litetorch, m) {
     ops.def("flash_decoding", &Ops::flash_decoding);
     ops.def("ring_attention", &Ops::ring_attention);
     ops.def("checkpoint", &Ops::checkpoint, py::arg("module"), py::arg("input"));
+    // === LT-ENG-022 fused MFU kernels ===
+    ops.def("fused_swiglu", &Ops::fused_swiglu, py::arg("gate"), py::arg("up"));
+    ops.def("fused_qkv_proj", &Ops::fused_qkv_proj, py::arg("x"), py::arg("wq"), py::arg("wk"), py::arg("wv"));
+    // === end LT-ENG-022 ===
 
     m.def("checkpoint", &litetorch::checkpoint, "Activation Checkpointing helper");
 

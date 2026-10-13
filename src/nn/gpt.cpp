@@ -99,9 +99,23 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
 
     auto h = attn_norm->forward(x);
 
-    auto q = q_proj->forward(h);
-    auto k = k_proj->forward(h);
-    auto v = v_proj->forward(h);
+    std::shared_ptr<Tensor> q, k, v;
+    bool fused_qkv_ok = h->device.type == DeviceType::CPU &&
+        q_proj->weight->dtype != DataType::INT8 &&
+        k_proj->weight->dtype != DataType::INT8 &&
+        v_proj->weight->dtype != DataType::INT8 &&
+        !q_proj->bias && !k_proj->bias && !v_proj->bias &&
+        !q_proj->scales && !k_proj->scales && !v_proj->scales;
+    if (fused_qkv_ok) {
+        auto qkv = Ops::fused_qkv_proj(h, q_proj->weight, k_proj->weight, v_proj->weight);
+        q = std::get<0>(qkv);
+        k = std::get<1>(qkv);
+        v = std::get<2>(qkv);
+    } else {
+        q = q_proj->forward(h);
+        k = k_proj->forward(h);
+        v = v_proj->forward(h);
+    }
 
     auto q_c = q->is_contiguous() ? q : q->contiguous();
     auto k_c = k->is_contiguous() ? k : k->contiguous();
@@ -131,8 +145,13 @@ std::shared_ptr<Tensor> GPTBlock::forward(std::shared_ptr<Tensor> x) {
     auto h2 = ffn_norm->forward(x1);
     auto gate = gate_proj->forward(h2);
     auto up = up_proj->forward(h2);
-    auto silu_gate = Ops::mul(gate, Ops::sigmoid(gate));
-    auto swiglu = Ops::mul(silu_gate, up);
+    std::shared_ptr<Tensor> swiglu;
+    if (h2->device.type == DeviceType::CPU) {
+        swiglu = Ops::fused_swiglu(gate, up);
+    } else {
+        auto silu_gate = Ops::mul(gate, Ops::sigmoid(gate));
+        swiglu = Ops::mul(silu_gate, up);
+    }
     auto ffn_out = down_proj->forward(swiglu);
 
     return Ops::add(x1, ffn_out);
