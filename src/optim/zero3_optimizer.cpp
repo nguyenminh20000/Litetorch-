@@ -54,17 +54,22 @@ void ZeRO3Optimizer::step() {
         auto mit = master.find(active.get());
         if (mit == master.end()) continue;
         auto mst = mit->second;
-        mst->grad = nullptr;
 
         bool is_replicated = !p->shard;
         int owner_rank = 0;
         if (is_replicated) {
             owner_rank = static_cast<int>(rep_idx % static_cast<size_t>(world_size));
             rep_idx++;
-            if (pg_init && rank != owner_rank) continue;
+            if (pg_init && rank != owner_rank) {
+                mst->grad = nullptr;
+                continue;
+            }
         }
 
-        if (!active->grad) continue;
+        if (!active->grad) {
+            mst->grad = nullptr;
+            continue;
+        }
         auto g = active->grad;
         std::shared_ptr<Tensor> g32;
         if (g->dtype != DataType::FP32) {

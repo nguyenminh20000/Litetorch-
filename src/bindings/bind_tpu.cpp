@@ -58,6 +58,7 @@ void bind_tpu(py::module_& m) {
             .def_readwrite("device", &Tensor::device)
             .def_readwrite("requires_grad", &Tensor::requires_grad)
             .def_readwrite("grad", &Tensor::grad)
+            .def_readwrite("shard", &Tensor::shard)
             .def("numel", &Tensor::numel)
             .def("item", &Tensor::item)
             .def("to_vector", &Tensor::to_vector)
