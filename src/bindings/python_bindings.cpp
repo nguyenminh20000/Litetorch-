@@ -17,6 +17,7 @@ void bind_autograd(py::module_& m);
 void bind_distributions(py::module_& m);
 void bind_fft(py::module_& m);
 void bind_onnx(py::module_& m);
+void bind_inference(py::module_& m);
 
 PYBIND11_MODULE(litetorch, m) {
     m.doc() = "LiteTorch Python Bindings";
@@ -37,4 +38,5 @@ PYBIND11_MODULE(litetorch, m) {
     bind_distributions(m);
     bind_fft(m);
     bind_onnx(m);
+    bind_inference(m);
 }

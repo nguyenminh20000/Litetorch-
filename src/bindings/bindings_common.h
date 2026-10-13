@@ -44,6 +44,8 @@
 #include "litetorch/distributions.h"
 // === DPO (LT-ENG-039): includes ===
 #include "litetorch/dpo.h"
+// === I2 inference (LT-ENG-051): includes ===
+#include "litetorch/inference.h"
 
 
 
