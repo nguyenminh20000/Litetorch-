@@ -70,6 +70,10 @@ public:
 
     AdamW(const std::vector<std::shared_ptr<Tensor>>& params, double lr = 1e-3, float beta1 = 0.9f, float beta2 = 0.999f, float eps = 1e-8f, float weight_decay = 0.0f, bool offload_to_cpu = false);
     void step() override;
+    void step_single(size_t i, const std::shared_ptr<Tensor>& p, const std::shared_ptr<Tensor>& g_c, float bias_correction1, float bias_correction2);
+    static int fused_launch_count();
+    static int single_launch_count();
+    static void reset_launch_counts();
     double get_lr() const override { return lr; }
     void set_lr(double new_lr) override { lr = new_lr; }
 };
