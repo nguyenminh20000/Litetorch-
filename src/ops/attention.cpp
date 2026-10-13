@@ -68,19 +68,19 @@ public:
             storages.push_back(grad_q->storage);
             storages.push_back(grad_k->storage);
             storages.push_back(grad_v->storage);
-            std::shared_ptr<Tensor> saved_p;
+            std::shared_ptr<Tensor> saved_lse;
             if (saved_tensors.size() > 4 && saved_tensors[4]) {
-                saved_p = saved_tensors[4]->is_contiguous() ? saved_tensors[4] : saved_tensors[4]->contiguous();
-                storages.push_back(saved_p->storage);
+                saved_lse = saved_tensors[4]->is_contiguous() ? saved_tensors[4] : saved_tensors[4]->contiguous();
+                storages.push_back(saved_lse->storage);
             }
             StorageUseGuard guard(storages);
             if (q->dtype == DataType::FP16) {
-                if (saved_p) {
-                    BackendDispatcher::get().get_backend()->flash_attention_backward_half_with_p(
+                if (saved_lse) {
+                    BackendDispatcher::get().get_backend()->flash_attention_backward_half_with_lse(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                        saved_p->gpu_data(), saved_p->offset,
+                        saved_lse->gpu_data(), saved_lse->offset,
                         B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 } else {
@@ -92,12 +92,12 @@ public:
                     );
                 }
             } else {
-                if (saved_p) {
-                    BackendDispatcher::get().get_backend()->flash_attention_backward_with_p(
+                if (saved_lse) {
+                    BackendDispatcher::get().get_backend()->flash_attention_backward_with_lse(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                        saved_p->gpu_data(), saved_p->offset,
+                        saved_lse->gpu_data(), saved_lse->offset,
                         B, H, H_kv, Tq, Tk, D, scale, causal
                     );
                 } else {
@@ -279,30 +279,30 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
 
     float scale = 1.0f / std::sqrt(static_cast<float>(D));
 
-    bool need_p = q->requires_grad || k->requires_grad || v->requires_grad;
-    std::shared_ptr<Tensor> attn_p;
-    bool p_saved = false;
-    if (need_p && q_c->device.type == DeviceType::GPU) {
-        attn_p = Tensor::create({B, H, Tq, Tk}, q_c->device, false, q_c->dtype);
+    bool need_lse = q->requires_grad || k->requires_grad || v->requires_grad;
+    std::shared_ptr<Tensor> attn_lse;
+    bool lse_saved = false;
+    if (need_lse && q_c->device.type == DeviceType::GPU) {
+        attn_lse = Tensor::create({B, H, Tq}, q_c->device, false, DataType::FP32);
     }
 
     bool run_gpu = false;
     if (q_c->device.type == DeviceType::GPU) {
         std::vector<std::shared_ptr<StorageImpl>> fwd_storages = {q_c->storage, k_c->storage, v_c->storage, out->storage};
-        if (attn_p) fwd_storages.push_back(attn_p->storage);
+        if (attn_lse) fwd_storages.push_back(attn_lse->storage);
         StorageUseGuard guard(fwd_storages);
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
             run_gpu = true;
             if (q_c->dtype == DataType::FP16) {
-                if (attn_p) {
-                    p_saved = native->flash_attention_half_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
+                if (attn_lse) {
+                    lse_saved = native->flash_attention_half_forward_save_lse(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_lse->gpu_data(), attn_lse->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 } else {
                     native->flash_attention_half(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 }
             } else {
-                if (attn_p) {
-                    p_saved = native->flash_attention_forward_save_p(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
+                if (attn_lse) {
+                    lse_saved = native->flash_attention_forward_save_lse(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, attn_lse->gpu_data(), attn_lse->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 } else {
                     native->flash_attention(q_c->gpu_data(), q_c->offset, k_c->gpu_data(), k_c->offset, v_c->gpu_data(), v_c->offset, out->gpu_data(), out->offset, B, H, H_kv, Tq, Tk, D, scale, causal);
                 }
@@ -423,7 +423,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
         node->saved_tensors = { q_c, k_c, v_c, out };
-        if (p_saved && attn_p) node->saved_tensors.push_back(attn_p);
+        if (lse_saved && attn_lse) node->saved_tensors.push_back(attn_lse);
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -733,7 +733,7 @@ public:
         auto q = saved_tensors[1];
         auto k = saved_tensors[2];
         auto v = saved_tensors[3];
-        std::shared_ptr<Tensor> saved_p = saved_tensors.size() > 5 ? saved_tensors[5] : nullptr;
+        std::shared_ptr<Tensor> saved_lse = saved_tensors.size() > 5 ? saved_tensors[5] : nullptr;
         int64_t B = q->shape[0];
         int64_t H = q->shape[1];
         int64_t T = q->shape[2];
@@ -753,15 +753,15 @@ public:
             (q->dtype == DataType::FP32 || q->dtype == DataType::FP16)) {
             std::vector<std::shared_ptr<StorageImpl>> storages = {q->storage, k->storage, v->storage,
                 out_c->storage, gout_c->storage, grad_q->storage, grad_k->storage, grad_v->storage};
-            if (saved_p) storages.push_back(saved_p->storage);
+            if (saved_lse) storages.push_back(saved_lse->storage);
             StorageUseGuard guard(storages);
             if (q->dtype == DataType::FP16) {
-                if (saved_p) {
-                    native->flash_attention_backward_half_with_p(
+                if (saved_lse) {
+                    native->flash_attention_backward_half_with_lse(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                         out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                        saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale, causal);
+                        saved_lse->gpu_data(), saved_lse->offset, B, H, H_kv, T, Tk, D, scale, causal);
                 } else {
                     native->flash_attention_backward_half(
                         grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
@@ -769,12 +769,12 @@ public:
                         q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
                         B, H, H_kv, T, Tk, D, scale, causal);
                 }
-            } else if (saved_p) {
-                native->flash_attention_backward_with_p(
+            } else if (saved_lse) {
+                native->flash_attention_backward_with_lse(
                     grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
                     out_c->gpu_data(), out_c->offset, gout_c->gpu_data(), gout_c->offset,
                     q->gpu_data(), q->offset, k->gpu_data(), k->offset, v->gpu_data(), v->offset,
-                    saved_p->gpu_data(), saved_p->offset, B, H, H_kv, T, Tk, D, scale, causal);
+                    saved_lse->gpu_data(), saved_lse->offset, B, H, H_kv, T, Tk, D, scale, causal);
             } else {
                 native->flash_attention_backward(
                     grad_q->gpu_data(), grad_q->offset, grad_k->gpu_data(), grad_k->offset, grad_v->gpu_data(), grad_v->offset,
@@ -813,31 +813,31 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
     qkv_do_split(qkv_c, q, k, v, B, T, H, D);
     auto out = Tensor::create({B, H, T, D}, qkv_c->device, false, qkv_c->dtype);
     float scale = 1.0f / std::sqrt(static_cast<float>(D));
-    std::shared_ptr<Tensor> attn_p;
-    bool p_saved = false;
-    bool need_p = qkv->requires_grad;
-    if (need_p && qkv_c->device.type == DeviceType::GPU) {
-        attn_p = Tensor::create({B, H, T, T}, qkv_c->device, false, qkv_c->dtype);
+    std::shared_ptr<Tensor> attn_lse;
+    bool lse_saved = false;
+    bool need_lse = qkv->requires_grad;
+    if (need_lse && qkv_c->device.type == DeviceType::GPU) {
+        attn_lse = Tensor::create({B, H, T}, qkv_c->device, false, DataType::FP32);
     }
     auto native = BackendDispatcher::get().get_backend();
     bool run_gpu = false;
     if (qkv_c->device.type == DeviceType::GPU && native && native->is_available()) {
         run_gpu = true;
         std::vector<std::shared_ptr<StorageImpl>> fwd_storages = {q->storage, k->storage, v->storage, out->storage};
-        if (attn_p) fwd_storages.push_back(attn_p->storage);
+        if (attn_lse) fwd_storages.push_back(attn_lse->storage);
         StorageUseGuard guard(fwd_storages);
         if (q->dtype == DataType::FP16) {
-            if (attn_p) {
-                p_saved = native->flash_attention_half_forward_save_p(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
-                    v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset,
+            if (attn_lse) {
+                lse_saved = native->flash_attention_half_forward_save_lse(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                    v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_lse->gpu_data(), attn_lse->offset,
                     B, H, H, T, T, D, scale, causal);
             } else {
                 native->flash_attention_half(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
                     v->gpu_data(), v->offset, out->gpu_data(), out->offset, B, H, H, T, T, D, scale, causal);
             }
-        } else if (attn_p) {
-            p_saved = native->flash_attention_forward_save_p(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
-                v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_p->gpu_data(), attn_p->offset,
+        } else if (attn_lse) {
+            lse_saved = native->flash_attention_forward_save_lse(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
+                v->gpu_data(), v->offset, out->gpu_data(), out->offset, attn_lse->gpu_data(), attn_lse->offset,
                 B, H, H, T, T, D, scale, causal);
         } else {
             native->flash_attention(q->gpu_data(), q->offset, k->gpu_data(), k->offset,
@@ -852,7 +852,7 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
         node->saved_tensors = { qkv_c, q, k, v, out };
-        if (p_saved && attn_p) node->saved_tensors.push_back(attn_p);
+        if (lse_saved && attn_lse) node->saved_tensors.push_back(attn_lse);
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
