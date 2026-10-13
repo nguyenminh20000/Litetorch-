@@ -51,6 +51,37 @@ private:
     void wait_sends_();
 };
 
+class InterleavedPipelineModule : public nn::Module {
+public:
+    explicit InterleavedPipelineModule(std::vector<std::shared_ptr<nn::Module>> chunks);
+
+    std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
+    std::vector<std::shared_ptr<Tensor>> schedule_interleaved_1f1b(
+        const std::vector<std::shared_ptr<Tensor>>& microbatches);
+    std::vector<std::shared_ptr<Tensor>> train_step_interleaved_1f1b(
+        const std::vector<std::shared_ptr<Tensor>>& microbatches,
+        std::function<std::shared_ptr<Tensor>(std::shared_ptr<Tensor>, int)> loss_fn = nullptr);
+
+    std::vector<std::shared_ptr<Tensor>> parameters() override;
+    void to(const Device& device) override;
+
+    void sync();
+    int num_chunks() const;
+
+    std::vector<std::shared_ptr<nn::Module>> chunks_;
+
+private:
+    int rank_() const;
+    int world_size_() const;
+    bool active_() const;
+    Device stage_device_(std::shared_ptr<Tensor> ref) const;
+    void validate_microbatches_(const std::vector<std::shared_ptr<Tensor>>& mbs) const;
+    void validate_chunks_() const;
+
+    std::vector<std::shared_ptr<Work>> pending_sends_;
+    void wait_sends_();
+};
+
 }
 }
 
