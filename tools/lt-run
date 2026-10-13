@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+
+def send_msg(conn, obj):
+    data = json.dumps(obj).encode("utf-8")
+    conn.sendall(struct.pack(">I", len(data)) + data)
+
+
+def recv_msg(conn):
+    hdr = b""
+    while len(hdr) < 4:
+        chunk = conn.recv(4 - len(hdr))
+        if not chunk:
+            raise RuntimeError("rendezvous connection closed")
+        hdr += chunk
+    n = struct.unpack(">I", hdr)[0]
+    if n > 16 * 1024 * 1024:
+        raise RuntimeError("rendezvous message too large")
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            raise RuntimeError("rendezvous connection closed")
+        buf += chunk
+    return json.loads(buf.decode("utf-8"))
+
+
+class RendezvousServer:
+    def __init__(self, nnodes, timeout, port=0):
+        self.nnodes = nnodes
+        self.timeout = timeout
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("0.0.0.0", port))
+        self.sock.listen(64)
+        self.port = self.sock.getsockname()[1]
+        self.regs = {}
+        self.conns = {}
+        self.lock = threading.Lock()
+        self.all_joined = threading.Event()
+        self.all_ready = threading.Event()
+
+    def _handle(self, conn):
+        try:
+            msg = recv_msg(conn)
+            if msg.get("op") != "join":
+                return
+            nr = int(msg["node_rank"])
+            with self.lock:
+                if nr in self.regs:
+                    send_msg(conn, {"op": "error", "msg": "duplicate node_rank"})
+                    return
+                self.regs[nr] = {
+                    "nproc": int(msg["nproc"]),
+                    "hostname": msg.get("hostname", ""),
+                }
+                self.conns[nr] = conn
+                if len(self.regs) == self.nnodes:
+                    self.all_joined.set()
+            if not self.all_joined.wait(self.timeout):
+                return
+            with self.lock:
+                order = sorted(self.regs)
+                offset = 0
+                offsets = {}
+                for r in order:
+                    offsets[r] = offset
+                    offset += self.regs[r]["nproc"]
+                world = offset
+            send_msg(conn, {
+                "op": "assign",
+                "rank_offset": offsets[nr],
+                "world_size": world,
+                "node_rank": nr,
+                "nnodes": self.nnodes,
+            })
+            msg2 = recv_msg(conn)
+            if msg2.get("op") != "ready":
+                return
+            with self.lock:
+                ready = getattr(self, "_ready", set())
+                ready.add(nr)
+                self._ready = ready
+                if len(ready) == self.nnodes:
+                    self.all_ready.set()
+            if not self.all_ready.wait(self.timeout):
+                return
+            send_msg(conn, {"op": "go"})
+        except (OSError, RuntimeError):
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def run(self):
+        deadline = time.time() + self.timeout
+        self.sock.settimeout(1.0)
+        while not self.all_joined.is_set():
+            if time.time() > deadline:
+                raise RuntimeError("rendezvous timed out waiting for nodes: got %d/%d" % (len(self.regs), self.nnodes))
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            t = threading.Thread(target=self._handle, args=(conn,), daemon=True)
+            t.start()
+        if not self.all_ready.wait(self.timeout):
+            raise RuntimeError("rendezvous timed out waiting for ready barrier")
+        self.sock.close()
+
+
+def rendezvous_client(master_addr, master_port, node_rank, nproc, nnodes, timeout):
+    deadline = time.time() + timeout
+    conn = None
+    while time.time() < deadline:
+        try:
+            conn = socket.create_connection((master_addr, master_port), timeout=5)
+            break
+        except OSError:
+            time.sleep(0.5)
+    if conn is None:
+        raise RuntimeError("could not connect to rendezvous at %s:%d" % (master_addr, master_port))
+    conn.settimeout(timeout)
+    try:
+        send_msg(conn, {
+            "op": "join",
+            "node_rank": node_rank,
+            "nproc": nproc,
+            "nnodes": nnodes,
+            "hostname": socket.gethostname(),
+        })
+        msg = recv_msg(conn)
+        if msg.get("op") == "error":
+            raise RuntimeError("rendezvous rejected: %s" % msg.get("msg"))
+        assert msg.get("op") == "assign", msg
+        send_msg(conn, {"op": "ready", "node_rank": node_rank})
+        msg2 = recv_msg(conn)
+        assert msg2.get("op") == "go", msg2
+        return msg
+    finally:
+        conn.close()
+
+
+def free_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+def stream_prefix(proc, rank, out_lock):
+    for line in proc.stdout:
+        with out_lock:
+            sys.stdout.write("[rank %d] %s" % (rank, line))
+            sys.stdout.flush()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="lt-run",
+        description="LiteTorch multi-process launcher (torchrun equivalent)")
+    ap.add_argument("--nnodes", default="1")
+    ap.add_argument("--nproc-per-node", "--nproc_per_node", dest="nproc_per_node", default="1")
+    ap.add_argument("--node-rank", "--node_rank", dest="node_rank", type=int, default=0)
+    ap.add_argument("--master-addr", "--master_addr", dest="master_addr", default="127.0.0.1")
+    ap.add_argument("--master-port", "--master_port", dest="master_port", type=int, default=0)
+    ap.add_argument("--rdzv-backend", "--rdzv_backend", dest="rdzv_backend", default="tcp")
+    ap.add_argument("--rdzv-timeout", "--rdzv_timeout", dest="rdzv_timeout", type=int, default=300)
+    ap.add_argument("--standalone", action="store_true")
+    ap.add_argument("--no-prefix", action="store_true", help="do not prefix worker output with rank")
+    ap.add_argument("script", help="training script to run")
+    ap.add_argument("script_args", nargs=argparse.REMAINDER)
+    args = ap.parse_args()
+
+    if args.rdzv_backend != "tcp":
+        print("lt-run: only tcp rdzv backend is supported", file=sys.stderr)
+        return 2
+
+    nnodes_spec = args.nnodes
+    if ":" in nnodes_spec:
+        lo, hi = nnodes_spec.split(":")
+        nnodes = int(hi)
+    else:
+        nnodes = int(nnodes_spec)
+    nproc = int(args.nproc_per_node)
+    if nnodes < 1 or nproc < 1:
+        print("lt-run: nnodes and nproc-per-node must be >= 1", file=sys.stderr)
+        return 2
+
+    script_args = list(args.script_args)
+    if script_args and script_args[0] == "--":
+        script_args = script_args[1:]
+
+    if args.standalone:
+        nnodes = 1
+        node_rank = 0
+        master_addr = "127.0.0.1"
+    else:
+        node_rank = args.node_rank
+        master_addr = args.master_addr
+    if not (0 <= node_rank < nnodes):
+        print("lt-run: node-rank must be in [0, nnodes)", file=sys.stderr)
+        return 2
+
+    timeout = args.rdzv_timeout
+    server = None
+    server_thread = None
+    server_err = []
+
+    if node_rank == 0:
+        master_port = args.master_port or free_port()
+        server = RendezvousServer(nnodes, timeout, port=master_port)
+        master_port = server.port
+        def run_server():
+            try:
+                server.run()
+            except Exception as e:  # noqa: BLE001
+                server_err.append(e)
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
+        actual_master_addr = "127.0.0.1" if master_addr in ("127.0.0.1", "localhost") else master_addr
+    else:
+        if not args.master_port:
+            print("lt-run: non-zero node-rank requires --master-port", file=sys.stderr)
+            return 2
+        master_port = args.master_port
+        actual_master_addr = master_addr
+
+    try:
+        assign = rendezvous_client(actual_master_addr, master_port, node_rank, nproc, nnodes, timeout)
+    except Exception as e:  # noqa: BLE001
+        print("lt-run: rendezvous failed: %s" % e, file=sys.stderr)
+        return 1
+    if server_err:
+        print("lt-run: rendezvous server failed: %s" % server_err[0], file=sys.stderr)
+        return 1
+
+    rank_offset = int(assign["rank_offset"])
+    world_size = int(assign["world_size"])
+
+    procs = []
+    out_lock = threading.Lock()
+    for i in range(nproc):
+        env = dict(os.environ)
+        rank = rank_offset + i
+        env.update({
+            "RANK": str(rank),
+            "LOCAL_RANK": str(i),
+            "WORLD_SIZE": str(world_size),
+            "LOCAL_WORLD_SIZE": str(nproc),
+            "MASTER_ADDR": actual_master_addr,
+            "MASTER_PORT": str(master_port),
+            "NODE_RANK": str(node_rank),
+            "NNODES": str(nnodes),
+            "GROUP_RANK": str(rank),
+            "ROLE_RANK": str(rank),
+            "ROLE_NAME": "worker",
+        })
+        p = subprocess.Popen(
+            [sys.executable, "-u", args.script] + script_args,
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+        procs.append((rank, p))
+        if not args.no_prefix:
+            t = threading.Thread(target=stream_prefix, args=(p, rank, out_lock), daemon=True)
+            t.start()
+        else:
+            t = threading.Thread(target=lambda: [print(l, end="") for l in p.stdout], daemon=True)
+            t.start()
+
+    def kill_all():
+        for _, p in procs:
+            if p.poll() is None:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+
+    def on_signal(signum, frame):
+        kill_all()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
+
+    exit_code = 0
+    failed_rank = -1
+    try:
+        while True:
+            all_done = True
+            for rank, p in procs:
+                rc = p.poll()
+                if rc is None:
+                    all_done = False
+                elif rc != 0 and exit_code == 0:
+                    exit_code = rc
+                    failed_rank = rank
+            if all_done:
+                break
+            if exit_code != 0:
+                kill_all()
+                for _, p in procs:
+                    try:
+                        p.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        pass
+                break
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        kill_all()
+        return 130
+
+    if server_thread is not None:
+        server_thread.join(timeout=5)
+
+    if exit_code != 0:
+        print("lt-run: worker rank %d exited with code %d" % (failed_rank, exit_code), file=sys.stderr)
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
