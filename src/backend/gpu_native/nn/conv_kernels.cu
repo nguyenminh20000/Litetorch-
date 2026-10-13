@@ -297,6 +297,174 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
     }
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
 }
+
+static std::unordered_map<CudnnConvKey, CudnnConvDescs, CudnnConvKeyHash> cudnn_conv_cache_half;
+static std::mutex cudnn_conv_cache_half_mutex;
+
+static CudnnConvDescs& get_cudnn_conv_descs_half(const CudnnConvKey& key) {
+    std::lock_guard<std::mutex> lock(cudnn_conv_cache_half_mutex);
+    auto it = cudnn_conv_cache_half.find(key);
+    if (it != cudnn_conv_cache_half.end()) return it->second;
+    CudnnConvDescs d;
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.xDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.yDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateTensorDescriptor(&d.bDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateFilterDescriptor(&d.wDesc));
+    LT_CUDNN_DYN_CHECK(g_cudnn.CreateConvolutionDescriptor(&d.convDesc));
+    g_cudnn.SetTensor4dDescriptor(d.xDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_HALF, key.N, key.C_in, key.H_in, key.W_in);
+    g_cudnn.SetFilter4dDescriptor(d.wDesc, LT_CUDNN_DATA_HALF, LT_CUDNN_TENSOR_NCHW, key.C_out, key.C_in, key.kh, key.kw);
+    g_cudnn.SetConvolution2dDescriptor(d.convDesc, key.padding, key.padding, key.stride, key.stride, 1, 1, LT_CUDNN_CROSS_CORRELATION, LT_CUDNN_DATA_HALF);
+    if (g_cudnn.SetConvolutionMathType) g_cudnn.SetConvolutionMathType(d.convDesc, LT_CUDNN_TENSOR_OP_MATH);
+    g_cudnn.SetTensor4dDescriptor(d.yDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_HALF, key.N, key.C_out, key.H_out, key.W_out);
+    g_cudnn.SetTensor4dDescriptor(d.bDesc, LT_CUDNN_TENSOR_NCHW, LT_CUDNN_DATA_HALF, 1, key.C_out, 1, 1);
+    auto inserted = cudnn_conv_cache_half.emplace(key, d);
+    return inserted.first->second;
+}
+
+static std::unordered_map<CudnnConvKey, int, CudnnConvKeyHash> cudnn_fwd_algo_cache_half;
+static std::mutex cudnn_fwd_algo_cache_half_mutex;
+
+static int cudnn_fwd_algo_half(lt_cudnnHandle_t handle, const CudnnConvKey& key, CudnnConvDescs& d) {
+    {
+        std::lock_guard<std::mutex> lock(cudnn_fwd_algo_cache_half_mutex);
+        auto it = cudnn_fwd_algo_cache_half.find(key);
+        if (it != cudnn_fwd_algo_cache_half.end()) return it->second;
+    }
+    int algo = 0;
+    if (g_cudnn.GetConvolutionForwardAlgorithm_v7) {
+        LtCudnnFwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionForwardAlgorithm_v7(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            algo = cudnn_pick_fwd_algo(perfs, returned);
+            cudnn_log_fwd_cands(key, perfs, returned, algo);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(cudnn_fwd_algo_cache_half_mutex);
+        cudnn_fwd_algo_cache_half.emplace(key, algo);
+    }
+    return algo;
+}
+
+static std::unordered_map<CudnnConvKey, CudnnBwdAlgos, CudnnConvKeyHash> cudnn_bwd_algo_cache_half;
+static std::mutex cudnn_bwd_algo_cache_half_mutex;
+
+static CudnnBwdAlgos cudnn_bwd_algos_half(lt_cudnnHandle_t handle, const CudnnConvKey& key, CudnnConvDescs& d) {
+    {
+        std::lock_guard<std::mutex> lock(cudnn_bwd_algo_cache_half_mutex);
+        auto it = cudnn_bwd_algo_cache_half.find(key);
+        if (it != cudnn_bwd_algo_cache_half.end()) return it->second;
+    }
+    CudnnBwdAlgos a{0, 0};
+    if (g_cudnn.GetConvolutionBackwardDataAlgorithm_v7) {
+        LtCudnnBwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionBackwardDataAlgorithm_v7(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            a.data_algo = cudnn_pick_bwd_algo(perfs, returned);
+            cudnn_log_bwd_cands(key, "bwd-data", perfs, returned, a.data_algo);
+        }
+    }
+    if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7) {
+        LtCudnnBwdAlgoPerf perfs[8];
+        int returned = 0;
+        if (g_cudnn.GetConvolutionBackwardFilterAlgorithm_v7(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, 8, &returned, perfs) == 0 && returned > 0) {
+            a.filter_algo = cudnn_pick_bwd_algo(perfs, returned);
+            cudnn_log_bwd_cands(key, "bwd-filter", perfs, returned, a.filter_algo);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(cudnn_bwd_algo_cache_half_mutex);
+        cudnn_bwd_algo_cache_half.emplace(key, a);
+    }
+    return a;
+}
+
+static __global__ void relu_inplace_kernel_half(__half* data, int64_t n) {
+    int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    __half v = data[idx];
+    data[idx] = __hgt(v, __half(0.0f)) ? v : __half(0.0f);
+}
+
+extern "C" void gpu_conv2d_cudnn_half(
+    const __half* input, int in_off,
+    const __half* weight, int w_off,
+    const __half* bias, int b_off, int has_bias,
+    __half* output, int out_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding, int apply_relu) {
+    auto_set_device(input);
+    lt_cudnnHandle_t handle = get_cudnn_handle(output);
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half: cuDNN unavailable");
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs_half(key);
+
+    float alpha = 1.0f, beta = 0.0f;
+    int fwd_algo = cudnn_fwd_algo_half(handle, key, d);
+    size_t fwd_ws_bytes = 0;
+    void* fwd_ws = nullptr;
+    if (g_cudnn.GetConvolutionForwardWorkspaceSize &&
+        g_cudnn.GetConvolutionForwardWorkspaceSize(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, fwd_algo, &fwd_ws_bytes) == 0) {
+        fwd_ws = cudnn_workspace(fwd_ws_bytes);
+    }
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, d.yDesc, output + out_off));
+    if (has_bias && bias) {
+        LT_CUDNN_DYN_CHECK(g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off));
+    }
+    if (apply_relu) {
+        int64_t total = (int64_t)N * C_out * H_out * W_out;
+        int threads = 256;
+        int64_t blocks = (total + threads - 1) / threads;
+        relu_inplace_kernel_half<<<(unsigned)blocks, threads, 0, dev_stream(current_device())>>>(output + out_off, total);
+    }
+}
+
+extern "C" void gpu_conv2d_backward_data_cudnn_half(
+    const __half* gout, int gout_off,
+    const __half* weight, int w_off,
+    __half* gdx, int gdx_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding) {
+    auto_set_device(gout);
+    lt_cudnnHandle_t handle = get_cudnn_handle(gdx);
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half backward-data: cuDNN unavailable");
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs_half(key);
+    float alpha = 1.0f, beta = 0.0f;
+    int algo = cudnn_bwd_algos_half(handle, key, d).data_algo;
+    size_t ws_bytes = 0;
+    void* ws = nullptr;
+    if (g_cudnn.GetConvolutionBackwardDataWorkspaceSize &&
+        g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
+        ws = cudnn_workspace(ws_bytes);
+    }
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
+}
+
+extern "C" void gpu_conv2d_backward_filter_cudnn_half(
+    const __half* gout, int gout_off,
+    const __half* input, int in_off,
+    __half* gw, int gw_off,
+    int N, int C_in, int H_in, int W_in,
+    int C_out, int H_out, int W_out,
+    int kh, int kw, int stride, int padding) {
+    auto_set_device(gout);
+    lt_cudnnHandle_t handle = get_cudnn_handle(gw);
+    if (!handle) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half backward-filter: cuDNN unavailable");
+    CudnnConvKey key{N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding};
+    CudnnConvDescs& d = get_cudnn_conv_descs_half(key);
+    float alpha = 1.0f, beta = 0.0f;
+    int algo = cudnn_bwd_algos_half(handle, key, d).filter_algo;
+    size_t ws_bytes = 0;
+    void* ws = nullptr;
+    if (g_cudnn.GetConvolutionBackwardFilterWorkspaceSize &&
+        g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
+        ws = cudnn_workspace(ws_bytes);
+    }
+    LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
+}
 #endif
 
 #ifdef USE_MIOPEN
@@ -422,6 +590,25 @@ extern "C" __global__ void conv2d_backward_gb(
         }
     }
     grad_bias[gb_off + co] = sum_val;
+}
+
+extern "C" __global__ void conv2d_backward_gb_half(
+    const __half* grad_output, int gout_off,
+    __half* grad_bias, int gb_off,
+    int N, int C_out, int H_out, int W_out)
+{
+    int co = blockIdx.x * blockDim.x + threadIdx.x;
+    if (co >= C_out) return;
+
+    float sum_val = 0.0f;
+    for (int b = 0; b < N; ++b) {
+        for (int ho = 0; ho < H_out; ++ho) {
+            for (int wo = 0; wo < W_out; ++wo) {
+                sum_val += __half2float(grad_output[gout_off + ((b * C_out + co) * H_out + ho) * W_out + wo]);
+            }
+        }
+    }
+    grad_bias[gb_off + co] = __float2half(sum_val);
 }
 
 extern "C" __global__ void conv2d_backward_gw(

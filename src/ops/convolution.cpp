@@ -4,6 +4,7 @@
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
+#include "litetorch/amp.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -195,11 +196,12 @@ public:
                 int, int, int, int, int, int, int, int, int, int, int);
             Conv2dBwdDataCudnnFn cudnn_bwd_data = nullptr;
             Conv2dBwdFilterCudnnFn cudnn_bwd_filter = nullptr;
-            if (!cudnn_disabled()) {
+            bool is_half = input_c->dtype == DataType::FP16;
+            if (!is_half && !cudnn_disabled()) {
                 cudnn_bwd_data = cached_native_kernel<Conv2dBwdDataCudnnFn>("conv2d_backward_data_cudnn");
                 cudnn_bwd_filter = cached_native_kernel<Conv2dBwdFilterCudnnFn>("conv2d_backward_filter_cudnn");
             }
-            if (cudnn_bwd_data && cudnn_bwd_filter) {
+            if (!is_half && cudnn_bwd_data && cudnn_bwd_filter) {
                 cudnn_bwd_filter(
                     static_cast<const float*>(gout_c->gpu_data()), gout_c->offset,
                     static_cast<const float*>(input_c->gpu_data()), input_c->offset,
@@ -222,6 +224,46 @@ public:
                             {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_v, &co_v, &ho_v, &wo_v},
                             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                     }
+                }
+            } else if (is_half) {
+                typedef void (*Conv2dBwdDataCudnnHalfFn)(
+                    const void*, int, const void*, int, void*, int,
+                    int, int, int, int, int, int, int, int, int, int, int);
+                typedef void (*Conv2dBwdFilterCudnnHalfFn)(
+                    const void*, int, const void*, int, void*, int,
+                    int, int, int, int, int, int, int, int, int, int, int);
+                Conv2dBwdDataCudnnHalfFn cudnn_bwd_data_half = nullptr;
+                Conv2dBwdFilterCudnnHalfFn cudnn_bwd_filter_half = nullptr;
+                if (!cudnn_disabled()) {
+                    cudnn_bwd_data_half = cached_native_kernel<Conv2dBwdDataCudnnHalfFn>("conv2d_backward_data_cudnn_half");
+                    cudnn_bwd_filter_half = cached_native_kernel<Conv2dBwdFilterCudnnHalfFn>("conv2d_backward_filter_cudnn_half");
+                }
+                if (!cudnn_bwd_data_half || !cudnn_bwd_filter_half) {
+                    throw std::runtime_error("[litetorch Error] Conv2d FP16 backward requires cuDNN, but cuDNN is unavailable");
+                }
+                cudnn_bwd_filter_half(
+                    gout_c->gpu_data(), gout_c->offset,
+                    input_c->gpu_data(), input_c->offset,
+                    grad_weight->gpu_data(), grad_weight->offset,
+                    N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+                cudnn_bwd_data_half(
+                    gout_c->gpu_data(), gout_c->offset,
+                    weight_c->gpu_data(), weight_c->offset,
+                    grad_input->gpu_data(), grad_input->offset,
+                    N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding);
+                if (bias) {
+                    auto gb_k = cached_native_kernel<void*>("conv2d_backward_gb_half");
+                    if (!gb_k) {
+                        throw std::runtime_error("[litetorch Error] Conv2d FP16 backward: bias gradient kernel unavailable");
+                    }
+                    cl_mem gout_mem = gout_c->gpu_data();
+                    int gout_off = gout_c->offset;
+                    cl_mem gb_mem = grad_bias->gpu_data();
+                    int gb_off = grad_bias->offset;
+                    int n_v = N, co_v = C_out, ho_v = H_out, wo_v = W_out;
+                    rt_gpu_launch(gb_k, {(size_t)C_out}, {},
+                        {&gout_mem, &gout_off, &gb_mem, &gb_off, &n_v, &co_v, &ho_v, &wo_v},
+                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
                 }
             } else {
             bool native_gemm = native && native->is_available();
@@ -714,12 +756,28 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
         bias = bias->to(input->device);
     }
 
+    if (amp::AutocastGuard::is_enabled()) {
+        auto cast_dtype = amp::AutocastGuard::get_dtype();
+        if (input->dtype != cast_dtype) {
+            input = Ops::cast(input, cast_dtype);
+        }
+        if (weight->dtype != cast_dtype) {
+            weight = Ops::cast(weight, cast_dtype);
+        }
+        if (bias && bias->dtype != cast_dtype) {
+            bias = Ops::cast(bias, cast_dtype);
+        }
+    }
+
     if (input->shape.size() != 4 || weight->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] Conv2d requires 4D input and weight");
     }
-    if (input->dtype != DataType::FP32 || weight->dtype != DataType::FP32 ||
-        (bias && bias->dtype != DataType::FP32)) {
-        throw std::runtime_error("[litetorch Error] Conv2d requires FP32 input, weight and bias");
+    bool all_fp32 = input->dtype == DataType::FP32 && weight->dtype == DataType::FP32 &&
+        (!bias || bias->dtype == DataType::FP32);
+    bool all_fp16 = input->dtype == DataType::FP16 && weight->dtype == DataType::FP16 &&
+        (!bias || bias->dtype == DataType::FP16);
+    if (!all_fp32 && !all_fp16) {
+        throw std::runtime_error("[litetorch Error] Conv2d requires all-FP32 or all-FP16 input, weight and bias");
     }
 
     int N = input->shape[0];
@@ -745,7 +803,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
             std::to_string(KH) + "x" + std::to_string(KW) + "], padding " +
             std::to_string(padding) + ", stride " + std::to_string(stride));
     }
-    auto out = Tensor::create({N, C_out, H_out, W_out}, input->device);
+    auto out = Tensor::create({N, C_out, H_out, W_out}, input->device, false, input->dtype);
 
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
@@ -753,7 +811,28 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
 
     StorageUseGuard guard({input_c->storage, weight_c->storage, bias_c ? bias_c->storage : nullptr, out->storage});
 
-    if (input->device.type == DeviceType::GPU) {
+    if (input->dtype == DataType::FP16) {
+        if (input->device.type != DeviceType::GPU) {
+            throw std::runtime_error("[litetorch Error] Conv2d FP16 is not supported on CPU");
+        }
+        typedef void (*Conv2dCudnnHalfFn)(
+            const void*, int, const void*, int, const void*, int, int,
+            void*, int, int, int, int, int, int, int, int, int, int, int, int, int);
+        Conv2dCudnnHalfFn cudnn_conv2d_half = nullptr;
+        if (!cudnn_disabled()) {
+            cudnn_conv2d_half = cached_native_kernel<Conv2dCudnnHalfFn>("conv2d_cudnn_half");
+        }
+        if (!cudnn_conv2d_half) {
+            throw std::runtime_error("[litetorch Error] Conv2d FP16 requires cuDNN, but cuDNN is unavailable");
+        }
+        cudnn_conv2d_half(
+            input_c->gpu_data(), input_c->offset,
+            weight_c->gpu_data(), weight_c->offset,
+            bias_c ? bias_c->gpu_data() : nullptr,
+            bias_c ? bias_c->offset : 0, bias_c ? 1 : 0,
+            out->gpu_data(), out->offset,
+            N, C_in, H_in, W_in, C_out, H_out, W_out, KH, KW, stride, padding, apply_relu ? 1 : 0);
+    } else if (input->device.type == DeviceType::GPU) {
         bool done = false;
         auto native = BackendDispatcher::get().get_backend();
         typedef void (*Conv2dCudnnFn)(

@@ -19,6 +19,7 @@ typedef void* lt_cudnnActivationDescriptor_t;
 enum {
     LT_CUDNN_TENSOR_NCHW = 0,
     LT_CUDNN_DATA_FLOAT = 0,
+    LT_CUDNN_DATA_HALF = 1,
     LT_CUDNN_CROSS_CORRELATION = 1,
     LT_CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM = 0,
     LT_CUDNN_SOFTMAX_ACCURATE = 1,
