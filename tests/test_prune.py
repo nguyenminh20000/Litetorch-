@@ -216,6 +216,44 @@ try:
 except Exception as e:
     check("onnx export", False, f"{type(e).__name__}: {e}")
 
+print("=== 11. ONNX export of pruned-not-removed module: mask-folded dense weights ===")
+try:
+    import re
+    def parse_inits(txt):
+        out = {}
+        for blk in txt.split("initializer {")[1:]:
+            m = re.search(r'name: "([^"]+)"', blk)
+            f = re.search(r'float_data: \[([^\]]*)\]', blk)
+            if m and f:
+                out[m.group(1)] = np.array([float(v) for v in f.group(1).split(",") if v.strip()],
+                                           dtype=np.float32)
+        return out
+    _, lin11, _, _ = make_pair(8, 4, seed=11)
+    w_orig = lin11.weight.numpy().copy()
+    lt.prune.l1_unstructured(lin11, "weight", 0.5)
+    check("still pruned (not removed)", lt.prune.is_pruned(lin11, "weight"))
+    mask = get_mask(lin11, "weight")
+    check("mask buffer present", mask is not None and mask.shape == w_orig.shape)
+    x11 = np.random.RandomState(31).randn(2, 8).astype(np.float32)
+    xt11 = lt.Tensor.from_vector(x11.flatten().tolist(), [2, 8], CPU, False)
+    inits = parse_inits(lt.onnx.export_onnx_text(lt.onnx.trace_module(lin11, xt11)))
+    check("mask buffer not exported as initializer", not any("_mask" in n for n in inits))
+    wname = [n for n in inits if n.endswith("weight")]
+    check("weight initializer present", len(wname) == 1)
+    expected = (w_orig * mask).astype(np.float32).flatten()
+    got = inits[wname[0]]
+    check("exported dense weights == orig * mask",
+          got.shape == expected.shape and np.allclose(got, expected, atol=1e-6))
+    check("some weights actually pruned to zero", np.any(got == 0.0) and np.any(got != 0.0))
+    seq = lt.nn.Sequential([lin11])
+    inits2 = parse_inits(lt.onnx.export_onnx_text(lt.onnx.trace_module(seq, xt11)))
+    wname2 = [n for n in inits2 if n.endswith("weight")]
+    check("sequential child weight initializer present", len(wname2) == 1)
+    check("sequential child export == orig * mask",
+          np.allclose(inits2[wname2[0]], expected, atol=1e-6))
+except Exception as e:
+    check("onnx mask-fold export", False, f"{type(e).__name__}: {e}")
+
 print(f"\nRESULT: {len(passed)} passed, {len(failed)} failed")
 if failed:
     print("FAILED:", failed)

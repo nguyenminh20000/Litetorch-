@@ -1,4 +1,5 @@
 #include "litetorch/onnx.h"
+#include "litetorch/ops.h"
 #include <cxxabi.h>
 #include <fstream>
 #include <sstream>
@@ -375,6 +376,16 @@ std::string find_param(const std::vector<std::pair<std::string, std::shared_ptr<
 
 }
 
+std::shared_ptr<Tensor> fold_prune_mask(nn::Module& m, const std::string& name, std::shared_ptr<Tensor> w) {
+    for (auto& kv : m.named_buffers()) {
+        if (kv.first != name + "_mask" || !kv.second || kv.second->numel() != w->numel()) continue;
+        auto mf = kv.second;
+        if (mf->dtype != w->dtype || mf->device != w->device) mf = mf->to(w->device, w->dtype);
+        return Ops::mul(w, mf);
+    }
+    return w;
+}
+
 Graph trace_module_impl(std::shared_ptr<nn::Module> model, std::shared_ptr<Tensor> example_input,
                         const std::map<std::string, std::map<int64_t, std::string>>& dynamic_axes) {
     if (!model || !example_input)
@@ -408,7 +419,7 @@ Graph trace_module_impl(std::shared_ptr<nn::Module> model, std::shared_ptr<Tenso
         }
         auto mapped = map_op(module_class_name(*model));
         std::vector<std::string> node_inputs = {cur};
-        for (auto& kv : model->named_parameters()) g.add_initializer("param_" + kv.first, kv.second);
+        for (auto& kv : model->named_parameters()) g.add_initializer("param_" + kv.first, fold_prune_mask(*model, kv.first, kv.second));
         auto params = model->named_parameters();
         std::string w = find_param(params, "param_", "weight");
         std::string b = find_param(params, "param_", "bias");
@@ -435,7 +446,7 @@ Graph trace_module_impl(std::shared_ptr<nn::Module> model, std::shared_ptr<Tenso
         std::vector<std::string> node_inputs = {cur};
         std::string pfx = "n" + std::to_string(idx) + "_";
         auto params = child->named_parameters();
-        for (auto& kv : params) g.add_initializer(pfx + kv.first, kv.second);
+        for (auto& kv : params) g.add_initializer(pfx + kv.first, fold_prune_mask(*child, kv.first, kv.second));
         if (mapped.first == "Gemm" || mapped.first == "Conv" || mapped.first == "ConvTranspose") {
             std::string w = find_param(params, "", "weight");
             std::string b = find_param(params, "", "bias");
