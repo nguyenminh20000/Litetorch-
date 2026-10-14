@@ -1,0 +1,36 @@
+name: ARM cross-compile (compile-only)
+
+on:
+  push:
+    branches: [agent]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'setup.py'
+      - '.github/workflows/arm-crosscompile.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'setup.py'
+
+jobs:
+  aarch64-compile-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install aarch64 cross toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++-aarch64-linux-gnu
+
+      - name: Compile-only check (CPU backend, aarch64)
+        run: |
+          mkdir -p /tmp/arm-obj
+          for f in $(find src/tensor src/nn src/ops src/cl_backend src/memory_manager -name '*.cpp'); do
+            o="/tmp/arm-obj/$(echo "$f" | tr '/' '_').o"
+            aarch64-linux-gnu-g++ -std=c++14 -O1 -march=armv8-a -fPIC -I include -c "$f" -o "$o"
+          done
+          ls /tmp/arm-obj | wc -l
+
+      - name: Confirm target architecture
+        run: file /tmp/arm-obj/*.o | head -3
