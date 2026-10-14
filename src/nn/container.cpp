@@ -409,6 +409,16 @@ void Module::register_buffer(const std::string& name, std::shared_ptr<Tensor> te
     named_buffers_.push_back({name, tensor});
 }
 
+void Module::unregister_buffer(const std::string& name) {
+    for (auto it = named_buffers_.begin(); it != named_buffers_.end(); ++it) {
+        if (it->first == name) {
+            named_buffers_.erase(it);
+            return;
+        }
+    }
+    throw std::runtime_error("[litetorch Error] unregister_buffer: no buffer '" + name + "'");
+}
+
 void Module::add_module(const std::string& name, std::shared_ptr<Module> module) {
     if (!module) throw std::runtime_error("[litetorch Error] add_module got null module for '" + name + "'");
     for (auto& kv : named_children_) {

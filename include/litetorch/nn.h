@@ -41,6 +41,7 @@ public:
 
     void register_parameter(const std::string& name, std::shared_ptr<Tensor> tensor);
     void register_buffer(const std::string& name, std::shared_ptr<Tensor> tensor);
+    void unregister_buffer(const std::string& name);
     virtual void add_module(const std::string& name, std::shared_ptr<Module> module);
     std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> named_parameters(const std::string& prefix = "");
     std::vector<std::pair<std::string, std::shared_ptr<Tensor>>> named_buffers(const std::string& prefix = "");
