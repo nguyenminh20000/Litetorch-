@@ -183,6 +183,7 @@ extern "C" void gpu_conv2d_cudnn(
         g_cudnn.GetConvolutionForwardWorkspaceSize(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, fwd_algo, &fwd_ws_bytes) == 0) {
         fwd_ws = cudnn_workspace(fwd_ws_bytes);
     }
+    if (fwd_ws_bytes > 0 && !fwd_ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d forward: workspace allocation failed for " + std::to_string(fwd_ws_bytes) + " bytes");
     lt_cudnnActivationDescriptor_t reluDesc = nullptr;
     if (apply_relu && has_bias && bias && g_cudnn.ConvolutionBiasActivationForward) {
         reluDesc = get_relu_act_desc();
@@ -217,8 +218,9 @@ static const size_t CUDNN_BWD_ALGO_WS_LIMIT = 1024ULL * 1024ULL * 1024ULL;
 
 static int cudnn_pick_bwd_algo(LtCudnnBwdAlgoPerf* perfs, int count) {
     for (int i = 0; i < count; ++i) {
-        if (perfs[i].status == 0 && perfs[i].memory <= CUDNN_BWD_ALGO_WS_LIMIT) return perfs[i].algo;
+        if (perfs[i].status == 0 && perfs[i].memory <= CUDNN_BWD_ALGO_WS_LIMIT && perfs[i].algo != 0) return perfs[i].algo;
     }
+    fprintf(stderr, "[litetorch WARNING] cudnn_pick_bwd_algo: no non-zero algo found among %d candidates, falling back to 0 (may fail on cuDNN 9)\n", count);
     return 0;
 }
 
@@ -272,6 +274,7 @@ extern "C" void gpu_conv2d_backward_data_cudnn(
         g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
+    if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-data: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
 }
 
@@ -295,6 +298,7 @@ extern "C" void gpu_conv2d_backward_filter_cudnn(
         g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
+    if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-filter: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
 }
 
@@ -408,6 +412,7 @@ extern "C" void gpu_conv2d_cudnn_half(
         g_cudnn.GetConvolutionForwardWorkspaceSize(handle, d.xDesc, d.wDesc, d.convDesc, d.yDesc, fwd_algo, &fwd_ws_bytes) == 0) {
         fwd_ws = cudnn_workspace(fwd_ws_bytes);
     }
+    if (fwd_ws_bytes > 0 && !fwd_ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half forward: workspace allocation failed for " + std::to_string(fwd_ws_bytes) + " bytes");
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionForward(handle, &alpha, d.xDesc, input + in_off, d.wDesc, weight + w_off, d.convDesc, fwd_algo, fwd_ws, fwd_ws ? fwd_ws_bytes : 0, &beta, d.yDesc, output + out_off));
     if (has_bias && bias) {
         LT_CUDNN_DYN_CHECK(g_cudnn.AddTensor(handle, &alpha, d.bDesc, bias + b_off, &alpha, d.yDesc, output + out_off));
@@ -440,6 +445,7 @@ extern "C" void gpu_conv2d_backward_data_cudnn_half(
         g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
+    if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half backward-data: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
 }
 
@@ -463,6 +469,7 @@ extern "C" void gpu_conv2d_backward_filter_cudnn_half(
         g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
         ws = cudnn_workspace(ws_bytes);
     }
+    if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d_half backward-filter: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
 }
 #endif

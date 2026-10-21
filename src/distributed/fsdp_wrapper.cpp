@@ -88,9 +88,11 @@ void FSDPUnit::copy_flat_to_params() {
 }
 
 void FSDPUnit::release_gathered() {
+    if (gather_future_.valid()) gather_future_.wait();
     bool was = gathered_.exchange(false);
     if (was) inflight_gathers_.fetch_sub(1);
     gather_issued_.store(false);
+    flat->release_full_buffer();
 }
 
 void FSDPUnit::on_param_grad(std::shared_ptr<Tensor> p, std::shared_ptr<Tensor> grad) {

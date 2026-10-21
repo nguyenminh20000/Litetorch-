@@ -1,5 +1,6 @@
 #include "litetorch/flat_param.h"
 #include "litetorch/distributed.h"
+#include "litetorch/fsdp_tp.h"
 #include "litetorch/device.h"
 #include "litetorch/backend_route.h"
 #include <cstring>
@@ -61,9 +62,7 @@ FlatParameter::FlatParameter(const std::vector<std::shared_ptr<Tensor>>& params)
     flat_numel_ = shard_numel_ * world_;
 
     shard_ = Tensor::create({shard_numel_}, device_, false, dtype_);
-    full_ = Tensor::create({flat_numel_}, device_, false, dtype_);
     zero_range(shard_, 0, shard_numel_);
-    zero_range(full_, 0, flat_numel_);
 
     int64_t base = (int64_t)rank_ * shard_numel_;
     for (size_t i = 0; i < params.size(); ++i) {
@@ -92,6 +91,8 @@ FlatParameter::FlatParameter(const std::vector<std::shared_ptr<Tensor>>& params)
 }
 
 std::vector<std::shared_ptr<Tensor>> FlatParameter::param_views() {
+    if (!full_)
+        throw std::runtime_error("[litetorch Error] FlatParameter::param_views: full buffer not allocated; call all_gather_flat() first");
     std::vector<std::shared_ptr<Tensor>> views;
     views.reserve(metas_.size());
     for (const auto& m : metas_) {
@@ -102,6 +103,7 @@ std::vector<std::shared_ptr<Tensor>> FlatParameter::param_views() {
 }
 
 void FlatParameter::all_gather_flat() {
+    if (!full_) full_ = Tensor::create({flat_numel_}, device_, false, dtype_);
     if (world_ <= 1) {
         full_->copy_(shard_);
         return;
@@ -113,6 +115,8 @@ void FlatParameter::all_gather_flat() {
             throw std::runtime_error("[litetorch Error] FlatParameter::all_gather_flat: NCCL dp_all_gather failed");
         return;
     }
+    if (FSDPTP::is_initialized() && FSDPTP::tp_size() > 1 && FSDPTP::dp_size() > 1)
+        throw std::runtime_error("[litetorch Error] FlatParameter::all_gather_flat: hybrid TP+DP collectives unsupported on CPU transport; world-wide all_gather would silently produce wrong results");
     ProcessGroup::get().all_gather(shard_, full_);
 }
 
@@ -132,8 +136,14 @@ std::shared_ptr<Tensor> FlatParameter::reduce_scatter_flat(std::shared_ptr<Tenso
             throw std::runtime_error("[litetorch Error] FlatParameter::reduce_scatter_flat: NCCL dp_reduce_scatter failed");
         return grad_shard;
     }
+    if (FSDPTP::is_initialized() && FSDPTP::tp_size() > 1 && FSDPTP::dp_size() > 1)
+        throw std::runtime_error("[litetorch Error] FlatParameter::reduce_scatter_flat: hybrid TP+DP collectives unsupported on CPU transport; world-wide reduce_scatter would silently produce wrong results");
     ProcessGroup::get().reduce_scatter(grad_shard, full_grad);
     return grad_shard;
+}
+
+void FlatParameter::release_full_buffer() {
+    full_.reset();
 }
 
 std::shared_ptr<FlatParameter> make_flat_param(const std::vector<std::shared_ptr<Tensor>>& params) {

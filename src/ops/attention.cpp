@@ -5,6 +5,7 @@
 #include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include "litetorch/amp.h"
+#include "autocast_policy.h"
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -12,22 +13,11 @@
 #include <limits>
 #include <vector>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 namespace {
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 }
 
 class FlashAttentionNode : public Node {
@@ -50,8 +40,8 @@ public:
 
         float scale = 1.0f / std::sqrt(static_cast<float>(D));
 
-        auto out_shared = output.lock();
-        if (!out_shared) return { nullptr, nullptr, nullptr };
+        if (saved_tensors.size() <= 3 || !saved_tensors[3]) throw std::runtime_error("[litetorch Error] FlashAttention backward: saved output tensor missing");
+        auto out_shared = saved_tensors[3];
         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
@@ -264,7 +254,7 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         throw std::runtime_error("[litetorch Error] Query heads H must be divisible by Key/Value heads H_kv");
     }
 
-    if (amp::AutocastGuard::is_enabled()) {
+    if (amp::autocast_fp16_eligible("attention")) {
         auto cast_dtype = amp::AutocastGuard::get_dtype();
         if (q->dtype != cast_dtype) q = Ops::cast(q, cast_dtype);
         if (k->dtype != cast_dtype) k = Ops::cast(k, cast_dtype);
@@ -423,7 +413,8 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
         node->saved_tensors = { q_c, k_c, v_c, out };
-        if (lse_saved && attn_lse) node->saved_tensors.push_back(attn_lse);
+        node->saved_versions = {(q_c ? q_c->_version() : 0), (k_c ? k_c->_version() : 0), (v_c ? v_c->_version() : 0), (out ? out->_version() : 0)};
+        if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -471,8 +462,8 @@ std::shared_ptr<Tensor> paged_attention(
         DataType k_dtype = k_cache->dtype;
         DataType v_dtype = v_cache->dtype;
 
-        int32_t* bt_ptr = reinterpret_cast<int32_t*>(bt_c->data_ptr());
-        int32_t* cl_ptr = reinterpret_cast<int32_t*>(cl_c->data_ptr());
+        int32_t* bt_ptr = reinterpret_cast<int32_t*>(bt_c->raw_data_ptr());
+        int32_t* cl_ptr = reinterpret_cast<int32_t*>(cl_c->raw_data_ptr());
         float* out_ptr = out->data_ptr();
 
         auto get_val = [](void* ptr, int64_t idx, DataType dtype) -> float {
@@ -623,10 +614,10 @@ void qkv_do_split(std::shared_ptr<Tensor> qkv_c, std::shared_ptr<Tensor> q,
         int64_t C = H * D;
         size_t elem_sz = qkv_c->dtype == DataType::FP16 ? sizeof(uint16_t) : sizeof(float);
         if (qkv_c->dtype == DataType::FP16) {
-            uint16_t* qkv_ptr = reinterpret_cast<uint16_t*>(qkv_c->data_ptr());
-            uint16_t* q_ptr = reinterpret_cast<uint16_t*>(q->data_ptr());
-            uint16_t* k_ptr = reinterpret_cast<uint16_t*>(k->data_ptr());
-            uint16_t* v_ptr = reinterpret_cast<uint16_t*>(v->data_ptr());
+            uint16_t* qkv_ptr = reinterpret_cast<uint16_t*>(qkv_c->raw_data_ptr());
+            uint16_t* q_ptr = reinterpret_cast<uint16_t*>(q->raw_data_ptr());
+            uint16_t* k_ptr = reinterpret_cast<uint16_t*>(k->raw_data_ptr());
+            uint16_t* v_ptr = reinterpret_cast<uint16_t*>(v->raw_data_ptr());
             ThreadPool::get().parallel_for(0, B * T * C, [&](int64_t idx) {
                 int64_t d = idx % D;
                 int64_t t = (idx / D) % T;
@@ -656,9 +647,9 @@ void qkv_do_split(std::shared_ptr<Tensor> qkv_c, std::shared_ptr<Tensor> q,
             });
         }
         if (q->device.type == DeviceType::GPU) {
-            rt_gpu_write(q->gpu_data(), q->numel() * elem_sz, q->data_ptr());
-            rt_gpu_write(k->gpu_data(), k->numel() * elem_sz, k->data_ptr());
-            rt_gpu_write(v->gpu_data(), v->numel() * elem_sz, v->data_ptr());
+            rt_gpu_write(q->gpu_data(), q->numel() * elem_sz, q->raw_data_ptr());
+            rt_gpu_write(k->gpu_data(), k->numel() * elem_sz, k->raw_data_ptr());
+            rt_gpu_write(v->gpu_data(), v->numel() * elem_sz, v->raw_data_ptr());
         }
     }
 }
@@ -682,10 +673,10 @@ void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::s
         int64_t C = H * D;
         size_t elem_sz = gq->dtype == DataType::FP16 ? sizeof(uint16_t) : sizeof(float);
         if (gq->dtype == DataType::FP16) {
-            uint16_t* gq_ptr = reinterpret_cast<uint16_t*>(gq->data_ptr());
-            uint16_t* gk_ptr = reinterpret_cast<uint16_t*>(gk->data_ptr());
-            uint16_t* gv_ptr = reinterpret_cast<uint16_t*>(gv->data_ptr());
-            uint16_t* gqkv_ptr = reinterpret_cast<uint16_t*>(gqkv->data_ptr());
+            uint16_t* gq_ptr = reinterpret_cast<uint16_t*>(gq->raw_data_ptr());
+            uint16_t* gk_ptr = reinterpret_cast<uint16_t*>(gk->raw_data_ptr());
+            uint16_t* gv_ptr = reinterpret_cast<uint16_t*>(gv->raw_data_ptr());
+            uint16_t* gqkv_ptr = reinterpret_cast<uint16_t*>(gqkv->raw_data_ptr());
             ThreadPool::get().parallel_for(0, B * T * 3 * C, [&](int64_t idx) {
                 int64_t c3 = idx % (3 * C);
                 int64_t s = c3 / C;
@@ -715,7 +706,7 @@ void qkv_do_merge(std::shared_ptr<Tensor> gq, std::shared_ptr<Tensor> gk, std::s
             });
         }
         if (gqkv->device.type == DeviceType::GPU) {
-            rt_gpu_write(gqkv->gpu_data(), gqkv->numel() * elem_sz, gqkv->data_ptr());
+            rt_gpu_write(gqkv->gpu_data(), gqkv->numel() * elem_sz, gqkv->raw_data_ptr());
         }
     }
 }
@@ -741,8 +732,8 @@ public:
         int64_t H_kv = k->shape[1];
         int64_t Tk = k->shape[2];
         float scale = 1.0f / std::sqrt(static_cast<float>(D));
-        auto out_shared = output.lock();
-        if (!out_shared) return { nullptr };
+        if (saved_tensors.size() <= 4 || !saved_tensors[4]) throw std::runtime_error("[litetorch Error] FlashAttentionQKV backward: saved output tensor missing");
+        auto out_shared = saved_tensors[4];
         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_q = Tensor::create(q->shape, q->device, false, q->dtype);
@@ -852,7 +843,8 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
         node->saved_tensors = { qkv_c, q, k, v, out };
-        if (lse_saved && attn_lse) node->saved_tensors.push_back(attn_lse);
+        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0), (q ? q->_version() : 0), (k ? k->_version() : 0), (v ? v->_version() : 0), (out ? out->_version() : 0)};
+        if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -966,6 +958,7 @@ std::shared_ptr<Tensor> qkv_extract(std::shared_ptr<Tensor> qkv, int64_t num_hea
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
         node->saved_tensors = { qkv_c };
+        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

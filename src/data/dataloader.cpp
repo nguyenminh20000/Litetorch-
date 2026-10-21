@@ -265,10 +265,10 @@ void DataLoader::build_batch_inner(size_t batch_no, size_t gen, const std::vecto
             auto batch_y_cpu = Tensor::create(batch_y_shape, Device(DeviceType::CPU, 0), false, y_tensor->dtype);
             size_t x_elem_sz = x_tensor->storage->element_size();
             size_t y_elem_sz = y_tensor->storage->element_size();
-            char* bx_ptr = (char*)batch_x_cpu->data_ptr();
-            char* by_ptr = (char*)batch_y_cpu->data_ptr();
-            char* x_ptr = (char*)x_tensor->data_ptr();
-            char* y_ptr = (char*)y_tensor->data_ptr();
+            char* bx_ptr = (char*)batch_x_cpu->raw_data_ptr();
+            char* by_ptr = (char*)batch_y_cpu->raw_data_ptr();
+            char* x_ptr = (char*)x_tensor->raw_data_ptr();
+            char* y_ptr = (char*)y_tensor->raw_data_ptr();
             for (size_t i = 0; i < batch_len; ++i) {
                 size_t idx = batch_indices[i];
                 std::memcpy(bx_ptr + i * D * x_elem_sz, x_ptr + idx * D * x_elem_sz, D * x_elem_sz);
@@ -338,10 +338,10 @@ void DataLoader::build_epoch_cache() {
 
         size_t x_elem_sz = x_tensor->storage->element_size();
         size_t y_elem_sz = y_tensor->storage->element_size();
-        char* ex_ptr = (char*)epoch_x_cpu->data_ptr();
-        char* ey_ptr = (char*)epoch_y_cpu->data_ptr();
-        char* x_ptr = (char*)x_tensor->data_ptr();
-        char* y_ptr = (char*)y_tensor->data_ptr();
+        char* ex_ptr = (char*)epoch_x_cpu->raw_data_ptr();
+        char* ey_ptr = (char*)epoch_y_cpu->raw_data_ptr();
+        char* x_ptr = (char*)x_tensor->raw_data_ptr();
+        char* y_ptr = (char*)y_tensor->raw_data_ptr();
 
         for (size_t i = 0; i < n; ++i) {
             size_t idx = indices[i];

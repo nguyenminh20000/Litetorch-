@@ -29,7 +29,7 @@ static __device__ __forceinline__ float e4m3_to_float(uint8_t x) {
         float f = (float)m3 / 8.0f * 0.015625f;
         return sign ? -f : f;
     }
-    if (e4 == 15 && m3 == 7) return sign ? -CUDART_NAN_F : CUDART_NAN_F;
+    if (e4 == 15 && m3 == 7) return sign ? -__int_as_float(0x7fc00000) : __int_as_float(0x7fc00000);
     int32_t exp = (int32_t)e4 - 8 + 127;
     uint32_t bits = (sign << 31) | ((uint32_t)exp << 23) | (m3 << 20);
     return __uint_as_float(bits);
@@ -63,7 +63,7 @@ static __device__ __forceinline__ float e5m2_to_float(uint8_t x) {
         float f = (float)m2 / 4.0f * 0.00006103515625f;
         return sign ? -f : f;
     }
-    if (e5 == 31) return m2 ? CUDART_NAN_F : (sign ? -CUDART_INF_F : CUDART_INF_F);
+    if (e5 == 31) return m2 ? __int_as_float(0x7fc00000) : (sign ? -__int_as_float(0x7f800000) : __int_as_float(0x7f800000));
     int32_t exp = (int32_t)e5 - 16 + 127;
     uint32_t bits = (sign << 31) | ((uint32_t)exp << 23) | (m2 << 21);
     return __uint_as_float(bits);

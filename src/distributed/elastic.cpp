@@ -41,6 +41,35 @@ int my_world() {
     return pg.is_initialized() ? pg.get_world_size() : 1;
 }
 
+std::string elastic_bcast_str(const std::string& local, int src_rank) {
+    constexpr size_t kMaxErr = 256;
+    auto buf = Tensor::create({(int64_t)kMaxErr}, Device(DeviceType::CPU, 0), false, DataType::INT8);
+    std::memset(buf->raw_data_ptr(), 0, kMaxErr);
+    if (my_rank() == src_rank) {
+        size_t n = std::min(local.size(), kMaxErr - 1);
+        std::memcpy(buf->raw_data_ptr(), local.data(), n);
+    }
+    if (pg_active()) ProcessGroup::get().broadcast(buf, src_rank);
+    return std::string((const char*)buf->raw_data_ptr());
+}
+
+void collective_phase_ok(bool local_ok, const std::string& local_err) {
+    if (!pg_active()) {
+        if (!local_ok)
+            throw std::runtime_error("[litetorch Error] " + local_err);
+        return;
+    }
+    auto flag = Tensor::from_vector({local_ok ? 1.0f : 0.0f}, {1}, Device(DeviceType::CPU, 0), false,
+                                    DataType::INT32);
+    ProcessGroup::get().all_reduce(flag, ReduceOp::MIN);
+    int32_t v = 0;
+    std::memcpy(&v, flag->raw_data_ptr(), sizeof(int32_t));
+    std::string err = elastic_bcast_str(local_err, 0);
+    if (v != 1)
+        throw std::runtime_error("[litetorch Error] elastic: " +
+                                 (err.empty() ? std::string("peer phase failed") : err));
+}
+
 bool file_exists(const std::string& p) {
     struct stat st{};
     return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
@@ -137,41 +166,74 @@ void save_consistent(
     std::string tmp = tmp_dir(ckpt_dir, step);
     std::string fin = step_dir(ckpt_dir, step);
 
-    if (dir_exists(fin))
-        throw std::runtime_error("[litetorch Error] elastic: step dir already exists: " + fin);
-
-    if (dir_exists(tmp) || file_exists(tmp)) remove_all(tmp);
-
-    dist_checkpoint::save_distributed(local_shards, shard_specs, tmp, step);
+    bool ok = true;
+    std::string err;
+    if (dir_exists(fin)) {
+        ok = false;
+        err = "elastic: step dir already exists: " + fin;
+    }
+    if (ok) {
+        if (dir_exists(tmp) || file_exists(tmp)) remove_all(tmp);
+        try {
+            dist_checkpoint::save_distributed(local_shards, shard_specs, tmp, step);
+        } catch (const std::exception& e) {
+            ok = false;
+            err = std::string("elastic: save_distributed failed: ") + e.what();
+        } catch (...) {
+            ok = false;
+            err = "elastic: save_distributed failed with unknown exception";
+        }
+    }
+    collective_phase_ok(ok, err);
 
     maybe_barrier();
 
+    ok = true;
+    err.clear();
     if (rank == 0) {
         for (int r = 0; r < world; r++) {
             std::string sf = dist_checkpoint::shard_filename(tmp, r, world);
-            if (!file_exists(sf))
-                throw std::runtime_error("[litetorch Error] elastic: missing shard file: " + sf);
+            if (!file_exists(sf)) {
+                ok = false;
+                err = "elastic: missing shard file: " + sf;
+                break;
+            }
         }
-        auto meta = dist_checkpoint::read_metadata(tmp);
-        if (meta.step != step)
-            throw std::runtime_error("[litetorch Error] elastic: metadata step mismatch");
-        if ((int)meta.tensors.size() == 0 && local_shards.size() > 0)
-            throw std::runtime_error("[litetorch Error] elastic: empty tensor map in metadata");
-        std::ofstream mark(tmp + "/.validated", std::ios::binary | std::ios::trunc);
-        mark << step;
+        if (ok) {
+            auto meta = dist_checkpoint::read_metadata(tmp);
+            if (meta.step != step) {
+                ok = false;
+                err = "elastic: metadata step mismatch";
+            } else if ((int)meta.tensors.size() == 0 && local_shards.size() > 0) {
+                ok = false;
+                err = "elastic: empty tensor map in metadata";
+            } else {
+                std::ofstream mark(tmp + "/.validated", std::ios::binary | std::ios::trunc);
+                mark << step;
+            }
+        }
     }
+    collective_phase_ok(ok, err);
 
     maybe_barrier();
 
-    if (!file_exists(tmp + "/.validated"))
-        throw std::runtime_error("[litetorch Error] elastic: checkpoint validation failed for step " +
-                                std::to_string(step));
-
-    if (rank == 0) {
-        if (::rename(tmp.c_str(), fin.c_str()) != 0)
-            throw std::runtime_error("[litetorch Error] elastic: atomic rename failed: " +
-                                    std::string(std::strerror(errno)));
+    ok = true;
+    err.clear();
+    if (!file_exists(tmp + "/.validated")) {
+        ok = false;
+        err = "elastic: checkpoint validation failed for step " + std::to_string(step);
     }
+    collective_phase_ok(ok, err);
+
+    ok = true;
+    err.clear();
+    if (rank == 0) {
+        if (::rename(tmp.c_str(), fin.c_str()) != 0) {
+            ok = false;
+            err = std::string("elastic: atomic rename failed: ") + std::strerror(errno);
+        }
+    }
+    collective_phase_ok(ok, err);
 
     maybe_barrier();
 

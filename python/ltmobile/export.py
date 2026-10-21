@@ -87,11 +87,18 @@ class LiteModule:
             return self.seq.forward(x)
 
     def benchmark(self, x, iters=100, warmup=10):
+        sync = None
+        if x.device.type == lt.DeviceType.GPU:
+            sync = lt.cuda.synchronize
         for _ in range(warmup):
             self.forward(x)
+        if sync is not None:
+            sync()
         t0 = time.time()
         for _ in range(iters):
             self.forward(x)
+        if sync is not None:
+            sync()
         dt = time.time() - t0
         return {"ms_per_iter": dt / iters * 1000.0, "iters": iters}
 

@@ -1,5 +1,6 @@
 #include "litetorch/allocator.h"
 #include "litetorch/backend.h"
+#include "litetorch/memory_manager.h"
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
@@ -71,10 +72,9 @@ CachingAllocator::~CachingAllocator() {
     free_cpu_blocks_.clear();
     cached_cpu_bytes_ = 0;
     auto backend = BackendDispatcher::get().get_backend();
-    if (backend && backend->is_available()) {
-        for (auto& pair : free_gpu_blocks_) {
-            for (void* p : pair.second) backend->free(p);
-        }
+    bool can_free = backend && backend->is_available();
+    for (auto& pair : free_gpu_blocks_) {
+        for (void* p : pair.second) gpu_discard_free_piece(p, pair.first.second, can_free);
     }
     free_gpu_blocks_.clear();
     cached_gpu_bytes_ = 0;
@@ -99,11 +99,12 @@ void CachingAllocator::set_max_gpu_cache_size(size_t bytes) {
     while (cached_gpu_bytes_ > max_cached_gpu_bytes_ && !free_gpu_blocks_.empty()) {
         auto it = free_gpu_blocks_.begin();
         size_t key_size = it->first.second;
-        if (can_free) {
-            for (void* p : it->second) backend->free(p);
+        while (!it->second.empty() && cached_gpu_bytes_ > max_cached_gpu_bytes_) {
+            void* p = it->second.back();
+            it->second.pop_back();
+            gpu_discard_free_piece(p, key_size, can_free);
         }
-        cached_gpu_bytes_ -= key_size * it->second.size();
-        free_gpu_blocks_.erase(it);
+        if (it->second.empty()) free_gpu_blocks_.erase(it);
     }
 }
 
@@ -141,7 +142,7 @@ void* CachingAllocator::allocate_cpu(size_t size) {
     }
     void* ptr = std::calloc(size, 1);
     if (!ptr) {
-        throw std::runtime_error("[litetorch Error] CPU out of memory: failed to allocate " + std::to_string(size) + " bytes");
+        throw std::runtime_error("[litetorch Error] CPU out of memory: failed to allocate " + std::to_string(size) + " bytes | " + MemoryManager::get().cpu_oom_diagnostics(size));
     }
     allocated_cpu_blocks_[ptr] = size;
     return ptr;
@@ -176,7 +177,7 @@ void CachingAllocator::free_cpu(void* ptr) {
         for (auto f = free_cpu_blocks_.begin(); f != free_cpu_blocks_.end(); ++f) {
             if (f->second == ptr) return;
         }
-        free_cpu_raw(ptr);
+        throw std::runtime_error("[litetorch Error] CachingAllocator::free_cpu called with unknown pointer");
     }
 }
 
@@ -191,13 +192,29 @@ void* CachingAllocator::allocate_gpu(size_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
     int dev = current_gpu_device();
     auto it = free_gpu_blocks_.lower_bound({dev, size});
-    if (it != free_gpu_blocks_.end() && it->first.first == dev && it->first.second <= size * 2 && !it->second.empty()) {
+    if (it != free_gpu_blocks_.end() && it->first.first == dev && !it->second.empty()) {
         void* ptr = it->second.back();
         it->second.pop_back();
         size_t actual_size = it->first.second;
-        cached_gpu_bytes_ -= actual_size;
         if (it->second.empty()) free_gpu_blocks_.erase(it);
-        allocated_gpu_blocks_[ptr] = {actual_size, dev};
+        cached_gpu_bytes_ -= actual_size;
+        void* base = ptr;
+        auto bit = gpu_block_base_.find(ptr);
+        if (bit != gpu_block_base_.end()) base = bit->second;
+        size_t use_size = actual_size;
+        size_t split_at = (size + kGpuSplitAlign - 1) & ~(kGpuSplitAlign - 1);
+        if (actual_size > split_at && actual_size - split_at >= kGpuMinRemainder) {
+            use_size = split_at;
+            void* rem = static_cast<char*>(ptr) + split_at;
+            size_t rem_size = actual_size - split_at;
+            free_gpu_blocks_[{dev, rem_size}].push_back(rem);
+            gpu_block_base_[rem] = base;
+            auto rit = gpu_base_refs_.find(base);
+            if (rit != gpu_base_refs_.end()) ++rit->second;
+            cached_gpu_bytes_ += rem_size;
+        }
+        gpu_block_base_[ptr] = base;
+        allocated_gpu_blocks_[ptr] = {use_size, dev};
         return ptr;
     }
     auto backend = BackendDispatcher::get().get_backend();
@@ -205,8 +222,14 @@ void* CachingAllocator::allocate_gpu(size_t size) {
     if (backend && backend->is_available()) {
         ptr = backend->allocate(size);
     }
+    if (!ptr && backend && backend->is_available()) {
+        empty_cache_impl();
+        ptr = backend->allocate(size);
+    }
     if (ptr) {
         allocated_gpu_blocks_[ptr] = {size, dev};
+        gpu_block_base_[ptr] = ptr;
+        gpu_base_refs_[ptr] = 1;
     }
     return ptr;
 }
@@ -219,25 +242,63 @@ void CachingAllocator::free_gpu(void* ptr) {
         size_t size = it->second.first;
         int dev = it->second.second;
         allocated_gpu_blocks_.erase(it);
+        void* base = ptr;
+        auto bit = gpu_block_base_.find(ptr);
+        if (bit != gpu_block_base_.end()) {
+            base = bit->second;
+            gpu_block_base_.erase(bit);
+        }
         if (cached_gpu_bytes_ + size <= max_cached_gpu_bytes_) {
             free_gpu_blocks_[{dev, size}].push_back(ptr);
+            gpu_block_base_[ptr] = base;
             cached_gpu_bytes_ += size;
         } else {
-            auto backend = BackendDispatcher::get().get_backend();
-            if (backend && backend->is_available()) {
-                backend->free(ptr);
+            auto rit = gpu_base_refs_.find(base);
+            if (rit != gpu_base_refs_.end() && --rit->second == 0) {
+                gpu_base_refs_.erase(rit);
+                auto backend = BackendDispatcher::get().get_backend();
+                if (backend && backend->is_available()) backend->free(base);
             }
         }
     } else {
+        throw std::runtime_error("[litetorch Error] CachingAllocator::free_gpu called with unknown pointer");
+    }
+}
+
+void CachingAllocator::free_gpu_now(void* ptr) {
+    if (!ptr) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = allocated_gpu_blocks_.find(ptr);
+    if (it != allocated_gpu_blocks_.end()) {
+        allocated_gpu_blocks_.erase(it);
         auto backend = BackendDispatcher::get().get_backend();
         if (backend && backend->is_available()) {
             backend->free(ptr);
         }
+    } else {
+        throw std::runtime_error("[litetorch Error] CachingAllocator::free_gpu_now called with unknown pointer");
     }
 }
 
-void CachingAllocator::empty_cache() {
-    std::lock_guard<std::mutex> lock(mutex_);
+void CachingAllocator::gpu_discard_free_piece(void* ptr, size_t size, bool can_free) {
+    auto bit = gpu_block_base_.find(ptr);
+    void* base = ptr;
+    if (bit != gpu_block_base_.end()) {
+        base = bit->second;
+        gpu_block_base_.erase(bit);
+    }
+    auto rit = gpu_base_refs_.find(base);
+    if (rit != gpu_base_refs_.end() && --rit->second == 0) {
+        gpu_base_refs_.erase(rit);
+        if (can_free) {
+            auto backend = BackendDispatcher::get().get_backend();
+            if (backend && backend->is_available()) backend->free(base);
+        }
+    }
+    cached_gpu_bytes_ -= size;
+}
+
+void CachingAllocator::empty_cache_impl() {
     for (auto& pair : free_cpu_blocks_) {
         free_cpu_raw(pair.second);
     }
@@ -245,13 +306,18 @@ void CachingAllocator::empty_cache() {
     cached_cpu_bytes_ = 0;
 
     auto backend = BackendDispatcher::get().get_backend();
-    if (backend && backend->is_available()) {
-        for (auto& pair : free_gpu_blocks_) {
-            for (void* p : pair.second) backend->free(p);
-        }
+    bool can_free = backend && backend->is_available();
+    for (auto& pair : free_gpu_blocks_) {
+        for (void* p : pair.second) gpu_discard_free_piece(p, pair.first.second, can_free);
     }
+    if (can_free) backend->empty_cache();
     free_gpu_blocks_.clear();
     cached_gpu_bytes_ = 0;
+}
+
+void CachingAllocator::empty_cache() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    empty_cache_impl();
 }
 
 }

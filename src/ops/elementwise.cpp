@@ -18,24 +18,13 @@
 #include <dlfcn.h>
 #endif
 
+#include "litetorch/storage_guard.h"
+#include <cstdint>
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
 
 namespace {
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
 
 inline uint16_t ew_float_to_half(float f) {
     uint32_t x = *reinterpret_cast<uint32_t*>(&f);
@@ -69,6 +58,10 @@ struct IntBufferPool {
     static cl_mem get_and_fill(const std::vector<int64_t>& vec) {
         thread_local std::vector<cl_mem> pool;
         thread_local size_t index = 0;
+        for (int64_t v : vec) {
+            if (v > (int64_t)std::numeric_limits<int>::max() || v < (int64_t)std::numeric_limits<int>::min())
+                throw std::runtime_error("[litetorch Error] IntBufferPool: shape/stride exceeds INT32 range");
+        }
         std::vector<int> int_vec(vec.begin(), vec.end());
         size_t size_bytes = int_vec.size() * sizeof(int);
         if (pool.size() < 32) {
@@ -203,7 +196,7 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
         if (grad->device.type == DeviceType::GPU) {
             auto native = BackendDispatcher::get().get_backend();
             if (native && native->is_available()) {
-                typedef void (*ReducePrependedFn)(void*, int, void*, int, int, int);
+                typedef void (*ReducePrependedFn)(void*, int64_t, void*, int64_t, int64_t, int64_t);
                 auto fn = reinterpret_cast<ReducePrependedFn>(native->get_kernel("", "", "gpu_reduce_broadcast_prepended"));
                 if (fn) {
                     run_gpu = true;
@@ -224,15 +217,15 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                     StorageUseGuard guard({reshaped->storage, summed->storage});
                     
                     cl_mem in_mem = reshaped->gpu_data();
-                    int in_off = reshaped->offset;
+                    int64_t in_off = reshaped->offset;
                     cl_mem out_mem = summed->gpu_data();
-                    int out_off = summed->offset;
-                    int prod_val = prod_prepended;
-                    int rem_val = remaining;
+                    int64_t out_off = summed->offset;
+                    int64_t prod_val = prod_prepended;
+                    int64_t rem_val = remaining;
 
                     rt_gpu_launch(kernel, {static_cast<size_t>(remaining)}, {},
                         {&in_mem, &in_off, &out_mem, &out_off, &prod_val, &rem_val},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int)});
+                        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t), sizeof(int64_t)});
 
                     current = summed->view(final_shape);
                 }
@@ -280,14 +273,14 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
             if (grad->device.type == DeviceType::GPU) {
                 auto native = BackendDispatcher::get().get_backend();
                 if (native && native->is_available()) {
-                    typedef void (*ReduceDimFn)(void*, int, void*, int, int, int, int);
+                    typedef void (*ReduceDimFn)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
                     auto fn = reinterpret_cast<ReduceDimFn>(native->get_kernel("", "", "gpu_reduce_broadcast_dim"));
                     if (fn) {
                         run_gpu = true;
                         auto summed = Tensor::create(new_shape, grad->device);
                         StorageUseGuard guard({current->storage, summed->storage});
                         fn(current->gpu_data(), current->offset, summed->gpu_data(), summed->offset,
-                           (int)outer_size, (int)dim_size, (int)inner_size);
+                           outer_size, dim_size, inner_size);
                         current = summed;
                     }
                 }
@@ -299,17 +292,17 @@ std::shared_ptr<Tensor> reduce_broadcast(std::shared_ptr<Tensor> grad, const std
                         StorageUseGuard guard({current->storage, summed->storage});
 
                         cl_mem in_mem = current->gpu_data();
-                        int in_off = current->offset;
+                        int64_t in_off = current->offset;
                         cl_mem out_mem = summed->gpu_data();
-                        int out_off = summed->offset;
-                        int out_sz = outer_size;
-                        int d_sz = dim_size;
-                        int in_sz = inner_size;
+                        int64_t out_off = summed->offset;
+                        int64_t out_sz = outer_size;
+                        int64_t d_sz = dim_size;
+                        int64_t in_sz = inner_size;
 
-                        int total_threads = outer_size * inner_size;
+                        int64_t total_threads = outer_size * inner_size;
                         rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                             {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
-                            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                            {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t), sizeof(int64_t), sizeof(int64_t)});
 
                         current = summed;
                     }
@@ -406,16 +399,186 @@ public:
     }
 };
 
+
+template <typename T, typename F>
+std::shared_ptr<Tensor> ew_binary_int(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b,
+                                      DataType dt, F f,
+                                      std::function<std::shared_ptr<Node>()> make_node,
+                                      bool save_inputs) {
+    auto ai = (a->dtype == dt) ? a : Ops::cast(a, dt);
+    auto bi = (b->dtype == dt) ? b : Ops::cast(b, dt);
+    std::vector<int64_t> out_shape = broadcast_shapes(ai->shape, bi->shape);
+    auto out = Tensor::create(out_shape, ai->device, false, dt);
+    StorageUseGuard guard({ai->storage, bi->storage, out->storage});
+    const T* ap = reinterpret_cast<const T*>(ai->raw_data_ptr());
+    const T* bp = reinterpret_cast<const T*>(bi->raw_data_ptr());
+    T* op = reinterpret_cast<T*>(out->raw_data_ptr());
+    int64_t n = static_cast<int64_t>(out->numel());
+    if (ai->shape == bi->shape && ai->is_contiguous() && bi->is_contiguous()) {
+        ThreadPool::get().parallel_for(0, n, [&](int64_t i) { op[i] = f(ap[i], bp[i]); });
+    } else {
+        int ndims = static_cast<int>(out_shape.size());
+        std::vector<int64_t> out_strides((size_t)ndims);
+        int64_t current = 1;
+        for (int d = ndims - 1; d >= 0; --d) {
+            out_strides[(size_t)d] = current;
+            current *= out_shape[(size_t)d];
+        }
+        int a_diff = ndims - static_cast<int>(ai->shape.size());
+        int b_diff = ndims - static_cast<int>(bi->shape.size());
+        ThreadPool::get().parallel_for(0, n, [&](int64_t i) {
+            int64_t temp = i;
+            int64_t a_idx = 0;
+            int64_t b_idx = 0;
+            for (int d = 0; d < ndims; ++d) {
+                int64_t coord = temp / out_strides[(size_t)d];
+                temp %= out_strides[(size_t)d];
+                if (d >= a_diff) {
+                    int a_dim_idx = d - a_diff;
+                    if (ai->shape[(size_t)a_dim_idx] != 1) {
+                        a_idx += coord * ai->strides[(size_t)a_dim_idx];
+                    }
+                }
+                if (d >= b_diff) {
+                    int b_dim_idx = d - b_diff;
+                    if (bi->shape[(size_t)b_dim_idx] != 1) {
+                        b_idx += coord * bi->strides[(size_t)b_dim_idx];
+                    }
+                }
+            }
+            op[i] = f(ap[a_idx], bp[b_idx]);
+        });
+    }
+    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
+        auto node = make_node();
+        node->inputs = { {ai, ai->requires_grad}, {bi, bi->requires_grad} };
+        node->next_nodes = { ai->creator, bi->creator };
+        if (save_inputs) {
+            node->saved_tensors = { ai, bi };
+            node->saved_versions = { (ai ? ai->_version() : 0), (bi ? bi->_version() : 0) };
+        } else {
+            node->saved_tensors = {};
+            node->saved_versions = {};
+        }
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> ew_add_int(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, DataType dt) {
+    switch (dt) {
+        case DataType::BOOL:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return (x + y) ? 1 : 0; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        case DataType::UINT8:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return static_cast<uint8_t>(x + y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        case DataType::INT8:
+        case DataType::INT4:
+            return ew_binary_int<int8_t>(a, b, dt,
+                [](int8_t x, int8_t y) -> int8_t { return static_cast<int8_t>(x + y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        case DataType::INT16:
+            return ew_binary_int<int16_t>(a, b, dt,
+                [](int16_t x, int16_t y) -> int16_t { return static_cast<int16_t>(x + y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        case DataType::INT32:
+            return ew_binary_int<int32_t>(a, b, dt,
+                [](int32_t x, int32_t y) -> int32_t { return x + y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        case DataType::INT64:
+            return ew_binary_int<int64_t>(a, b, dt,
+                [](int64_t x, int64_t y) -> int64_t { return x + y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); }, false);
+        default:
+            throw std::runtime_error("[litetorch Error] ew_add_int: unsupported integer dtype");
+    }
+}
+
+std::shared_ptr<Tensor> ew_sub_int(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, DataType dt) {
+    switch (dt) {
+        case DataType::BOOL:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return (x - y) ? 1 : 0; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        case DataType::UINT8:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return static_cast<uint8_t>(x - y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        case DataType::INT8:
+        case DataType::INT4:
+            return ew_binary_int<int8_t>(a, b, dt,
+                [](int8_t x, int8_t y) -> int8_t { return static_cast<int8_t>(x - y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        case DataType::INT16:
+            return ew_binary_int<int16_t>(a, b, dt,
+                [](int16_t x, int16_t y) -> int16_t { return static_cast<int16_t>(x - y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        case DataType::INT32:
+            return ew_binary_int<int32_t>(a, b, dt,
+                [](int32_t x, int32_t y) -> int32_t { return x - y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        case DataType::INT64:
+            return ew_binary_int<int64_t>(a, b, dt,
+                [](int64_t x, int64_t y) -> int64_t { return x - y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); }, false);
+        default:
+            throw std::runtime_error("[litetorch Error] ew_sub_int: unsupported integer dtype");
+    }
+}
+
+std::shared_ptr<Tensor> ew_mul_int(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, DataType dt) {
+    switch (dt) {
+        case DataType::BOOL:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return (x * y) ? 1 : 0; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        case DataType::UINT8:
+            return ew_binary_int<uint8_t>(a, b, dt,
+                [](uint8_t x, uint8_t y) -> uint8_t { return static_cast<uint8_t>(x * y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        case DataType::INT8:
+        case DataType::INT4:
+            return ew_binary_int<int8_t>(a, b, dt,
+                [](int8_t x, int8_t y) -> int8_t { return static_cast<int8_t>(x * y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        case DataType::INT16:
+            return ew_binary_int<int16_t>(a, b, dt,
+                [](int16_t x, int16_t y) -> int16_t { return static_cast<int16_t>(x * y); },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        case DataType::INT32:
+            return ew_binary_int<int32_t>(a, b, dt,
+                [](int32_t x, int32_t y) -> int32_t { return x * y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        case DataType::INT64:
+            return ew_binary_int<int64_t>(a, b, dt,
+                [](int64_t x, int64_t y) -> int64_t { return x * y; },
+                [&]() -> std::shared_ptr<Node> { return std::make_shared<MulNode>(); }, true);
+        default:
+            throw std::runtime_error("[litetorch Error] ew_mul_int: unsupported integer dtype");
+    }
+}
+
 std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     if (auto out = try_binary_fp16(a, b, "elementwise_add_fp16",
             [&]() -> std::shared_ptr<Node> { return std::make_shared<AddNode>(a->shape, b->shape); },
             false)) return out;
-    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
-        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
-        auto a_fp32 = cast(a, DataType::FP32);
-        auto b_fp32 = cast(b, DataType::FP32);
-        auto out_fp32 = add(a_fp32, b_fp32);
-        return cast(out_fp32, out_dtype);
+    {
+        DataType dt = promote_types(a->dtype, b->dtype);
+        if (is_integer_dtype(dt) && a->device.type == DeviceType::CPU && b->device.type == DeviceType::CPU
+            && a->device == b->device) {
+            return ew_add_int(a, b, dt);
+        }
+        if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+            auto a_fp32 = cast(a, DataType::FP32);
+            auto b_fp32 = cast(b, DataType::FP32);
+            auto out_fp32 = add(a_fp32, b_fp32);
+            return cast(out_fp32, dt);
+        }
     }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
@@ -434,13 +597,13 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
-                int size = out->numel();
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
+                int64_t size = out->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         } else {
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_add");
@@ -449,9 +612,9 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
 
                 TemporaryGPUBuffers temp_bufs;
                 cl_mem out_shape_mem = temp_bufs.add(out_shape);
@@ -463,16 +626,16 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int ndims = out_shape.size();
                 int a_ndims = a->shape.size();
                 int b_ndims = b->shape.size();
-                int size = out->numel();
+                int64_t size = out->numel();
 
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t),
                      sizeof(int), sizeof(cl_mem),
                      sizeof(int), sizeof(cl_mem), sizeof(cl_mem),
-                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int)});
+                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int64_t)});
             }
         }
     }
@@ -481,12 +644,12 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         float* b_ptr = b->data_ptr();
         float* out_ptr = out->data_ptr();
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            int size = out->numel();
+            int64_t size = out->numel();
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = a_ptr[i] + b_ptr[i];
             });
         } else {
-            int size = out->numel();
+            int64_t size = out->numel();
             int ndims = out_shape.size();
             std::vector<int64_t> out_strides(ndims);
             int64_t current = 1;
@@ -495,22 +658,22 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 current *= out_shape[i];
             }
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                int temp = i;
-                int a_idx = 0;
-                int b_idx = 0;
-                int a_diff = ndims - a->shape.size();
-                int b_diff = ndims - b->shape.size();
+                int64_t temp = i;
+                int64_t a_idx = 0;
+                int64_t b_idx = 0;
+                int64_t a_diff = (int64_t)ndims - (int64_t)a->shape.size();
+                int64_t b_diff = (int64_t)ndims - (int64_t)b->shape.size();
                 for (int d = 0; d < ndims; ++d) {
-                    int coord = temp / out_strides[d];
+                    int64_t coord = temp / out_strides[d];
                     temp %= out_strides[d];
                     if (d >= a_diff) {
-                        int a_dim_idx = d - a_diff;
+                        int64_t a_dim_idx = d - a_diff;
                         if (a->shape[a_dim_idx] != 1) {
                             a_idx += coord * a->strides[a_dim_idx];
                         }
                     }
                     if (d >= b_diff) {
-                        int b_dim_idx = d - b_diff;
+                        int64_t b_dim_idx = d - b_diff;
                         if (b->shape[b_dim_idx] != 1) {
                             b_idx += coord * b->strides[b_dim_idx];
                         }
@@ -532,6 +695,7 @@ std::shared_ptr<Tensor> add(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = {};
+        node->saved_versions = {};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -543,12 +707,18 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     if (auto out = try_binary_fp16(a, b, "elementwise_sub_fp16",
             [&]() -> std::shared_ptr<Node> { return std::make_shared<SubNode>(a->shape, b->shape); },
             false)) return out;
-    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
-        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
-        auto a_fp32 = cast(a, DataType::FP32);
-        auto b_fp32 = cast(b, DataType::FP32);
-        auto out_fp32 = sub(a_fp32, b_fp32);
-        return cast(out_fp32, out_dtype);
+    {
+        DataType dt = promote_types(a->dtype, b->dtype);
+        if (is_integer_dtype(dt) && a->device.type == DeviceType::CPU && b->device.type == DeviceType::CPU
+            && a->device == b->device) {
+            return ew_sub_int(a, b, dt);
+        }
+        if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+            auto a_fp32 = cast(a, DataType::FP32);
+            auto b_fp32 = cast(b, DataType::FP32);
+            auto out_fp32 = sub(a_fp32, b_fp32);
+            return cast(out_fp32, dt);
+        }
     }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
@@ -567,13 +737,13 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
-                int size = out->numel();
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
+                int64_t size = out->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         } else {
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_sub");
@@ -582,9 +752,9 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
 
                 TemporaryGPUBuffers temp_bufs;
                 cl_mem out_shape_mem = temp_bufs.add(out_shape);
@@ -596,16 +766,16 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int ndims = out_shape.size();
                 int a_ndims = a->shape.size();
                 int b_ndims = b->shape.size();
-                int size = out->numel();
+                int64_t size = out->numel();
 
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t),
                      sizeof(int), sizeof(cl_mem),
                      sizeof(int), sizeof(cl_mem), sizeof(cl_mem),
-                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int)});
+                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int64_t)});
             }
         }
     }
@@ -614,12 +784,12 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         float* b_ptr = b->data_ptr();
         float* out_ptr = out->data_ptr();
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            int size = out->numel();
+            int64_t size = out->numel();
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = a_ptr[i] - b_ptr[i];
             });
         } else {
-            int size = out->numel();
+            int64_t size = out->numel();
             int ndims = out_shape.size();
             std::vector<int64_t> out_strides(ndims);
             int64_t current = 1;
@@ -628,22 +798,22 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 current *= out_shape[i];
             }
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                int temp = i;
-                int a_idx = 0;
-                int b_idx = 0;
-                int a_diff = ndims - a->shape.size();
-                int b_diff = ndims - b->shape.size();
+                int64_t temp = i;
+                int64_t a_idx = 0;
+                int64_t b_idx = 0;
+                int64_t a_diff = (int64_t)ndims - (int64_t)a->shape.size();
+                int64_t b_diff = (int64_t)ndims - (int64_t)b->shape.size();
                 for (int d = 0; d < ndims; ++d) {
-                    int coord = temp / out_strides[d];
+                    int64_t coord = temp / out_strides[d];
                     temp %= out_strides[d];
                     if (d >= a_diff) {
-                        int a_dim_idx = d - a_diff;
+                        int64_t a_dim_idx = d - a_diff;
                         if (a->shape[a_dim_idx] != 1) {
                             a_idx += coord * a->strides[a_dim_idx];
                         }
                     }
                     if (d >= b_diff) {
-                        int b_dim_idx = d - b_diff;
+                        int64_t b_dim_idx = d - b_diff;
                         if (b->shape[b_dim_idx] != 1) {
                             b_idx += coord * b->strides[b_dim_idx];
                         }
@@ -665,6 +835,7 @@ std::shared_ptr<Tensor> sub(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = {};
+        node->saved_versions = {};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -690,11 +861,15 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 true)) return out;
     }
     if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
-        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
+        DataType dt = promote_types(a->dtype, b->dtype);
+        if (is_integer_dtype(dt) && a->device.type == DeviceType::CPU && b->device.type == DeviceType::CPU
+            && a->device == b->device) {
+            return ew_mul_int(a, b, dt);
+        }
         auto a_fp32 = cast(a, DataType::FP32);
         auto b_fp32 = cast(b, DataType::FP32);
         auto out_fp32 = mul(a_fp32, b_fp32);
-        return cast(out_fp32, out_dtype);
+        return cast(out_fp32, dt);
     }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
@@ -713,13 +888,13 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
-                int size = out->numel();
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
+                int64_t size = out->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         } else {
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_mul");
@@ -728,9 +903,9 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
 
                 TemporaryGPUBuffers temp_bufs;
                 cl_mem out_shape_mem = temp_bufs.add(out_shape);
@@ -742,16 +917,16 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int ndims = out_shape.size();
                 int a_ndims = a->shape.size();
                 int b_ndims = b->shape.size();
-                int size = out->numel();
+                int64_t size = out->numel();
 
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t),
                      sizeof(int), sizeof(cl_mem),
                      sizeof(int), sizeof(cl_mem), sizeof(cl_mem),
-                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int)});
+                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int64_t)});
             }
         }
     }
@@ -760,12 +935,12 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         float* b_ptr = b->data_ptr();
         float* out_ptr = out->data_ptr();
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            int size = out->numel();
+            int64_t size = out->numel();
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = a_ptr[i] * b_ptr[i];
             });
         } else {
-            int size = out->numel();
+            int64_t size = out->numel();
             int ndims = out_shape.size();
             std::vector<int64_t> out_strides(ndims);
             int64_t current = 1;
@@ -774,22 +949,22 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 current *= out_shape[i];
             }
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                int temp = i;
-                int a_idx = 0;
-                int b_idx = 0;
-                int a_diff = ndims - a->shape.size();
-                int b_diff = ndims - b->shape.size();
+                int64_t temp = i;
+                int64_t a_idx = 0;
+                int64_t b_idx = 0;
+                int64_t a_diff = (int64_t)ndims - (int64_t)a->shape.size();
+                int64_t b_diff = (int64_t)ndims - (int64_t)b->shape.size();
                 for (int d = 0; d < ndims; ++d) {
-                    int coord = temp / out_strides[d];
+                    int64_t coord = temp / out_strides[d];
                     temp %= out_strides[d];
                     if (d >= a_diff) {
-                        int a_dim_idx = d - a_diff;
+                        int64_t a_dim_idx = d - a_diff;
                         if (a->shape[a_dim_idx] != 1) {
                             a_idx += coord * a->strides[a_dim_idx];
                         }
                     }
                     if (d >= b_diff) {
-                        int b_dim_idx = d - b_diff;
+                        int64_t b_dim_idx = d - b_diff;
                         if (b->shape[b_dim_idx] != 1) {
                             b_idx += coord * b->strides[b_dim_idx];
                         }
@@ -811,6 +986,7 @@ std::shared_ptr<Tensor> mul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = { a, b };
+        node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -822,12 +998,19 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
     if (auto out = try_binary_fp16(a, b, "elementwise_div_fp16",
             [&]() -> std::shared_ptr<Node> { return std::make_shared<DivNode>(); },
             true)) return out;
-    if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
-        DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
-        auto a_fp32 = cast(a, DataType::FP32);
-        auto b_fp32 = cast(b, DataType::FP32);
-        auto out_fp32 = div(a_fp32, b_fp32);
-        return cast(out_fp32, out_dtype);
+    {
+        DataType dt = promote_types(a->dtype, b->dtype);
+        if (is_integer_dtype(dt)) {
+            auto a_fp32 = cast(a, DataType::FP32);
+            auto b_fp32 = cast(b, DataType::FP32);
+            return div(a_fp32, b_fp32);
+        }
+        if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+            auto a_fp32 = cast(a, DataType::FP32);
+            auto b_fp32 = cast(b, DataType::FP32);
+            auto out_fp32 = div(a_fp32, b_fp32);
+            return cast(out_fp32, dt);
+        }
     }
     if (a->device != b->device) {
         if (a->device.type == DeviceType::GPU) b = b->to(a->device);
@@ -846,13 +1029,13 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
-                int size = out->numel();
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
+                int64_t size = out->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         } else {
             auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_broadcast_div");
@@ -861,9 +1044,9 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 cl_mem a_mem = a->gpu_data();
                 cl_mem b_mem = b->gpu_data();
                 cl_mem c_mem = out->gpu_data();
-                int a_off = a->offset;
-                int b_off = b->offset;
-                int c_off = out->offset;
+                int64_t a_off = a->offset;
+                int64_t b_off = b->offset;
+                int64_t c_off = out->offset;
 
                 TemporaryGPUBuffers temp_bufs;
                 cl_mem out_shape_mem = temp_bufs.add(out_shape);
@@ -875,16 +1058,16 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 int ndims = out_shape.size();
                 int a_ndims = a->shape.size();
                 int b_ndims = b->shape.size();
-                int size = out->numel();
+                int64_t size = out->numel();
 
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &ndims, &out_shape_mem,
                      &a_ndims, &a_shape_mem, &a_strides_mem,
                      &b_ndims, &b_shape_mem, &b_strides_mem, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t),
                      sizeof(int), sizeof(cl_mem),
                      sizeof(int), sizeof(cl_mem), sizeof(cl_mem),
-                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int)});
+                     sizeof(int), sizeof(cl_mem), sizeof(cl_mem), sizeof(int64_t)});
             }
         }
     }
@@ -893,12 +1076,12 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         float* b_ptr = b->data_ptr();
         float* out_ptr = out->data_ptr();
         if (a->shape == b->shape && a->is_contiguous() && b->is_contiguous()) {
-            int size = out->numel();
+            int64_t size = out->numel();
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
                 out_ptr[i] = a_ptr[i] / b_ptr[i];
             });
         } else {
-            int size = out->numel();
+            int64_t size = out->numel();
             int ndims = out_shape.size();
             std::vector<int64_t> out_strides(ndims);
             int64_t current = 1;
@@ -907,22 +1090,22 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 current *= out_shape[i];
             }
             ThreadPool::get().parallel_for(0, size, [&](int64_t i) {
-                int temp = i;
-                int a_idx = 0;
-                int b_idx = 0;
-                int a_diff = ndims - a->shape.size();
-                int b_diff = ndims - b->shape.size();
+                int64_t temp = i;
+                int64_t a_idx = 0;
+                int64_t b_idx = 0;
+                int64_t a_diff = (int64_t)ndims - (int64_t)a->shape.size();
+                int64_t b_diff = (int64_t)ndims - (int64_t)b->shape.size();
                 for (int d = 0; d < ndims; ++d) {
-                    int coord = temp / out_strides[d];
+                    int64_t coord = temp / out_strides[d];
                     temp %= out_strides[d];
                     if (d >= a_diff) {
-                        int a_dim_idx = d - a_diff;
+                        int64_t a_dim_idx = d - a_diff;
                         if (a->shape[a_dim_idx] != 1) {
                             a_idx += coord * a->strides[a_dim_idx];
                         }
                     }
                     if (d >= b_diff) {
-                        int b_dim_idx = d - b_diff;
+                        int64_t b_dim_idx = d - b_diff;
                         if (b->shape[b_dim_idx] != 1) {
                             b_idx += coord * b->strides[b_dim_idx];
                         }
@@ -944,6 +1127,7 @@ std::shared_ptr<Tensor> div(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = { a, b };
+        node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -975,7 +1159,7 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -984,8 +1168,8 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &exponent, &b_mem, &b_off, &size},
                 {sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(cl_mem), sizeof(int), sizeof(int)});
@@ -1010,6 +1194,7 @@ std::shared_ptr<Tensor> pow(std::shared_ptr<Tensor> a, float exponent) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1023,8 +1208,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sqrt backward: saved output tensor missing");
+        auto out = saved_tensors[0];
         auto two_t = Tensor::from_vector({2.0f}, {1}, out->device, false, out->dtype);
         auto grad_input = div(grad_output, mul(two_t, out));
         return { grad_input };
@@ -1043,7 +1228,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1052,11 +1237,11 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -1078,6 +1263,7 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {out};
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1091,8 +1277,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Exp backward: saved output tensor missing");
+        auto out = saved_tensors[0];
         auto grad_input = mul(grad_output, out);
         return { grad_input };
     }
@@ -1110,7 +1296,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1119,11 +1305,11 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -1145,6 +1331,7 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {out};
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1176,7 +1363,7 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1185,11 +1372,11 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -1211,6 +1398,7 @@ std::shared_ptr<Tensor> log(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1260,7 +1448,7 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1269,11 +1457,11 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -1295,6 +1483,7 @@ std::shared_ptr<Tensor> abs(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1325,7 +1514,7 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
     auto a_c = a->is_contiguous() ? a : a->contiguous();
     auto out = Tensor::create(a_c->shape, a_c->device);
     StorageUseGuard guard({a_c->storage, out->storage});
-    int size = a_c->numel();
+    int64_t size = a_c->numel();
     bool run_gpu = false;
     if (a->device.type == DeviceType::GPU) {
         auto a_c = a->is_contiguous() ? a : a->contiguous();
@@ -1334,11 +1523,11 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
             run_gpu = true;
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
             rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                 {&a_mem, &a_off, &b_mem, &b_off, &size},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -1360,6 +1549,7 @@ std::shared_ptr<Tensor> neg(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {};
+        node->saved_versions = {};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1387,13 +1577,13 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem gout_mem = grad_output->gpu_data();
-                int gout_off = grad_output->offset;
+                int64_t gout_off = grad_output->offset;
                 cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
-                int size = grad_input->numel();
+                int64_t gin_off = grad_input->offset;
+                int64_t size = grad_input->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&gin_mem, &gin_off, &gout_mem, &gout_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         }
         if (!run_gpu) {
@@ -1502,13 +1692,13 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = grad_output->gpu_data();
-                int in_off = grad_output->offset;
+                int64_t in_off = grad_output->offset;
                 cl_mem out_mem = grad_input->gpu_data();
-                int out_off = grad_input->offset;
-                int size = grad_input->numel();
+                int64_t out_off = grad_input->offset;
+                int64_t size = grad_input->numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&out_mem, &out_off, &in_mem, &in_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
                 
                 auto scale_t = Tensor::from_vector({1.0f / num_el}, {1}, grad_output->device);
                 grad_input = mul(grad_input, scale_t);
@@ -1566,7 +1756,7 @@ public:
         size_t max_idx = 0;
         size_t size = input->numel();
         for (size_t i = 1; i < size; ++i) {
-            if (in_ptr[i] > max_val) {
+            if (std::isnan(in_ptr[i]) || in_ptr[i] > max_val) {
                 max_val = in_ptr[i];
                 max_idx = i;
             }
@@ -1587,6 +1777,7 @@ public:
 };
 
 std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
+    if (a->numel() == 0) throw std::runtime_error("[litetorch Error] max(): expected non-empty input");
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = max(a_fp32);
@@ -1610,7 +1801,7 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         size_t size = a_c->numel();
         float max_val = (size > 0) ? ptr[0] : -std::numeric_limits<float>::infinity();
         for (size_t i = 1; i < size; ++i) {
-            if (ptr[i] > max_val) max_val = ptr[i];
+            if (std::isnan(ptr[i]) || ptr[i] > max_val) max_val = ptr[i];
         }
         float* out_ptr = out->data_ptr();
         out_ptr[0] = max_val;
@@ -1627,6 +1818,7 @@ std::shared_ptr<Tensor> max(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1656,12 +1848,12 @@ static std::shared_ptr<Tensor> sum_dim_forward(std::shared_ptr<Tensor> a, int64_
     if (a->device.type == DeviceType::GPU) {
         auto native = BackendDispatcher::get().get_backend();
         if (native && native->is_available()) {
-            typedef void (*ReduceDimFn)(void*, int, void*, int, int, int, int);
+            typedef void (*ReduceDimFn)(void*, int64_t, void*, int64_t, int64_t, int64_t, int64_t);
             auto fn = reinterpret_cast<ReduceDimFn>(native->get_kernel("", "", "gpu_reduce_broadcast_dim"));
             if (fn) {
                 run_gpu = true;
                 fn(a_c->gpu_data(), a_c->offset, out->gpu_data(), out->offset,
-                   (int)outer_size, (int)dim_size, (int)inner_size);
+                   outer_size, dim_size, inner_size);
                 if (scale != 1.0f) {
                     auto scale_t = Tensor::from_vector({scale}, {1}, a->device);
                     out = mul(out, scale_t);
@@ -1673,16 +1865,16 @@ static std::shared_ptr<Tensor> sum_dim_forward(std::shared_ptr<Tensor> a, int64_
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = a_c->gpu_data();
-                int in_off = a_c->offset;
+                int64_t in_off = a_c->offset;
                 cl_mem out_mem = out->gpu_data();
-                int out_off = out->offset;
-                int out_sz = (int)outer_size;
-                int d_sz = (int)dim_size;
-                int in_sz = (int)inner_size;
-                int total_threads = (int)(outer_size * inner_size);
+                int64_t out_off = out->offset;
+                int64_t out_sz = outer_size;
+                int64_t d_sz = dim_size;
+                int64_t in_sz = inner_size;
+                int64_t total_threads = outer_size * inner_size;
                 rt_gpu_launch(kernel, {static_cast<size_t>(total_threads)}, {},
                     {&in_mem, &in_off, &out_mem, &out_off, &out_sz, &d_sz, &in_sz},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t), sizeof(int64_t), sizeof(int64_t)});
                 if (scale != 1.0f) {
                     auto scale_t = Tensor::from_vector({scale}, {1}, a->device);
                     out = mul(out, scale_t);
@@ -1891,6 +2083,7 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std
     if (ndim == 0) throw std::runtime_error("[litetorch Error] max over dim of a 0-dim tensor");
     if (dim < 0) dim += ndim;
     if (dim < 0 || dim >= ndim) throw std::runtime_error("[litetorch Error] Dimension out of range for max");
+    if (a->numel() == 0) throw std::runtime_error("[litetorch Error] max(): expected non-empty input");
     int64_t outer_size = 1, inner_size = 1;
     for (int64_t i = 0; i < dim; ++i) outer_size *= a->shape[i];
     int64_t dim_size = a->shape[dim];
@@ -1908,11 +2101,11 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std
     }
     if (!cpu_in->is_contiguous()) cpu_in = cpu_in->contiguous();
     auto out = Tensor::create(out_shape, a->device);
-    auto indices = Tensor::create(out_shape, a->device, false, DataType::INT32);
+    auto indices = Tensor::create(out_shape, a->device, false, DataType::INT64);
     StorageUseGuard guard({a_c->storage, out->storage, indices->storage});
     float* src = cpu_in->data_ptr();
     float* dst = out->data_ptr();
-    int32_t* idst = reinterpret_cast<int32_t*>(indices->data_ptr());
+    int64_t* idst = reinterpret_cast<int64_t*>(indices->raw_data_ptr());
     std::vector<int64_t> argmax(static_cast<size_t>(outer_size * inner_size));
     ThreadPool::get().parallel_for(0, outer_size, [&](int64_t o) {
         for (int64_t i = 0; i < inner_size; ++i) {
@@ -1920,22 +2113,22 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max_with_indices(std
             int64_t best_d = 0;
             for (int64_t d = 1; d < dim_size; ++d) {
                 float v = src[(o * dim_size + d) * inner_size + i];
-                if (v > best) { best = v; best_d = d; }
+                if (std::isnan(v) || v > best) { best = v; best_d = d; }
             }
             int64_t k = o * inner_size + i;
             dst[k] = best;
-            idst[k] = static_cast<int32_t>(best_d);
+            idst[k] = static_cast<int64_t>(best_d);
             argmax[static_cast<size_t>(k)] = best_d;
         }
     });
     if (a->device.type == DeviceType::GPU) {
         rt_gpu_write(out->gpu_data(), out->numel() * sizeof(float), dst);
-        rt_gpu_write(indices->gpu_data(), indices->numel() * sizeof(int32_t), idst);
+        rt_gpu_write(indices->gpu_data(), indices->numel() * sizeof(int64_t), idst);
     } else if (a->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu) {
             tpu->write(out->gpu_data(), out->numel() * sizeof(float), dst);
-            tpu->write(indices->gpu_data(), indices->numel() * sizeof(int32_t), idst);
+            tpu->write(indices->gpu_data(), indices->numel() * sizeof(int64_t), idst);
         }
     }
     if (Autograd::is_grad_enabled() && (a->requires_grad)) {
@@ -2027,20 +2220,17 @@ public:
 
 std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors, int64_t dim) {
     if (!tensors.empty()) {
-        bool any_non_fp32 = false;
-        DataType first_dtype = tensors[0]->dtype;
+        DataType out_dtype = tensors[0]->dtype;
         bool all_same = true;
         for (auto& t : tensors) {
-            if (t->dtype != DataType::FP32) any_non_fp32 = true;
-            if (t->dtype != first_dtype) all_same = false;
+            out_dtype = promote_types(out_dtype, t->dtype);
+            if (t->dtype != tensors[0]->dtype) all_same = false;
         }
-        if (any_non_fp32) {
-            DataType out_dtype = all_same ? first_dtype : DataType::FP32;
-            std::vector<std::shared_ptr<Tensor>> fp32_tensors;
-            fp32_tensors.reserve(tensors.size());
-            for (auto& t : tensors) fp32_tensors.push_back(cast(t, DataType::FP32));
-            auto out_fp32 = cat(fp32_tensors, dim);
-            return cast(out_fp32, out_dtype);
+        if (!all_same) {
+            std::vector<std::shared_ptr<Tensor>> casted;
+            casted.reserve(tensors.size());
+            for (auto& t : tensors) casted.push_back(cast(t, out_dtype));
+            return cat(casted, dim);
         }
     }
     if (tensors.empty()) {
@@ -2075,7 +2265,7 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
     }
     out_shape[dim] = concat_dim_size;
 
-    auto out = Tensor::create(out_shape, tensors[0]->device);
+    auto out = Tensor::create(out_shape, tensors[0]->device, false, tensors[0]->dtype);
     storages.push_back(out->storage);
     std::vector<std::shared_ptr<Tensor>> inputs;
     inputs.reserve(tensors.size());
@@ -2106,12 +2296,13 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
 
     if (!run_gpu) {
         auto cpu_out = out->to(Device(DeviceType::CPU, 0));
-        float* dst_ptr = cpu_out->data_ptr();
+        size_t esz = cpu_out->storage->element_size();
+        char* dst_ptr = reinterpret_cast<char*>(cpu_out->raw_data_ptr());
         offset = 0;
 
         for (auto& t : inputs) {
             auto cpu_t = t->to(Device(DeviceType::CPU, 0));
-            float* src_ptr = cpu_t->data_ptr();
+            const char* src_ptr = reinterpret_cast<const char*>(cpu_t->raw_data_ptr());
             int64_t outer_size = 1;
             for (int64_t d = 0; d < dim; ++d) outer_size *= t->shape[d];
             int64_t inner_size = 1;
@@ -2123,7 +2314,7 @@ std::shared_ptr<Tensor> cat(const std::vector<std::shared_ptr<Tensor>>& tensors,
                     for (int64_t in = 0; in < inner_size; ++in) {
                         int64_t dst_idx = (o * concat_dim_size + (offset + d)) * inner_size + in;
                         int64_t src_idx = (o * dim_size + d) * inner_size + in;
-                        dst_ptr[dst_idx] = src_ptr[src_idx];
+                        std::memcpy(dst_ptr + dst_idx * esz, src_ptr + src_idx * esz, esz);
                     }
                 }
             });
@@ -2368,6 +2559,7 @@ std::shared_ptr<Tensor> clamp(std::shared_ptr<Tensor> a, float min_val, float ma
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2406,6 +2598,7 @@ std::shared_ptr<Tensor> sin(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2445,6 +2638,7 @@ std::shared_ptr<Tensor> cos(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2486,6 +2680,7 @@ std::shared_ptr<Tensor> unary_fp32_cpu(std::shared_ptr<Tensor> a, const char* op
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a, out };
+        node->saved_versions = {(a ? a->_version() : 0), (out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2553,8 +2748,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Rsqrt backward: saved output tensor missing");
+        auto out = saved_tensors[1];
         auto y3 = mul(mul(out, out), out);
         return { mul(grad_output, mul(scalar_tensor(-0.5f, out->device), y3)) };
     }
@@ -2566,8 +2761,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Tan backward: saved output tensor missing");
+        auto out = saved_tensors[1];
         auto sec2 = add(scalar_tensor(1.0f, out->device), mul(out, out));
         return { mul(grad_output, sec2) };
     }
@@ -2579,8 +2774,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Reciprocal backward: saved output tensor missing");
+        auto out = saved_tensors[1];
         return { mul(grad_output, neg(mul(out, out))) };
     }
 };

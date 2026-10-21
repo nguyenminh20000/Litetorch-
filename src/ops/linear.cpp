@@ -5,11 +5,13 @@
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
 #include "litetorch/amp.h"
+#include "autocast_policy.h"
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
@@ -41,19 +43,7 @@ inline void* cached_matmul_lt_bias_kernel() {
     }();
     return k;
 }
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 }
 
 class MatMulNode : public Node {
@@ -118,7 +108,7 @@ static bool is_transpose_last2_flattenable(const std::shared_ptr<Tensor>& t) {
 }
 
 std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
-    if (amp::AutocastGuard::is_enabled()) {
+    if (amp::autocast_fp16_eligible("matmul")) {
         auto cast_dtype = amp::AutocastGuard::get_dtype();
         if (a->dtype != cast_dtype) {
             a = Ops::cast(a, cast_dtype);
@@ -140,6 +130,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
                 node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
                 node->next_nodes = { a->creator, b->creator };
                 node->saved_tensors = { a, b };
+                node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
                 node->output = out;
                 out->creator = node;
                 out->requires_grad = true;
@@ -353,6 +344,7 @@ std::shared_ptr<Tensor> matmul(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = { a, b };
+        node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -450,6 +442,7 @@ std::shared_ptr<Tensor> matmul_bias(std::shared_ptr<Tensor> a, std::shared_ptr<T
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad}, {bias, bias->requires_grad} };
         node->next_nodes = { a->creator, b->creator, bias->creator };
         node->saved_tensors = { a, b, bias };
+        node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0), (bias ? bias->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -469,6 +462,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
                 node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
                 node->next_nodes = { a->creator, b->creator };
                 node->saved_tensors = { a, b };
+                node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
                 node->output = out;
                 out->creator = node;
                 out->requires_grad = true;
@@ -597,6 +591,7 @@ std::shared_ptr<Tensor> bmm(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = { a, b };
+        node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

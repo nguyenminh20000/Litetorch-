@@ -6,18 +6,9 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 namespace {
-
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) if (s) s->in_use = true;
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) if (s) s->in_use = false;
-    }
-};
 
 }
 

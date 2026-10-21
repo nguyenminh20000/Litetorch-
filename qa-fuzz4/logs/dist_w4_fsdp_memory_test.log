@@ -1,0 +1,29 @@
+PASS single: flat_numel
+PASS single: full buffer lazy (not allocated in ctor)
+PASS single: full_buffer() null before gather
+PASS single: param_views throws before gather
+PASS single: full buffer allocated on gather
+PASS single: gather values correct
+PASS single: param_views after gather
+PASS single: buffer freed on release
+PASS single: full_buffer() null after release
+PASS single: full buffer bytes returned to allocator on release
+INFO single: flat_numel=2000000 rss_ctor_kb=29784 cache_before_release=0 cache_after_release=8000000 rss_after_release_kb=45540
+PASS single: re-gather after release works
+PASS single: reduce_scatter world=1
+INFO cache: flat_numel=10000 cache_after_gather=0 cache_after_release=40000
+PASS cache: freed bytes returned to allocator cache
+PASS fsdp: one unit created
+PASS fsdp: full buffer lazy after fully_shard
+PASS fsdp: buffer present after ensure_gathered
+PASS fsdp: is_gathered true
+PASS fsdp: params intact after copy_flat_to_params
+PASS fsdp: release_gathered frees full buffer
+PASS fsdp: is_gathered false after release
+PASS fsdp: release_gathered returns bytes to cache
+INFO fsdp: flat_numel=36 cache_delta=144
+PASS fsdp: re-gather after release works
+PASS fsdp: params intact after re-gather
+PASS fsdp: prefetch then release is safe (no hang/crash)
+PASS fsdp: gather works after prefetch-release cycle
+ALL PASS, failures=0

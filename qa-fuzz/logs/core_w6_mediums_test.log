@@ -1,0 +1,16 @@
+from_vector_short_throws ok
+from_vector_long_throws ok
+from_vector_exact_ok ok
+slice_zero_step_throws ok
+slice_negative_step_throws ok
+slice_positive_step_ok ok
+max_propagates_nan ok
+max_no_nan_unchanged ok
+min_propagates_nan ok
+amax_dim_propagates_nan ok
+max_backward_routes_to_nan ok
+redistribute_throws_loudly ok
+free_cpu_unknown_throws ok
+free_gpu_unknown_throws ok
+storage_use_guard_shared_header ok
+ALL CORE_W6 TESTS PASSED

@@ -7,8 +7,24 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <atomic>
+#include <unordered_map>
 
 namespace litetorch {
+
+namespace {
+
+std::atomic<uint64_t>& cl_backend_epoch() {
+    static std::atomic<uint64_t> epoch{0};
+    return epoch;
+}
+
+struct ThreadKernelClones {
+    uint64_t epoch = 0;
+    std::unordered_map<cl_kernel, cl_kernel> clones;
+};
+
+}
 
 extern const std::string litetorch_kernels_src;
 
@@ -188,6 +204,8 @@ bool CLBackend::init() {
 #undef RESOLVE
     p_clCreateSubBuffer = (clCreateSubBuffer_t)dlsym(lib_handle_, "clCreateSubBuffer");
     p_clGetDeviceInfo = (clGetDeviceInfo_t)dlsym(lib_handle_, "clGetDeviceInfo");
+    p_clCloneKernel = (clCloneKernel_t)dlsym(lib_handle_, "clCloneKernel");
+    cl_backend_epoch().fetch_add(1, std::memory_order_relaxed);
 
     cl_uint num_platforms = 0;
     if (p_clGetPlatformIDs(1, &platform_, &num_platforms) != CL_SUCCESS || num_platforms == 0) {
@@ -318,7 +336,8 @@ void CLBackend::shutdown() {
     if (queue_) { p_clReleaseCommandQueue(queue_); queue_ = nullptr; }
     if (context_) { p_clReleaseContext(context_); context_ = nullptr; }
     if (lib_handle_) { dlclose(lib_handle_); lib_handle_ = nullptr; }
-    
+
+    cl_backend_epoch().fetch_add(1, std::memory_order_relaxed);
     platform_ = nullptr;
     device_ = nullptr;
     available_ = false;
@@ -654,6 +673,43 @@ void CLBackend::launch(cl_kernel kernel, const std::vector<size_t>& global_work_
             cmd.arg_data.push_back(std::vector<uint8_t>(ptr, ptr + arg_sizes[i]));
         }
         active_graph->commands.push_back(cmd);
+    }
+
+    if (p_clCloneKernel) {
+        thread_local ThreadKernelClones tl_clones;
+        uint64_t ep = cl_backend_epoch().load(std::memory_order_relaxed);
+        if (tl_clones.epoch != ep) {
+            for (auto& kv : tl_clones.clones) p_clReleaseKernel(kv.second);
+            tl_clones.clones.clear();
+            tl_clones.epoch = ep;
+        }
+        cl_kernel tk = nullptr;
+        auto cit = tl_clones.clones.find(kernel);
+        if (cit != tl_clones.clones.end()) {
+            tk = cit->second;
+        } else {
+            cl_int cerr = CL_SUCCESS;
+            tk = p_clCloneKernel(kernel, &cerr);
+            if (cerr == CL_SUCCESS && tk) {
+                tl_clones.clones.emplace(kernel, tk);
+            } else {
+                tk = nullptr;
+            }
+        }
+        if (tk) {
+            for (cl_uint i = 0; i < args.size(); ++i) {
+                cl_int err = p_clSetKernelArg(tk, i, arg_sizes[i], args[i]);
+                if (err != CL_SUCCESS) {
+                    throw std::runtime_error("[litetorch Error] clSetKernelArg failed for argument " + std::to_string(i));
+                }
+            }
+            const size_t* local_ws_ptr = local_work_size.empty() ? nullptr : local_work_size.data();
+            cl_int err = p_clEnqueueNDRangeKernel(queue_, tk, global_work_size.size(), nullptr, global_work_size.data(), local_ws_ptr, 0, nullptr, nullptr);
+            if (err != CL_SUCCESS) {
+                throw std::runtime_error("[litetorch Error] clEnqueueNDRangeKernel failed: " + std::to_string(err));
+            }
+            return;
+        }
     }
 
     std::shared_ptr<std::mutex> k_mutex;

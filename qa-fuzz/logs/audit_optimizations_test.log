@@ -1,0 +1,2 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+SUCCESS: MemoryManager and from_vector optimizations verified!

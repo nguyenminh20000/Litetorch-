@@ -1,0 +1,2 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+OpenCL is not available, skipping allocator test.

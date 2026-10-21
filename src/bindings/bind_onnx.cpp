@@ -62,6 +62,11 @@ void bind_onnx(py::module_& m) {
             return out;
         });
     onnx_mod.def("export_onnx_text", &litetorch::onnx::export_onnx_text, py::arg("graph"));
+    onnx_mod.def("export_onnx_binary",
+                 [](const litetorch::onnx::Graph& g) {
+                     return py::bytes(litetorch::onnx::export_onnx_binary(g));
+                 },
+                 py::arg("graph"));
     onnx_mod.def("export_onnx", &litetorch::onnx::export_onnx,
                  py::arg("graph"), py::arg("path"));
     onnx_mod.def("trace_module", &litetorch::onnx::trace_module,

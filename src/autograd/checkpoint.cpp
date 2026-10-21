@@ -33,7 +33,10 @@ public:
         set_rng_state(rng_state_);
 
         std::shared_ptr<Tensor> recomputed_input = Tensor::create(input_copy_->shape, input_copy_->device, input_requires_grad_, input_copy_->dtype);
-        recomputed_input->copy_(input_copy_);
+        {
+            NoGradGuard guard;
+            recomputed_input->copy_(input_copy_);
+        }
 
         std::shared_ptr<Tensor> recomputed_output = function_(recomputed_input);
 
@@ -43,9 +46,6 @@ public:
             Autograd::backward(recomputed_output, create_graph_);
         }
 
-        // Return the recomputed grad and let Autograd::backward accumulate it
-        // into the original input exactly once. (Manually copying it into
-        // input_copy_->grad here as well would double-count the gradient.)
         set_rng_state(saved_rng);
         Autograd::active_tensors = std::move(saved_active);
         return { recomputed_input->grad };

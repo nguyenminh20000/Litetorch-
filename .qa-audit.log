@@ -1,0 +1,16 @@
+QA/Release integration audit log (sole integrator: team-qa-leader, chat ff89f7e8-7e0a-43c1-93db-7c07a948bede)
+2026-10-15 23:15 +07: initialized integration/ from base LiteTorch branch agent @ 536f3b5 (rsync from workspace/framework/research/litetorch-src, excluding .git)
+2026-10-15 23:17 +07: qa-w1 gate review APPROVED (report: workspace/framework/qa/workers/qa-w1-patch-review.md); merged P-CORE-001-vs-536f3b5.diff as ONE batch, patch content unmodified
+2026-10-16 11:45 +07: Phase 3 batch merged as ONE: 6 patches applied unmodified (max_with_indices p0, 002/003/H7/uint8/evict p1), 11 backend-owned files synced from backend/litetorch-work/, 0 .orig/.rej. Gate: qa-w5/qa-w6 4 approve + 2 rework-approved (max empty throw tests + free_gpu_now tests verified).
+2026-10-16 11:52 +07: FIX: backend-owned sync overwrote the +15 uint8/i64/bool kernel registrations from P-BACKEND-uint8-add-wraparound.patch in entrypoint.cu; re-applied the entrypoint.cu hunk on top of the synced file. Registrations now present, kernel defs confirmed in elementwise_ops.cu.
+2026-10-16 11:58 +07: FIX: sync also clobbered be-evict-h11's backend_route.h hunk and P-BACKEND-002's misc_kernels.cu hunk; both re-applied on top of synced files. Verified content present, 0 .orig/.rej.
+2026-10-16 12:05 +07: FIX: re-applied hunks duplicated content already present in synced backend files (rt_gpu_free_now in backend_route.h, embedding_forward_i64 in misc_kernels.cu); removed the duplicates, one definition each remains.
+2026-10-16 22:25 +07: Phase 4 batch merged as ONE: 7 dist patches (w1->w7 sequential) + dist-w9-mismatch-test.patch (rework evidence) applied unmodified, 0 .orig/.rej. Gate: qa-w9/w10/w11 6 approve + w1 reject reworked and re-approved.
+2026-10-17 02:05 +07: Phase 5 batch merged as ONE: 4 compiler patches (w1->w4 sequential) applied unmodified, 0 .orig/.rej. Gate: qa-w13/qa-w14 4 approve.
+2026-10-18T05:52:52Z QA-MERGE core-w9+w8 ONE-batch: src/autograd/autograd_engine.cpp, include/litetorch/autograd.h, src/ops/attention.cpp, tests/core_w{7,8,9}*.cpp; build 0 errors; suite 42/42 PASS; zip /tmp/litetorch-integration-w9w8.zip (15M)
+2026-10-19T15:17:03Z: ONE-batch merge: P-CORE-004-allocator-oom.diff (3rd iter, qa-r14 APPROVE) + P-BACKEND-r2-diag-overrides.patch (qa-r12 APPROVE) + P-BACKEND-cudnn-ws-guard.patch (qa-r10 APPROVE). Order: P-CORE-004 -> r2-diag -> ws-guard. 0 .rej.
+2026-10-19T17:08:44Z: ONE-batch merge: 9 P-CORE-003 patches (H1,H2,L3,M4,M5-cpp,M5-rec,M5-test,bindings-cuda-synchronize,promotion-rework). QA: qa-r15/r16/r17/r18 APPROVE. 0 .rej.
+2026-10-20T01:05:06Z QA-MERGE: P-BACKEND-stream-meminfo-fix.patch applied, 0 .rej
+2026-10-20T03:59:22Z QA-MERGE: P-BACKEND-algo0-skip.patch applied, 0 .rej
+2026-10-21T11:13:48+00:00 MERGE P-BACKEND-dlopen-memorymanager (backend.cpp section; entrypoint.cu section already in tree) — QA-approved 2026-10-19, gate: dry-run OK, CPU suite 43/43 PASS
+2026-10-21T11:13:48+00:00 MERGE P-BACKEND-nvcc-dedup-i64-kernels + nvcc-fp8-cudart-macros + nvcc-fa-half-lse + nvcc-extended-lambda — qa-r8 SOUND, gate: dry-run OK, CPU suite 43/43 PASS

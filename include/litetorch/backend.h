@@ -16,6 +16,8 @@ public:
     virtual void* allocate(size_t size) = 0;
     virtual void free(void* ptr) = 0;
     virtual void empty_cache() {}
+    virtual size_t get_pool_cached_bytes() const { return 0; }
+    virtual std::string last_alloc_error() const { return ""; }
     virtual void read(void* ptr, size_t size, void* host_ptr, size_t offset = 0) = 0;
     virtual void write(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) = 0;
     virtual void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) = 0;

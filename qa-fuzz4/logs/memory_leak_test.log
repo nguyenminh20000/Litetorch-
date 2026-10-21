@@ -1,0 +1,20 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+
+==================================================
+Running memory leak test on CPU
+==================================================
+Iteration 0   | RAM RSS: 6.01172 MB
+Iteration 10 | RAM RSS: 8.08203 MB
+Iteration 100 | RAM RSS: 8.08594 MB
+Iteration 200 | RAM RSS: 8.08984 MB
+Iteration 300 | RAM RSS: 8.08984 MB
+Iteration 400 | RAM RSS: 8.08984 MB
+Iteration 500 | RAM RSS: 8.08984 MB
+Iteration 600 | RAM RSS: 8.08984 MB
+Iteration 700 | RAM RSS: 8.08984 MB
+Iteration 800 | RAM RSS: 8.08984 MB
+Iteration 900 | RAM RSS: 8.08984 MB
+Iteration 1000 | RAM RSS: 8.08984 MB
+--------------------------------------------------
+Final diff RAM: 2.07812 MB
+==================================================

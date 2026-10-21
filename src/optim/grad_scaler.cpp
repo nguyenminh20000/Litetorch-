@@ -21,20 +21,9 @@ std::shared_ptr<Tensor> GradScaler::scale_loss(std::shared_ptr<Tensor> loss) {
 bool GradScaler::check_inf_nan(const std::vector<std::shared_ptr<Tensor>>& grads) {
     for (const auto& g : grads) {
         if (!g) continue;
-        if (g->device.type == DeviceType::CPU) {
-            auto g32 = g->cast(DataType::FP32);
-            auto gc = g32->is_contiguous() ? g32 : g32->contiguous();
-            float* ptr = gc->data_ptr();
-            size_t total = gc->numel();
-            for (size_t i = 0; i < total; ++i) {
-                if (std::isnan(ptr[i]) || std::isinf(ptr[i])) {
-                    return true;
-                }
-            }
-        } else {
-            auto max_abs = Ops::max(Ops::abs(g));
-            float val = max_abs->item();
-            if (std::isnan(val) || std::isinf(val)) {
+        std::vector<float> host = g->to_vector();
+        for (float v : host) {
+            if (std::isnan(v) || std::isinf(v)) {
                 return true;
             }
         }

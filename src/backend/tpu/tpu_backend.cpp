@@ -151,7 +151,7 @@ void TPUBackend::launch(void*, const std::vector<size_t>&, const std::vector<siz
 }
 
 void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
-    if (!A || !B || !C) return;
+    if (!A || !B || !C) throw std::runtime_error("[litetorch Error] TPUBackend: null buffer in compute op");
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         bool owna = pjrt.owns(A), ownb = pjrt.owns(B), ownc = pjrt.owns(C);
@@ -191,7 +191,7 @@ void TPUBackend::matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C,
 void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                            void* B, int64_t b_off, bool trans_b, int64_t ldb,
                            void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) {
-    if (!A || !B || !C) return;
+    if (!A || !B || !C) throw std::runtime_error("[litetorch Error] TPUBackend: null buffer in compute op");
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {
@@ -220,7 +220,7 @@ void TPUBackend::matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
 }
 
 void TPUBackend::bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) {
-    if (!A || !B || !C) return;
+    if (!A || !B || !C) throw std::runtime_error("[litetorch Error] TPUBackend: null buffer in compute op");
     if (use_pjrt) {
         auto& pjrt = tpu_pjrt::TpuPjrtBackend::instance();
         if (pjrt.owns(A) || pjrt.owns(B) || pjrt.owns(C)) {

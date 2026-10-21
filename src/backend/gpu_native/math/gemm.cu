@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 extern "C" void* gpu_allocate(size_t size);
+extern "C" void gpu_free(void* ptr);
 extern "C" bool gpu_is_tf32_enabled();
 extern "C" void gpu_matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda,
                                    void* B, int64_t b_off, bool trans_b, int64_t ldb,
@@ -227,10 +228,10 @@ extern "C" void gpu_matmul_fp8(void* A, int64_t a_off, void* B, int64_t b_off, v
     LT_CUBLAS_CHECK(cublasLtMatrixLayoutDestroy(Cdesc));
     LT_CUBLAS_CHECK(cublasLtMatmulDescDestroy(matmulDesc));
 #else
-    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] gpu_matmul_fp8 requires CUDA >= 11.8 with cublasLt FP8 support; reinterpreting FP8 bytes as FP16 is unsupported");
 #endif
 #else
-    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] gpu_matmul_fp8 is not supported on HIP/ROCm; reinterpreting FP8 bytes as FP16 is unsupported");
 #endif
 }
 
@@ -246,7 +247,7 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
     void* c_ptr = (char*)C + c_off * sizeof(unsigned short);
     LT_CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, b_ptr, CUDA_R_16BF, N, a_ptr, CUDA_R_16BF, K, &beta, c_ptr, CUDA_R_16BF, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT));
 #else
-    gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+    throw std::runtime_error("[litetorch Error] gpu_matmul_bf16 requires CUDA >= 11.0; reinterpreting BF16 bytes as FP16 is unsupported");
 #endif
 #else
     rocblas_handle handle = get_rocblas_handle();
@@ -264,7 +265,7 @@ extern "C" void gpu_matmul_bf16(void* A, int64_t a_off, void* B, int64_t b_off, 
                     c_ptr, rocblas_datatype_bf16_r, N,
                     rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
     if (status != rocblas_status_success) {
-        gpu_matmul_half(A, a_off, B, b_off, C, c_off, M, N, K);
+        throw std::runtime_error(std::string("[litetorch Error] gpu_matmul_bf16: rocblas_gemm_ex failed with status ") + std::to_string((int)status) + "; falling back to FP16 reinterpretation of BF16 bytes is unsupported");
     }
 #endif
 }
@@ -307,16 +308,37 @@ struct LtPlan {
 static std::unordered_map<LtMatmulKey, LtPlan, LtMatmulKeyHash> lt_plan_cache;
 static std::mutex lt_plan_cache_mutex;
 
+static void lt_plan_destroy(LtPlan& p) {
+    if (p.Cdesc) cublasLtMatrixLayoutDestroy(p.Cdesc);
+    if (p.Bdesc) cublasLtMatrixLayoutDestroy(p.Bdesc);
+    if (p.Adesc) cublasLtMatrixLayoutDestroy(p.Adesc);
+    if (p.desc) cublasLtMatmulDescDestroy(p.desc);
+    p.Cdesc = p.Bdesc = p.Adesc = nullptr;
+    p.desc = nullptr;
+    p.has_algo = false;
+}
+
 static const size_t LT_WS_BYTES = 32ULL * 1024ULL * 1024ULL;
 
-static void* lt_workspace() {
+static std::unordered_map<int, void*>& lt_workspace_map() {
     thread_local std::unordered_map<int, void*> workspaces;
+    return workspaces;
+}
+
+static void* lt_workspace() {
+    auto& workspaces = lt_workspace_map();
     int dev = current_device();
     auto it = workspaces.find(dev);
     if (it != workspaces.end()) return it->second;
     void* ws = gpu_allocate(LT_WS_BYTES);
     workspaces[dev] = ws;
     return ws;
+}
+
+extern "C" void gpu_lt_release_workspaces() {
+    auto& workspaces = lt_workspace_map();
+    for (auto& kv : workspaces) gpu_free(kv.second);
+    workspaces.clear();
 }
 
 static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
@@ -400,7 +422,8 @@ static bool matmul_lt_find_algo(cublasLtHandle_t lt_handle,
     if (best < 0) return false;
     {
         std::lock_guard<std::mutex> lock(lt_algo_cache_mutex);
-        lt_algo_cache.emplace(key, heuristics[best].algo);
+        if (lt_algo_cache.find(key) == lt_algo_cache.end())
+            lt_algo_cache.emplace(key, heuristics[best].algo);
     }
     *out_algo = heuristics[best].algo;
     return true;
@@ -428,40 +451,49 @@ extern "C" void gpu_matmul_ex_lt(void* A, int64_t a_off, bool trans_a, int64_t l
     {
         std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
         auto it = lt_plan_cache.find(key);
-        if (it == lt_plan_cache.end()) {
-            LtPlan p;
-            cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-            bool built = false;
-            if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
-                cublasOperation_t transA = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
-                cublasOperation_t transB = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
-                uint64_t a_rows = (uint64_t)(trans_b ? K : N);
-                uint64_t a_cols = (uint64_t)(trans_b ? N : K);
-                uint64_t b_rows = (uint64_t)(trans_a ? M : K);
-                uint64_t b_cols = (uint64_t)(trans_a ? K : M);
-                if (cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)) == CUBLAS_STATUS_SUCCESS &&
-                    cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)) == CUBLAS_STATUS_SUCCESS &&
-                    cublasLtMatrixLayoutCreate(&p.Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
-                    cublasLtMatrixLayoutCreate(&p.Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
-                    cublasLtMatrixLayoutCreate(&p.Cdesc, CUDA_R_32F, (uint64_t)N, (uint64_t)M, (int64_t)N) == CUBLAS_STATUS_SUCCESS) {
-                    built = true;
-                }
-            }
-            if (built && matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, b_ptr, a_ptr, c_ptr, key, &p.algo)) {
-                p.has_algo = true;
-            }
-            if (!p.has_algo) {
-                if (p.Cdesc) cublasLtMatrixLayoutDestroy(p.Cdesc);
-                if (p.Bdesc) cublasLtMatrixLayoutDestroy(p.Bdesc);
-                if (p.Adesc) cublasLtMatrixLayoutDestroy(p.Adesc);
-                if (p.desc) cublasLtMatmulDescDestroy(p.desc);
-                gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
-                return;
-            }
-            it = lt_plan_cache.emplace(key, p).first;
+        if (it != lt_plan_cache.end()) {
+            plan = it->second;
+            have_plan = plan.has_algo;
         }
-        plan = it->second;
-        have_plan = plan.has_algo;
+    }
+    if (!have_plan) {
+        LtPlan p;
+        cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+        bool built = false;
+        if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+            cublasOperation_t transA = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+            cublasOperation_t transB = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+            uint64_t a_rows = (uint64_t)(trans_b ? K : N);
+            uint64_t a_cols = (uint64_t)(trans_b ? N : K);
+            uint64_t b_rows = (uint64_t)(trans_a ? M : K);
+            uint64_t b_cols = (uint64_t)(trans_a ? K : M);
+            if (cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)) == CUBLAS_STATUS_SUCCESS &&
+                cublasLtMatmulDescSetAttribute(p.desc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)) == CUBLAS_STATUS_SUCCESS &&
+                cublasLtMatrixLayoutCreate(&p.Adesc, CUDA_R_32F, a_rows, a_cols, (int64_t)ldb) == CUBLAS_STATUS_SUCCESS &&
+                cublasLtMatrixLayoutCreate(&p.Bdesc, CUDA_R_32F, b_rows, b_cols, (int64_t)lda) == CUBLAS_STATUS_SUCCESS &&
+                cublasLtMatrixLayoutCreate(&p.Cdesc, CUDA_R_32F, (uint64_t)N, (uint64_t)M, (int64_t)N) == CUBLAS_STATUS_SUCCESS) {
+                built = true;
+            }
+        }
+        if (built && matmul_lt_find_algo(lt_handle, p.desc, p.Adesc, p.Bdesc, p.Cdesc, b_ptr, a_ptr, c_ptr, key, &p.algo)) {
+            p.has_algo = true;
+        }
+        if (!p.has_algo) {
+            lt_plan_destroy(p);
+            gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
+            auto it = lt_plan_cache.find(key);
+            if (it == lt_plan_cache.end()) {
+                it = lt_plan_cache.emplace(key, p).first;
+            } else {
+                lt_plan_destroy(p);
+            }
+            plan = it->second;
+            have_plan = plan.has_algo;
+        }
     }
     if (have_plan) {
         void* ws = lt_workspace();
@@ -506,12 +538,17 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
     {
         std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
         auto it = lt_plan_cache.find(key);
-        if (it == lt_plan_cache.end()) {
-            LtPlan p;
-            cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-            bool built = false;
-            cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
-            if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
+        if (it != lt_plan_cache.end()) {
+            plan = it->second;
+            have_plan = plan.has_algo;
+        }
+    }
+    if (!have_plan) {
+        LtPlan p;
+        cublasComputeType_t compute = tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+        bool built = false;
+        cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
+        if (cublasLtMatmulDescCreate(&p.desc, compute, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS) {
                 cublasOperation_t opA = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
                 cublasOperation_t opB = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
                 cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS;
@@ -538,10 +575,7 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
                 p.has_algo = true;
             }
             if (!p.has_algo) {
-                if (p.Cdesc) cublasLtMatrixLayoutDestroy(p.Cdesc);
-                if (p.Bdesc) cublasLtMatrixLayoutDestroy(p.Bdesc);
-                if (p.Adesc) cublasLtMatrixLayoutDestroy(p.Adesc);
-                if (p.desc) cublasLtMatmulDescDestroy(p.desc);
+                lt_plan_destroy(p);
                 gpu_matmul_ex(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
                 int64_t total = M * N;
                 int threads = 256;
@@ -549,10 +583,17 @@ extern "C" void gpu_matmul_ex_lt_bias(void* A, int64_t a_off, bool trans_a, int6
                 matmul_bias_add_kernel<<<(unsigned)blocks, threads, 0, dev_stream(current_device())>>>(c_ptr, (int64_t)0, bias_ptr, (int64_t)0, M, N);
                 return;
             }
-            it = lt_plan_cache.emplace(key, p).first;
-        }
-        plan = it->second;
-        have_plan = plan.has_algo;
+            {
+                std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);
+                auto it = lt_plan_cache.find(key);
+                if (it == lt_plan_cache.end()) {
+                    it = lt_plan_cache.emplace(key, p).first;
+                } else {
+                    lt_plan_destroy(p);
+                }
+                plan = it->second;
+                have_plan = plan.has_algo;
+            }
     }
     if (have_plan) {
         std::lock_guard<std::mutex> lock(lt_plan_cache_mutex);

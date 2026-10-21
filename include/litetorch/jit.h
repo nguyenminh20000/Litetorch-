@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <unordered_map>
 #include <functional>
 
 namespace litetorch {
@@ -150,9 +149,6 @@ private:
     std::string name_;
     std::shared_ptr<JITVar> expr_;
     std::vector<std::shared_ptr<JITVar>> inputs_;
-    std::unordered_map<std::string, void*> kernels_map_;
-
-    void compile_for_shape(const std::string& shape_key);
 
 public:
     JITFunction(const std::string& name, std::shared_ptr<JITVar> expr, const std::vector<std::shared_ptr<JITVar>>& inputs);

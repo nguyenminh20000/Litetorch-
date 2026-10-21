@@ -72,10 +72,15 @@ typedef void (*gpu_sync_stream_t)(void*);
 typedef void (*gpu_set_device_t)(int);
 typedef int (*gpu_get_device_t)();
 typedef int (*gpu_get_device_count_t)();
+typedef size_t (*gpu_get_device_total_memory_t)(int);
 typedef void (*gpu_set_tf32_enabled_t)(bool);
 typedef bool (*gpu_is_tf32_enabled_t)();
 typedef void (*gpu_set_fp16_math_enabled_t)(bool);
 typedef bool (*gpu_is_fp16_math_enabled_t)();
+typedef size_t (*gpu_get_pool_cached_bytes_t)();
+typedef const char* (*gpu_last_alloc_error_t)();
+typedef size_t (*gpu_mem_info_free_t)();
+typedef size_t (*gpu_mem_info_total_t)();
 
 class NativeGPUBackend : public DeviceBackend {
 public:
@@ -84,6 +89,7 @@ public:
     gpu_set_device_t gpu_set_device_fn = nullptr;
     gpu_get_device_t gpu_get_device_fn = nullptr;
     gpu_get_device_count_t gpu_get_device_count_fn = nullptr;
+    gpu_get_device_total_memory_t gpu_get_device_total_memory_fn = nullptr;
     gpu_allocate_t gpu_allocate_fn = nullptr;
     gpu_free_t gpu_free_fn = nullptr;
     gpu_empty_cache_t gpu_empty_cache_fn = nullptr;
@@ -142,6 +148,10 @@ public:
     gpu_is_tf32_enabled_t gpu_is_tf32_enabled_fn = nullptr;
     gpu_set_fp16_math_enabled_t gpu_set_fp16_math_enabled_fn = nullptr;
     gpu_is_fp16_math_enabled_t gpu_is_fp16_math_enabled_fn = nullptr;
+    gpu_get_pool_cached_bytes_t gpu_get_pool_cached_bytes_fn = nullptr;
+    gpu_last_alloc_error_t gpu_last_alloc_error_fn = nullptr;
+    gpu_mem_info_free_t gpu_mem_info_free_fn = nullptr;
+    gpu_mem_info_total_t gpu_mem_info_total_fn = nullptr;
     std::unordered_set<void*> dynamic_kernels;
     bool is_ok = false;
 
@@ -201,6 +211,7 @@ public:
         gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
         gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
         gpu_get_device_count_fn = (gpu_get_device_count_t)dlsym(handle, "gpu_get_device_count");
+        gpu_get_device_total_memory_fn = (gpu_get_device_total_memory_t)dlsym(handle, "gpu_get_device_total_memory");
         gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
         gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
         gpu_empty_cache_fn = (gpu_empty_cache_t)dlsym(handle, "gpu_empty_cache");
@@ -261,10 +272,18 @@ public:
         gpu_is_tf32_enabled_fn = (gpu_is_tf32_enabled_t)dlsym(handle, "gpu_is_tf32_enabled");
         gpu_set_fp16_math_enabled_fn = (gpu_set_fp16_math_enabled_t)dlsym(handle, "gpu_set_fp16_math_enabled");
         gpu_is_fp16_math_enabled_fn = (gpu_is_fp16_math_enabled_t)dlsym(handle, "gpu_is_fp16_math_enabled");
+        gpu_get_pool_cached_bytes_fn = (gpu_get_pool_cached_bytes_t)dlsym(handle, "gpu_get_pool_cached_bytes");
+        gpu_last_alloc_error_fn = (gpu_last_alloc_error_t)dlsym(handle, "gpu_last_alloc_error");
+        gpu_mem_info_free_fn = (gpu_mem_info_free_t)dlsym(handle, "gpu_mem_info_free");
+        gpu_mem_info_total_fn = (gpu_mem_info_total_t)dlsym(handle, "gpu_mem_info_total");
 
         if (gpu_init_fn && gpu_allocate_fn && gpu_free_fn && gpu_read_fn && 
             gpu_write_fn && gpu_copy_fn && gpu_finish_fn && gpu_get_kernel_fn && gpu_launch_fn) {
             is_ok = gpu_init_fn();
+        }
+        if (is_ok && gpu_get_device_total_memory_fn) {
+            size_t total = gpu_get_device_total_memory_fn(0);
+            if (total > 0) MemoryManager::get().set_gpu_limit(total * 3 / 4);
         }
     }
 
@@ -275,6 +294,11 @@ public:
     }
 
     bool is_available() const override { return is_ok; }
+    size_t get_pool_cached_bytes() const override { return gpu_get_pool_cached_bytes_fn ? gpu_get_pool_cached_bytes_fn() : 0; }
+    std::string last_alloc_error() const override {
+        const char* e = gpu_last_alloc_error_fn ? gpu_last_alloc_error_fn() : nullptr;
+        return e ? std::string(e) : std::string();
+    }
     void* allocate(size_t size) override { return gpu_allocate_fn(size); }
     void free(void* ptr) override { gpu_free_fn(ptr); }
     void empty_cache() override { if (gpu_empty_cache_fn) gpu_empty_cache_fn(); }
@@ -286,30 +310,48 @@ public:
     void copy_async(void* src, void* dst, size_t size, size_t src_offset = 0, size_t dst_offset = 0) override { if (gpu_copy_async_fn) gpu_copy_async_fn(src, dst, size, src_offset, dst_offset); else gpu_copy_fn(src, dst, size, src_offset, dst_offset); }
     void copy_peer(void* src, int src_device, void* dst, int dst_device, size_t size) override { if (gpu_copy_peer_fn) gpu_copy_peer_fn(src, src_device, dst, dst_device, size); else gpu_copy_fn(src, dst, size, 0, 0); }
     void finish() override { gpu_finish_fn(); }
-    void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_sum_fn) gpu_sum_fn(A, a_off, B, b_off, size); }
-    void max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override { if (gpu_max_fn) gpu_max_fn(A, a_off, B, b_off, size); }
-    void matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
+    void sum(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override {
+        if (!gpu_sum_fn) throw std::runtime_error("gpu_native: sum requires missing symbol 'gpu_sum_forward' in liblitetorch_gpu");
+        gpu_sum_fn(A, a_off, B, b_off, size);
+    }
+    void max(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) override {
+        if (!gpu_max_fn) throw std::runtime_error("gpu_native: max requires missing symbol 'gpu_max_forward' in liblitetorch_gpu");
+        gpu_max_fn(A, a_off, B, b_off, size);
+    }
+    void matmul(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
+        if (!gpu_matmul_fn) throw std::runtime_error("gpu_native: matmul requires missing symbol 'gpu_matmul' in liblitetorch_gpu");
+        gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+    }
     void matmul_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, void* B, int64_t b_off, bool trans_b, int64_t ldb, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
         if (gpu_matmul_ex_fn) gpu_matmul_ex_fn(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
         else if (trans_a || trans_b) throw std::runtime_error("gpu_native: matmul_ex not supported (transpose requested)");
         else if (gpu_matmul_fn) gpu_matmul_fn(A, a_off, B, b_off, C, c_off, M, N, K);
         else throw std::runtime_error("gpu_native: matmul_ex not supported");
     }
-    void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
+    void bmm(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
+        if (!gpu_bmm_fn) throw std::runtime_error("gpu_native: bmm requires missing symbol 'gpu_bmm' in liblitetorch_gpu");
+        gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+    }
     void bmm_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a, void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
         if (gpu_bmm_ex_fn) gpu_bmm_ex_fn(A, a_off, trans_a, lda, stride_a, B, b_off, trans_b, ldb, stride_b, C, c_off, B_batch, M, N, K);
         else if (trans_a || trans_b) throw std::runtime_error("gpu_native: bmm_ex not supported (transpose requested)");
         else if (gpu_bmm_fn) gpu_bmm_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
         else throw std::runtime_error("gpu_native: bmm_ex not supported");
     }
-    void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override { if (gpu_matmul_half_fn) gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K); }
+    void matmul_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
+        if (!gpu_matmul_half_fn) throw std::runtime_error("gpu_native: matmul_half requires missing symbol 'gpu_matmul_half' in liblitetorch_gpu");
+        gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K);
+    }
     void matmul_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, void* B, int64_t b_off, bool trans_b, int64_t ldb, void* C, int64_t c_off, int64_t M, int64_t N, int64_t K) override {
         if (gpu_matmul_half_ex_fn) gpu_matmul_half_ex_fn(A, a_off, trans_a, lda, B, b_off, trans_b, ldb, C, c_off, M, N, K);
         else if (trans_a || trans_b) throw std::runtime_error("gpu_native: matmul_half_ex not supported (transpose requested)");
         else if (gpu_matmul_half_fn) gpu_matmul_half_fn(A, a_off, B, b_off, C, c_off, M, N, K);
         else throw std::runtime_error("gpu_native: matmul_half_ex not supported");
     }
-    void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override { if (gpu_bmm_half_fn) gpu_bmm_half_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K); }
+    void bmm_half(void* A, int64_t a_off, void* B, int64_t b_off, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
+        if (!gpu_bmm_half_fn) throw std::runtime_error("gpu_native: bmm_half requires missing symbol 'gpu_bmm_half' in liblitetorch_gpu");
+        gpu_bmm_half_fn(A, a_off, B, b_off, C, c_off, B_batch, M, N, K);
+    }
     void bmm_half_ex(void* A, int64_t a_off, bool trans_a, int64_t lda, int64_t stride_a, void* B, int64_t b_off, bool trans_b, int64_t ldb, int64_t stride_b, void* C, int64_t c_off, int64_t B_batch, int64_t M, int64_t N, int64_t K) override {
         if (gpu_bmm_half_ex_fn) gpu_bmm_half_ex_fn(A, a_off, trans_a, lda, stride_a, B, b_off, trans_b, ldb, stride_b, C, c_off, B_batch, M, N, K);
         else if (trans_a || trans_b) throw std::runtime_error("gpu_native: bmm_half_ex not supported (transpose requested)");
@@ -331,22 +373,28 @@ public:
         }
     }
     void adamw_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M_state, int64_t m_off, void* V, int64_t v_off, int64_t size, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {
-        if (gpu_adamw_step_fn) gpu_adamw_step_fn(P, p_off, G, g_off, M_state, m_off, V, v_off, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
+        if (!gpu_adamw_step_fn) throw std::runtime_error("gpu_native: adamw_step requires missing symbol 'gpu_adamw_step' in liblitetorch_gpu");
+        gpu_adamw_step_fn(P, p_off, G, g_off, M_state, m_off, V, v_off, size, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
     }
     void adamw_8bit_step(void* P, int64_t p_off, void* G, int64_t g_off, void* M, int64_t m_off, void* V, int64_t v_off, void* M_scales, void* V_scales, int64_t size, int is_fp16, float lr, float beta1, float beta2, float eps, float weight_decay, float bias_correction1 = 1.0f, float bias_correction2 = 1.0f) override {
-        if (gpu_adamw_8bit_step_fn) gpu_adamw_8bit_step_fn(P, p_off, G, g_off, M, m_off, V, v_off, M_scales, V_scales, size, is_fp16, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
+        if (!gpu_adamw_8bit_step_fn) throw std::runtime_error("gpu_native: adamw_8bit_step requires missing symbol 'gpu_adamw_8bit_step' in liblitetorch_gpu");
+        gpu_adamw_8bit_step_fn(P, p_off, G, g_off, M, m_off, V, v_off, M_scales, V_scales, size, is_fp16, lr, beta1, beta2, eps, weight_decay, bias_correction1, bias_correction2);
     }
     void flash_attention(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
-        if (gpu_flash_attention_fn) gpu_flash_attention_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
+        if (!gpu_flash_attention_fn) throw std::runtime_error("gpu_native: flash_attention requires missing symbol 'gpu_flash_attention' in liblitetorch_gpu");
+        gpu_flash_attention_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
     }
     void flash_attention_half(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
-        if (gpu_flash_attention_half_fn) gpu_flash_attention_half_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
+        if (!gpu_flash_attention_half_fn) throw std::runtime_error("gpu_native: flash_attention_half requires missing symbol 'gpu_flash_attention_half' in liblitetorch_gpu");
+        gpu_flash_attention_half_fn(Q, q_off, K, k_off, V, v_off, O, o_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
     }
     void flash_attention_backward(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
-        if (gpu_flash_attention_backward_fn) gpu_flash_attention_backward_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
+        if (!gpu_flash_attention_backward_fn) throw std::runtime_error("gpu_native: flash_attention_backward requires missing symbol 'gpu_flash_attention_backward' in liblitetorch_gpu");
+        gpu_flash_attention_backward_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
     }
     void flash_attention_backward_half(void* dQ, int64_t dq_off, void* dK, int64_t dk_off, void* dV, int64_t dv_off, void* O, int64_t o_off, void* dO, int64_t do_off, void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
-        if (gpu_flash_attention_backward_half_fn) gpu_flash_attention_backward_half_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
+        if (!gpu_flash_attention_backward_half_fn) throw std::runtime_error("gpu_native: flash_attention_backward_half requires missing symbol 'gpu_flash_attention_backward_half' in liblitetorch_gpu");
+        gpu_flash_attention_backward_half_fn(dQ, dq_off, dK, dk_off, dV, dv_off, O, o_off, dO, do_off, Q, q_off, K, k_off, V, v_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0);
     }
     bool flash_attention_forward_save_lse(void* Q, int64_t q_off, void* K, int64_t k_off, void* V, int64_t v_off, void* O, int64_t o_off, void* LSE, int64_t lse_off, int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D, float scale, bool causal) override {
         if (gpu_flash_attention_forward_save_lse_fn) return gpu_flash_attention_forward_save_lse_fn(Q, q_off, K, k_off, V, v_off, O, o_off, LSE, lse_off, B, H, H_kv, Tq, Tk, D, scale, causal ? 1 : 0) != 0;
@@ -374,28 +422,40 @@ public:
     }
     
     void cat_forward(void* input, int64_t in_off, void* output, int64_t out_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) override {
-        if (gpu_cat_forward_fn) gpu_cat_forward_fn(input, in_off, output, out_off, outer_size, inner_size, dim_size, concat_dim_size, offset);
+        if (!gpu_cat_forward_fn) throw std::runtime_error("gpu_native: cat_forward requires missing symbol 'gpu_cat_forward' in liblitetorch_gpu");
+        gpu_cat_forward_fn(input, in_off, output, out_off, outer_size, inner_size, dim_size, concat_dim_size, offset);
     }
     void cat_backward(void* grad_output, int64_t gout_off, void* grad_input, int64_t gin_off, int64_t outer_size, int64_t inner_size, int64_t dim_size, int64_t concat_dim_size, int64_t offset) override {
-        if (gpu_cat_backward_fn) gpu_cat_backward_fn(grad_output, gout_off, grad_input, gin_off, outer_size, inner_size, dim_size, concat_dim_size, offset);
+        if (!gpu_cat_backward_fn) throw std::runtime_error("gpu_native: cat_backward requires missing symbol 'gpu_cat_backward' in liblitetorch_gpu");
+        gpu_cat_backward_fn(grad_output, gout_off, grad_input, gin_off, outer_size, inner_size, dim_size, concat_dim_size, offset);
     }
     void moe_gate(void* logits, int64_t l_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, int64_t N, int64_t E, int64_t top_k) override {
-        if (gpu_moe_gate_fn) gpu_moe_gate_fn(logits, l_off, probs, p_off, indices, idx_off, N, E, top_k);
+        if (!gpu_moe_gate_fn) throw std::runtime_error("gpu_native: moe_gate requires missing symbol 'gpu_moe_gate' in liblitetorch_gpu");
+        gpu_moe_gate_fn(logits, l_off, probs, p_off, indices, idx_off, N, E, top_k);
     }
     void moe_gate_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* gate_weight, int64_t gw_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_gate_weight, int64_t ggw_off, int64_t N, int64_t D, int64_t E, int64_t top_k) override {
-        if (gpu_moe_gate_backward_fn) gpu_moe_gate_backward_fn(grad_output, gout_off, input, in_off, gate_weight, gw_off, probs, p_off, indices, idx_off, grad_input, gin_off, grad_gate_weight, ggw_off, N, D, E, top_k);
+        if (!gpu_moe_gate_backward_fn) throw std::runtime_error("gpu_native: moe_gate_backward requires missing symbol 'gpu_moe_gate_backward' in liblitetorch_gpu");
+        gpu_moe_gate_backward_fn(grad_output, gout_off, input, in_off, gate_weight, gw_off, probs, p_off, indices, idx_off, grad_input, gin_off, grad_gate_weight, ggw_off, N, D, E, top_k);
     }
     void moe_expert_forward(void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* output, int64_t out_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) override {
-        if (gpu_moe_expert_forward_fn) gpu_moe_expert_forward_fn(input, in_off, expert_weight, ew_off, expert_bias, eb_off, probs, p_off, indices, idx_off, output, out_off, N, D, out_features, expert_idx, top_k);
+        if (!gpu_moe_expert_forward_fn) throw std::runtime_error("gpu_native: moe_expert_forward requires missing symbol 'gpu_moe_expert_forward' in liblitetorch_gpu");
+        gpu_moe_expert_forward_fn(input, in_off, expert_weight, ew_off, expert_bias, eb_off, probs, p_off, indices, idx_off, output, out_off, N, D, out_features, expert_idx, top_k);
     }
     void moe_expert_backward(void* grad_output, int64_t gout_off, void* input, int64_t in_off, void* expert_weight, int64_t ew_off, void* expert_bias, int64_t eb_off, void* probs, int64_t p_off, void* indices, int64_t idx_off, void* grad_input, int64_t gin_off, void* grad_expert, int64_t ge_off, void* grad_bias, int64_t gb_off, void* grad_probs, int64_t gp_off, int64_t N, int64_t D, int64_t out_features, int64_t expert_idx, int64_t top_k) override {
-        if (gpu_moe_expert_backward_fn) gpu_moe_expert_backward_fn(grad_output, gout_off, input, in_off, expert_weight, ew_off, expert_bias, eb_off, probs, p_off, indices, idx_off, grad_input, gin_off, grad_expert, ge_off, grad_bias, gb_off, grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
+        if (!gpu_moe_expert_backward_fn) throw std::runtime_error("gpu_native: moe_expert_backward requires missing symbol 'gpu_moe_expert_backward' in liblitetorch_gpu");
+        gpu_moe_expert_backward_fn(grad_output, gout_off, input, in_off, expert_weight, ew_off, expert_bias, eb_off, probs, p_off, indices, idx_off, grad_input, gin_off, grad_expert, ge_off, grad_bias, gb_off, grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
     }
     
     void* start_recording() override { return gpu_start_recording_fn ? gpu_start_recording_fn() : nullptr; }
     void* stop_recording(void* stream_capture) override { return gpu_stop_recording_fn ? gpu_stop_recording_fn(stream_capture) : nullptr; }
-    void launch_graph(void* graph) override { if (gpu_launch_graph_fn) gpu_launch_graph_fn(graph); }
-    void free_graph(void* graph) override { if (gpu_free_graph_fn) gpu_free_graph_fn(graph); }
+    void launch_graph(void* graph) override {
+        if (!gpu_launch_graph_fn) throw std::runtime_error("gpu_native: launch_graph requires missing symbol 'gpu_launch_graph' in liblitetorch_gpu");
+        gpu_launch_graph_fn(graph);
+    }
+    void free_graph(void* graph) override {
+        if (!gpu_free_graph_fn) throw std::runtime_error("gpu_native: free_graph requires missing symbol 'gpu_free_graph' in liblitetorch_gpu");
+        gpu_free_graph_fn(graph);
+    }
     
     void* create_event() override { return gpu_create_event_fn ? gpu_create_event_fn() : nullptr; }
     void record_event(void* event, void* stream) override { if (gpu_record_event_fn && event) gpu_record_event_fn(event, stream); }
@@ -406,9 +466,8 @@ public:
     void* get_compute_stream() override { return gpu_get_compute_stream_fn ? gpu_get_compute_stream_fn() : nullptr; }
     void sync_stream(void* stream) override { if (gpu_sync_stream_fn && stream) gpu_sync_stream_fn(stream); }
     void set_device(int device_id) override {
-        if (gpu_set_device_fn) {
-            gpu_set_device_fn(device_id);
-        }
+        if (!gpu_set_device_fn) throw std::runtime_error("gpu_native: set_device requires missing symbol 'gpu_set_device' in liblitetorch_gpu");
+        gpu_set_device_fn(device_id);
     }
     int get_device() override { return gpu_get_device_fn ? gpu_get_device_fn() : 0; }
     int get_device_count() const {
@@ -443,6 +502,7 @@ public:
     }
     
     void launch(void* kernel, const std::vector<size_t>& global_work_size, const std::vector<size_t>& local_work_size, const std::vector<void*>& args, const std::vector<size_t>& arg_sizes) override {
+        if (!gpu_launch_fn) throw std::runtime_error("gpu_native: launch requires missing symbol 'gpu_launch' in liblitetorch_gpu");
         int gx = global_work_size.empty() ? 1 : global_work_size[0];
         int gy = global_work_size.size() < 2 ? 1 : global_work_size[1];
         int gz = global_work_size.size() < 3 ? 1 : global_work_size[2];

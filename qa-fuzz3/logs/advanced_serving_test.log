@@ -1,0 +1,10 @@
+Running test_continuous_batching...
+Request 1 completed. Tokens: 7 8 9 10 
+Request 2 completed. Tokens: 12 13 14 15 
+SUCCESS: test_continuous_batching passed!
+Running test_mixture_of_experts...
+SUCCESS: test_mixture_of_experts passed!
+Running test_medusa...
+Generated tokens: 1 2 3 4 5 6 7 8 
+SUCCESS: test_medusa passed!
+ALL ADVANCED SERVING TESTS PASSED!

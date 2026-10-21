@@ -223,10 +223,12 @@ std::shared_ptr<Tensor> fused_linear_cross_entropy(
         node->next_nodes = {x_2d->creator, w_f->creator, target_1d->creator};
         node->inputs = {{x_2d, x_2d->requires_grad}, {w_f, w_f->requires_grad}, {target_1d, target_1d->requires_grad}};
         node->saved_tensors = {x_2d, w_f, target_1d};
+        node->saved_versions = {(x_2d ? x_2d->_version() : 0), (w_f ? w_f->_version() : 0), (target_1d ? target_1d->_version() : 0)};
         if (b_f) {
             node->next_nodes.push_back(b_f->creator);
             node->inputs.push_back({b_f, b_f->requires_grad});
             node->saved_tensors.push_back(b_f);
+            node->saved_versions.push_back(b_f->_version());
         }
         loss_tensor->creator = node;
         node->output = loss_tensor;

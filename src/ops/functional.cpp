@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern std::mt19937& get_generator();
@@ -20,20 +21,6 @@ extern const std::string litetorch_kernels_src;
 
 namespace functional {
 namespace {
-
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
 
 void require_cpu(const Tensor& t, const char* op) {
     if (t.device.type != DeviceType::CPU) {
@@ -164,6 +151,8 @@ void attach_unary(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> out,
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = saved;
+        node->saved_versions.clear();
+        for (auto& t : saved) node->saved_versions.push_back(t ? t->_version() : 0);
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -179,7 +168,7 @@ std::shared_ptr<Tensor> dropout(std::shared_ptr<Tensor> x, double p, bool traini
     if (!training || p == 0.0) return x;
     if (p == 1.0) {
         auto zeros = Tensor::create(x->shape, Device(DeviceType::CPU, 0), false, x->dtype);
-        std::memset(zeros->data_ptr(), 0, zeros->numel() * zeros->storage->element_size());
+        std::memset(zeros->raw_data_ptr(), 0, zeros->numel() * zeros->storage->element_size());
         if (zeros->device != x->device) zeros = zeros->to(x->device);
         return Ops::mul(x, zeros);
     }

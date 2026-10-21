@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <functional>
 
 namespace litetorch {
@@ -55,6 +56,9 @@ public:
     std::vector<NodeInput> inputs;
     SavedTensor output;
     SavedTensorsVector saved_tensors;
+    std::vector<uint64_t> saved_versions;
+    bool consumed = false;
+    bool had_saved_data = false;
 
     Node(const std::string& name = "Node") : name(name) {}
     virtual ~Node() = default;
@@ -88,7 +92,7 @@ public:
     static bool is_grad_enabled() { return is_grad_enabled_; }
     static void set_grad_enabled(bool enabled) { is_grad_enabled_ = enabled; }
     static bool has_active_tensors();
-    static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false);
+    static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false, bool retain_graph = false);
     static std::vector<std::shared_ptr<Tensor>> grad(
         const std::vector<std::shared_ptr<Tensor>>& outputs,
         const std::vector<std::shared_ptr<Tensor>>& inputs,

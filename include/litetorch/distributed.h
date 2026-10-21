@@ -13,8 +13,10 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <cstddef>
 #include <deque>
 #include <tuple>
+#include <stdexcept>
 #include "litetorch/pipeline.h"
 
 namespace litetorch {
@@ -30,6 +32,20 @@ enum class ReduceOp {
 
 struct ShmControl {
     std::atomic<int> steps[4096];
+    std::atomic<int> err[4096];
+    std::atomic<int> p2p_steps[4096];
+    std::atomic<uint64_t> sig[4096];
+};
+
+enum class ShmErr : int {
+    NONE = 0,
+    VALIDATION = 1,
+    DTYPE = 2,
+    BUFFER = 3
+};
+
+struct ShmAbortError : public std::runtime_error {
+    explicit ShmAbortError(const std::string& m) : std::runtime_error(m) {}
 };
 
 uint16_t float_to_half(float f);
@@ -82,6 +98,17 @@ private:
     ShmControl* shm_ctrl_ = nullptr;
     std::vector<float*> shm_buffers_;
     size_t shm_buffer_size_ = 0;
+    std::string shm_job_tag_;
+
+    std::mutex shm_step_mutex_;
+    static uint64_t shm_shape_hash(const std::vector<int64_t>& shape);
+    static uint64_t shm_shape_hash2(const std::vector<int64_t>& s1, const std::vector<int64_t>& s2);
+    static uint64_t shm_make_sig(uint64_t tag, uint64_t sh, uint64_t a, uint64_t b, uint64_t c, uint64_t d);
+    int shm_proto_begin();
+    int shm_proto_phase1();
+    void shm_proto_phase2(int cur_step);
+    [[noreturn]] void shm_proto_abort(int code, int cur_step);
+    void shm_proto_check_sig(uint64_t sig, int cur_step);
 
     void init_shm(const std::string& master_addr, int master_port);
     void shutdown_shm();
@@ -117,12 +144,15 @@ private:
     std::thread relay_thread_;
     bool stop_relay_ = false;
     std::mutex relay_send_mutex_;
+    std::mutex raw_socket_mutex_;
     std::mutex relay_inbox_mutex_;
     std::condition_variable relay_inbox_cv_;
     std::deque<RelayMsg> relay_inbox_;
     void relay_loop();
     static void relay_send_all(int fd, const char* buf, size_t n);
     static size_t relay_dtype_bytes(int32_t dtype_val);
+    static bool socket_recv_all(int fd, char* buf, size_t n);
+    void check_collective_agreement(int32_t dtype_val, const std::vector<int64_t>& shape);
 };
 
 void init_process_group(int rank, int world_size, const std::string& master_addr, int master_port);
@@ -134,6 +164,7 @@ void all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
 void reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full);
 void all_reduce_grads(std::shared_ptr<nn::Module> module);
 void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, size_t bucket_size_bytes = 25 * 1024 * 1024);
+void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, size_t bucket_size_bytes, ReduceOp op);
 void send_tensor(std::shared_ptr<Tensor> tensor, int dst);
 void recv_tensor(std::shared_ptr<Tensor> tensor, int src);
 
@@ -231,21 +262,44 @@ void all_reduce_grads(std::shared_ptr<nn::Module> module, ReduceOp op);
 
 class DistributedDataParallel : public nn::Module {
 public:
+    static constexpr ReduceOp kDefaultDDPReduceOp = ReduceOp::AVG;
     std::shared_ptr<nn::Module> module;
-    ReduceOp reduce_op = ReduceOp::AVG;
+    ReduceOp reduce_op = kDefaultDDPReduceOp;
 
-    DistributedDataParallel(std::shared_ptr<nn::Module> sub_module, ReduceOp op = ReduceOp::AVG);
+    DistributedDataParallel(std::shared_ptr<nn::Module> sub_module, ReduceOp op = kDefaultDDPReduceOp);
 
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     void backward(std::shared_ptr<Tensor> loss);
     void backward(std::shared_ptr<Tensor> loss, std::shared_ptr<Tensor> grad_output);
     void sync_grads();
 
+    void set_no_sync(bool skip);
+    bool no_sync() const;
+    void set_find_unused_parameters(bool enable);
+    bool find_unused_parameters() const;
+    void set_bucket_size_bytes(size_t bytes);
+    size_t bucket_size_bytes() const;
+
     std::vector<std::shared_ptr<Tensor>> parameters() override;
     std::vector<std::shared_ptr<nn::Module>> children() override;
     void to(const Device& device) override;
     void train() override;
     void eval() override;
+
+private:
+    bool no_sync_ = false;
+    bool find_unused_params_ = false;
+    size_t bucket_bytes_ = 25 * 1024 * 1024;
+};
+
+class DDPNoSyncGuard {
+public:
+    explicit DDPNoSyncGuard(DistributedDataParallel& ddp);
+    ~DDPNoSyncGuard();
+
+private:
+    DistributedDataParallel& ddp_;
+    bool prev_;
 };
 
 }

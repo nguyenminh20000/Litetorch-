@@ -1,0 +1,10 @@
+PASS save/load round-trip bit-exact eval
+PASS const 0.1f serialized at full precision
+PASS const 123.456789f not truncated to 6 digits
+PASS tracer throws loudly on requires_grad scalar leaf
+PASS tracer throws loudly on expired intermediate (no silent corrupt graph)
+PASS non-grad scalar leaf still bakes as const and evals
+PASS detect_layernorm_candidates counts 2
+PASS deprecated alias detect_layernorm_fusion still works
+PASS alias returns identical report
+ALL PASS

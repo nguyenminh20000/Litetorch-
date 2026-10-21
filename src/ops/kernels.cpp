@@ -17,86 +17,86 @@ inline float atomic_add_float(__global float* addr, float val) {
     } while (current.u32 != expected.u32);
     return current.f32;
 }
-__kernel void elementwise_add(__global const float* A, int a_off, __global const float* B, int b_off, __global float* C, int c_off, int size) {
-    int id = get_global_id(0);
+__kernel void elementwise_add(__global const float* A, long a_off, __global const float* B, long b_off, __global float* C, long c_off, long size) {
+    long id = get_global_id(0);
     if (id < size) C[c_off + id] = A[a_off + id] + B[b_off + id];
 }
-__kernel void elementwise_add_inplace(__global float* A, int a_off, __global const float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void elementwise_add_inplace(__global float* A, long a_off, __global const float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) A[a_off + id] = A[a_off + id] + B[b_off + id];
 }
-__kernel void elementwise_sub(__global const float* A, int a_off, __global const float* B, int b_off, __global float* C, int c_off, int size) {
-    int id = get_global_id(0);
+__kernel void elementwise_sub(__global const float* A, long a_off, __global const float* B, long b_off, __global float* C, long c_off, long size) {
+    long id = get_global_id(0);
     if (id < size) C[c_off + id] = A[a_off + id] - B[b_off + id];
 }
-__kernel void elementwise_mul(__global const float* A, int a_off, __global const float* B, int b_off, __global float* C, int c_off, int size) {
-    int id = get_global_id(0);
+__kernel void elementwise_mul(__global const float* A, long a_off, __global const float* B, long b_off, __global float* C, long c_off, long size) {
+    long id = get_global_id(0);
     if (id < size) C[c_off + id] = A[a_off + id] * B[b_off + id];
 }
-__kernel void elementwise_div(__global const float* A, int a_off, __global const float* B, int b_off, __global float* C, int c_off, int size) {
-    int id = get_global_id(0);
+__kernel void elementwise_div(__global const float* A, long a_off, __global const float* B, long b_off, __global float* C, long c_off, long size) {
+    long id = get_global_id(0);
     if (id < size) C[c_off + id] = A[a_off + id] / B[b_off + id];
 }
-__kernel void relu_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void relu_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = A[a_off + id] > 0.0f ? A[a_off + id] : 0.0f;
 }
-__kernel void relu_backward_kernel(__global const float* A, int a_off, __global const float* grad_output, int gout_off, __global float* grad_input, int gin_off, int size) {
-    int id = get_global_id(0);
+__kernel void relu_backward_kernel(__global const float* A, long a_off, __global const float* grad_output, long gout_off, __global float* grad_input, long gin_off, long size) {
+    long id = get_global_id(0);
     if (id < size) grad_input[gin_off + id] = A[a_off + id] > 0.0f ? grad_output[gout_off + id] : 0.0f;
 }
-__kernel void sigmoid_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void sigmoid_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = 1.0f / (1.0f + exp(-A[a_off + id]));
 }
-__kernel void tanh_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void tanh_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = tanh(A[a_off + id]);
 }
-__kernel void pow_forward(__global const float* A, int a_off, float exponent, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void pow_forward(__global const float* A, long a_off, float exponent, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = pow(A[a_off + id], exponent);
 }
-__kernel void sqrt_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void sqrt_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = sqrt(A[a_off + id]);
 }
-__kernel void exp_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void exp_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = exp(A[a_off + id]);
 }
-__kernel void log_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void log_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = log(A[a_off + id]);
 }
-__kernel void abs_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void abs_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = fabs(A[a_off + id]);
 }
-__kernel void neg_forward(__global const float* A, int a_off, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void neg_forward(__global const float* A, long a_off, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = -A[a_off + id];
 }
-__kernel void leaky_relu_forward(__global const float* A, int a_off, float negative_slope, __global float* B, int b_off, int size) {
-    int id = get_global_id(0);
+__kernel void leaky_relu_forward(__global const float* A, long a_off, float negative_slope, __global float* B, long b_off, long size) {
+    long id = get_global_id(0);
     if (id < size) B[b_off + id] = A[a_off + id] > 0.0f ? A[a_off + id] : A[a_off + id] * negative_slope;
 }
-__kernel void sigmoid_backward_kernel(__global const float* out_data, int out_off, __global const float* grad_output, int gout_off, __global float* grad_input, int gin_off, int size) {
-    int id = get_global_id(0);
+__kernel void sigmoid_backward_kernel(__global const float* out_data, long out_off, __global const float* grad_output, long gout_off, __global float* grad_input, long gin_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         float o = out_data[out_off + id];
         grad_input[gin_off + id] = grad_output[gout_off + id] * o * (1.0f - o);
     }
 }
-__kernel void tanh_backward_kernel(__global const float* out_data, int out_off, __global const float* grad_output, int gout_off, __global float* grad_input, int gin_off, int size) {
-    int id = get_global_id(0);
+__kernel void tanh_backward_kernel(__global const float* out_data, long out_off, __global const float* grad_output, long gout_off, __global float* grad_input, long gin_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         float o = out_data[out_off + id];
         grad_input[gin_off + id] = grad_output[gout_off + id] * (1.0f - o * o);
     }
 }
-__kernel void leaky_relu_backward_kernel(__global const float* A, int a_off, __global const float* grad_output, int gout_off, __global float* grad_input, int gin_off, int size, float negative_slope) {
-    int id = get_global_id(0);
+__kernel void leaky_relu_backward_kernel(__global const float* A, long a_off, __global const float* grad_output, long gout_off, __global float* grad_input, long gin_off, long size, float negative_slope) {
+    long id = get_global_id(0);
     if (id < size) {
         float x = A[a_off + id];
         grad_input[gin_off + id] = x > 0.0f ? grad_output[gout_off + id] : grad_output[gout_off + id] * negative_slope;
@@ -963,36 +963,36 @@ __kernel void embedding_backward(__global const float* input, int in_off,
                      grad_output[gout_off + i * embedding_dim + d]);
     }
 }
-__kernel void sum_backward(__global float* grad_input, int gin_off,
-                           __global const float* grad_output, int gout_off,
-                           int size) {
-    int id = get_global_id(0);
+__kernel void sum_backward(__global float* grad_input, long gin_off,
+                           __global const float* grad_output, long gout_off,
+                           long size) {
+    long id = get_global_id(0);
     if (id < size) {
         grad_input[gin_off + id] = grad_output[gout_off];
     }
 }
-__kernel void reduce_broadcast_prepended(__global const float* A, int a_off,
-                                         __global float* B, int b_off,
-                                         int prod_prepended, int remaining) {
-    int j = get_global_id(0);
+__kernel void reduce_broadcast_prepended(__global const float* A, long a_off,
+                                         __global float* B, long b_off,
+                                         long prod_prepended, long remaining) {
+    long j = get_global_id(0);
     if (j < remaining) {
         float s = 0.0f;
-        for (int i = 0; i < prod_prepended; ++i) {
+        for (long i = 0; i < prod_prepended; ++i) {
             s += A[a_off + i * remaining + j];
         }
         B[b_off + j] = s;
     }
 }
-__kernel void reduce_broadcast_dim(__global const float* A, int a_off,
-                                   __global float* B, int b_off,
-                                   int outer_size, int dim_size, int inner_size) {
-    int idx = get_global_id(0);
-    int total = outer_size * inner_size;
+__kernel void reduce_broadcast_dim(__global const float* A, long a_off,
+                                   __global float* B, long b_off,
+                                   long outer_size, long dim_size, long inner_size) {
+    long idx = get_global_id(0);
+    long total = outer_size * inner_size;
     if (idx < total) {
-        int o = idx / inner_size;
-        int in = idx % inner_size;
+        long o = idx / inner_size;
+        long in = idx % inner_size;
         float s = 0.0f;
-        for (int d = 0; d < dim_size; ++d) {
+        for (long d = 0; d < dim_size; ++d) {
             s += A[a_off + (o * dim_size + d) * inner_size + in];
         }
         B[b_off + o * inner_size + in] = s;
@@ -1079,127 +1079,127 @@ __kernel void rmsprop_step_kernel(__global float* P, int p_off,
     }
 }
 __kernel void make_contiguous_kernel(
-    __global const float* src, int src_offset,
-    __global float* dst, int dst_offset,
+    __global const float* src, long src_offset,
+    __global float* dst, long dst_offset,
     int ndims,
     int8 shape_val,
     int8 strides_val,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
     int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
     int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
 
-    int src_idx = src_offset;
-    int temp = gid;
+    long src_idx = src_offset;
+    long temp = gid;
     for (int d = ndims - 1; d >= 0; --d) {
-        int coord = temp % shape[d];
+        long coord = temp % shape[d];
         temp /= shape[d];
         src_idx += coord * strides[d];
     }
     dst[dst_offset + gid] = src[src_idx];
 }
 __kernel void copy_to_strided_kernel(
-    __global const float* src, int src_offset,
-    __global float* dst, int dst_offset,
+    __global const float* src, long src_offset,
+    __global float* dst, long dst_offset,
     int ndims,
     int8 shape_val,
     int8 strides_val,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
     int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
     int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
 
-    int dst_idx = dst_offset;
-    int temp = gid;
+    long dst_idx = dst_offset;
+    long temp = gid;
     for (int d = ndims - 1; d >= 0; --d) {
-        int coord = temp % shape[d];
+        long coord = temp % shape[d];
         temp /= shape[d];
         dst_idx += coord * strides[d];
     }
     dst[dst_idx] = src[src_offset + gid];
 }
 __kernel void make_contiguous_kernel_fp16(
-    __global const ushort* src, int src_offset,
-    __global ushort* dst, int dst_offset,
+    __global const ushort* src, long src_offset,
+    __global ushort* dst, long dst_offset,
     int ndims,
     int8 shape_val,
     int8 strides_val,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
     int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
     int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
 
-    int src_idx = src_offset;
-    int temp = gid;
+    long src_idx = src_offset;
+    long temp = gid;
     for (int d = ndims - 1; d >= 0; --d) {
-        int coord = temp % shape[d];
+        long coord = temp % shape[d];
         temp /= shape[d];
         src_idx += coord * strides[d];
     }
     dst[dst_offset + gid] = src[src_idx];
 }
 __kernel void copy_to_strided_kernel_fp16(
-    __global const ushort* src, int src_offset,
-    __global ushort* dst, int dst_offset,
+    __global const ushort* src, long src_offset,
+    __global ushort* dst, long dst_offset,
     int ndims,
     int8 shape_val,
     int8 strides_val,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
     int shape[8] = { shape_val.s0, shape_val.s1, shape_val.s2, shape_val.s3, shape_val.s4, shape_val.s5, shape_val.s6, shape_val.s7 };
     int strides[8] = { strides_val.s0, strides_val.s1, strides_val.s2, strides_val.s3, strides_val.s4, strides_val.s5, strides_val.s6, strides_val.s7 };
 
-    int dst_idx = dst_offset;
-    int temp = gid;
+    long dst_idx = dst_offset;
+    long temp = gid;
     for (int d = ndims - 1; d >= 0; --d) {
-        int coord = temp % shape[d];
+        long coord = temp % shape[d];
         temp /= shape[d];
         dst_idx += coord * strides[d];
     }
     dst[dst_idx] = src[src_offset + gid];
 }
 __kernel void elementwise_broadcast_add(
-    __global const float* A, int a_off,
-    __global const float* B, int b_off,
-    __global float* C, int c_off,
+    __global const float* A, long a_off,
+    __global const float* B, long b_off,
+    __global float* C, long c_off,
     int ndims,
     __global const int* out_shape,
     int a_ndims, __global const int* a_shape, __global const int* a_strides,
     int b_ndims, __global const int* b_shape, __global const int* b_strides,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
-    int temp = gid;
+    long temp = gid;
     int coords[16];
     for (int d = ndims - 1; d >= 0; --d) {
         coords[d] = temp % out_shape[d];
         temp /= out_shape[d];
     }
 
-    int a_idx = a_off;
-    int a_diff = ndims - a_ndims;
+    long a_idx = a_off;
+    long a_diff = ndims - a_ndims;
     for (int i = 0; i < a_ndims; ++i) {
         if (a_shape[i] != 1) {
             a_idx += coords[i + a_diff] * a_strides[i];
         }
     }
 
-    int b_idx = b_off;
-    int b_diff = ndims - b_ndims;
+    long b_idx = b_off;
+    long b_diff = ndims - b_ndims;
     for (int i = 0; i < b_ndims; ++i) {
         if (b_shape[i] != 1) {
             b_idx += coords[i + b_diff] * b_strides[i];
@@ -1209,35 +1209,35 @@ __kernel void elementwise_broadcast_add(
     C[c_off + gid] = A[a_idx] + B[b_idx];
 }
 __kernel void elementwise_broadcast_sub(
-    __global const float* A, int a_off,
-    __global const float* B, int b_off,
-    __global float* C, int c_off,
+    __global const float* A, long a_off,
+    __global const float* B, long b_off,
+    __global float* C, long c_off,
     int ndims,
     __global const int* out_shape,
     int a_ndims, __global const int* a_shape, __global const int* a_strides,
     int b_ndims, __global const int* b_shape, __global const int* b_strides,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
-    int temp = gid;
+    long temp = gid;
     int coords[16];
     for (int d = ndims - 1; d >= 0; --d) {
         coords[d] = temp % out_shape[d];
         temp /= out_shape[d];
     }
 
-    int a_idx = a_off;
-    int a_diff = ndims - a_ndims;
+    long a_idx = a_off;
+    long a_diff = ndims - a_ndims;
     for (int i = 0; i < a_ndims; ++i) {
         if (a_shape[i] != 1) {
             a_idx += coords[i + a_diff] * a_strides[i];
         }
     }
 
-    int b_idx = b_off;
-    int b_diff = ndims - b_ndims;
+    long b_idx = b_off;
+    long b_diff = ndims - b_ndims;
     for (int i = 0; i < b_ndims; ++i) {
         if (b_shape[i] != 1) {
             b_idx += coords[i + b_diff] * b_strides[i];
@@ -1247,35 +1247,35 @@ __kernel void elementwise_broadcast_sub(
     C[c_off + gid] = A[a_idx] - B[b_idx];
 }
 __kernel void elementwise_broadcast_mul(
-    __global const float* A, int a_off,
-    __global const float* B, int b_off,
-    __global float* C, int c_off,
+    __global const float* A, long a_off,
+    __global const float* B, long b_off,
+    __global float* C, long c_off,
     int ndims,
     __global const int* out_shape,
     int a_ndims, __global const int* a_shape, __global const int* a_strides,
     int b_ndims, __global const int* b_shape, __global const int* b_strides,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
-    int temp = gid;
+    long temp = gid;
     int coords[16];
     for (int d = ndims - 1; d >= 0; --d) {
         coords[d] = temp % out_shape[d];
         temp /= out_shape[d];
     }
 
-    int a_idx = a_off;
-    int a_diff = ndims - a_ndims;
+    long a_idx = a_off;
+    long a_diff = ndims - a_ndims;
     for (int i = 0; i < a_ndims; ++i) {
         if (a_shape[i] != 1) {
             a_idx += coords[i + a_diff] * a_strides[i];
         }
     }
 
-    int b_idx = b_off;
-    int b_diff = ndims - b_ndims;
+    long b_idx = b_off;
+    long b_diff = ndims - b_ndims;
     for (int i = 0; i < b_ndims; ++i) {
         if (b_shape[i] != 1) {
             b_idx += coords[i + b_diff] * b_strides[i];
@@ -1285,35 +1285,35 @@ __kernel void elementwise_broadcast_mul(
     C[c_off + gid] = A[a_idx] * B[b_idx];
 }
 __kernel void elementwise_broadcast_div(
-    __global const float* A, int a_off,
-    __global const float* B, int b_off,
-    __global float* C, int c_off,
+    __global const float* A, long a_off,
+    __global const float* B, long b_off,
+    __global float* C, long c_off,
     int ndims,
     __global const int* out_shape,
     int a_ndims, __global const int* a_shape, __global const int* a_strides,
     int b_ndims, __global const int* b_shape, __global const int* b_strides,
-    int total_elements)
+    long total_elements)
 {
-    int gid = get_global_id(0);
+    long gid = get_global_id(0);
     if (gid >= total_elements) return;
 
-    int temp = gid;
+    long temp = gid;
     int coords[16];
     for (int d = ndims - 1; d >= 0; --d) {
         coords[d] = temp % out_shape[d];
         temp /= out_shape[d];
     }
 
-    int a_idx = a_off;
-    int a_diff = ndims - a_ndims;
+    long a_idx = a_off;
+    long a_diff = ndims - a_ndims;
     for (int i = 0; i < a_ndims; ++i) {
         if (a_shape[i] != 1) {
             a_idx += coords[i + a_diff] * a_strides[i];
         }
     }
 
-    int b_idx = b_off;
-    int b_diff = ndims - b_ndims;
+    long b_idx = b_off;
+    long b_diff = ndims - b_ndims;
     for (int i = 0; i < b_ndims; ++i) {
         if (b_shape[i] != 1) {
             b_idx += coords[i + b_diff] * b_strides[i];
@@ -1322,8 +1322,8 @@ __kernel void elementwise_broadcast_div(
 
     C[c_off + gid] = A[a_idx] / B[b_idx];
 }
-__kernel void fill_zero(__global float* data, int data_off, int size) {
-    int id = get_global_id(0);
+__kernel void fill_zero(__global float* data, long data_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         data[data_off + id] = 0.0f;
     }
@@ -1684,11 +1684,11 @@ __kernel void generate_dropout_mask(
     }
 }
 __kernel void fake_quantize_forward(
-    __global const float* A, int a_off,
+    __global const float* A, long a_off,
     float scale, float zero_point, float clip_min, float clip_max,
-    __global float* B, int b_off, int size)
+    __global float* B, long b_off, long size)
 {
-    int id = get_global_id(0);
+    long id = get_global_id(0);
     if (id < size) {
         float val = A[a_off + id] / scale + zero_point;
         float rounded = rint(val);
@@ -2112,99 +2112,99 @@ inline float fp8_e5m2_to_float(uchar val) {
     return (sign ? -1.0f : 1.0f) * pow(2.0f, (float)exp - 15.0f) * (1.0f + (float)mant / 4.0f);
 }
 
-__kernel void cast_fp32_to_fp16(__global const float* src, int src_off, __global ushort* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_fp16(__global const float* src, long src_off, __global ushort* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = float_to_half(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp16_to_fp32(__global const ushort* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp16_to_fp32(__global const ushort* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = half_to_float(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp32_to_bf16(__global const float* src, int src_off, __global ushort* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_bf16(__global const float* src, long src_off, __global ushort* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = float_to_bf16(src[src_off + id]);
     }
 }
 
-__kernel void cast_bf16_to_fp32(__global const ushort* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_bf16_to_fp32(__global const ushort* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = bf16_to_float(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp32_to_nf4(__global const float* src, int src_off, __global uchar* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_nf4(__global const float* src, long src_off, __global uchar* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = float_to_nf4(src[src_off + id]);
     }
 }
 
-__kernel void cast_nf4_to_fp32(__global const uchar* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_nf4_to_fp32(__global const uchar* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = nf4_to_float(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp32_to_int8(__global const float* src, int src_off, __global char* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_int8(__global const float* src, long src_off, __global char* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = (char)clamp(src[src_off + id], -128.0f, 127.0f);
     }
 }
 
-__kernel void cast_int8_to_fp32(__global const char* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_int8_to_fp32(__global const char* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = (float)src[src_off + id];
     }
 }
 
-__kernel void cast_fp32_to_int4(__global const float* src, int src_off, __global char* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_int4(__global const float* src, long src_off, __global char* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = (char)clamp(src[src_off + id], -8.0f, 7.0f);
     }
 }
 
-__kernel void cast_int4_to_fp32(__global const char* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_int4_to_fp32(__global const char* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = (float)src[src_off + id];
     }
 }
 
-__kernel void cast_fp32_to_fp8_e4m3(__global const float* src, int src_off, __global uchar* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_fp8_e4m3(__global const float* src, long src_off, __global uchar* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = float_to_fp8_e4m3(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp8_e4m3_to_fp32(__global const uchar* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp8_e4m3_to_fp32(__global const uchar* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = fp8_e4m3_to_float(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp32_to_fp8_e5m2(__global const float* src, int src_off, __global uchar* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp32_to_fp8_e5m2(__global const float* src, long src_off, __global uchar* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = float_to_fp8_e5m2(src[src_off + id]);
     }
 }
 
-__kernel void cast_fp8_e5m2_to_fp32(__global const uchar* src, int src_off, __global float* dst, int dst_off, int size) {
-    int id = get_global_id(0);
+__kernel void cast_fp8_e5m2_to_fp32(__global const uchar* src, long src_off, __global float* dst, long dst_off, long size) {
+    long id = get_global_id(0);
     if (id < size) {
         dst[dst_off + id] = fp8_e5m2_to_float(src[src_off + id]);
     }

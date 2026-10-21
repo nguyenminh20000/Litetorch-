@@ -26,7 +26,7 @@ StorageImpl::StorageImpl(size_t size, const Device& device, DataType dtype) : si
             if (!gpu_data) {
                 std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
                 MemoryManager::get().unregister_gpu_impl(this);
-                throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes");
+                throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes | " + MemoryManager::get().gpu_oom_diagnostics(size * element_size()));
             }
         } else {
             this->device = Device(DeviceType::CPU, 0);
@@ -145,7 +145,7 @@ void StorageImpl::to(const Device& new_device) {
         cl_mem new_gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
         if (!new_gpu_data) {
             MemoryManager::get().unregister_gpu_impl(this);
-            throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes");
+            throw std::runtime_error("[litetorch Error] GPU out of memory: failed to allocate " + std::to_string(size * element_size()) + " bytes | " + MemoryManager::get().gpu_oom_diagnostics(size * element_size()));
         }
 
         if (cpu_data) {
@@ -226,7 +226,7 @@ void StorageImpl::evict_impl() {
         cpu_data = (float*)CachingAllocator::get().allocate_cpu(size * element_size());
     }
     rt_gpu_read(gpu_data, size * element_size(), cpu_data);
-    rt_gpu_free((void*)gpu_data);
+    rt_gpu_free_now((void*)gpu_data);
     gpu_data = nullptr;
     is_swapped = true;
 
@@ -237,20 +237,6 @@ void StorageImpl::evict() {
     std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
     std::lock_guard<std::mutex> storage_lock(storage_mutex_);
     evict_impl();
-}
-
-void StorageImpl::discard_gpu_impl() {
-    if (is_swapped || !gpu_data) return;
-    rt_gpu_free((void*)gpu_data);
-    gpu_data = nullptr;
-    is_swapped = true;
-    MemoryManager::get().unregister_gpu_impl(this);
-}
-
-void StorageImpl::discard_gpu() {
-    std::lock_guard<std::recursive_mutex> mem_lock(MemoryManager::get().get_mutex());
-    std::lock_guard<std::mutex> storage_lock(storage_mutex_);
-    discard_gpu_impl();
 }
 
 void StorageImpl::swap_in_impl() {
@@ -270,7 +256,7 @@ void StorageImpl::swap_in_impl() {
     gpu_data = (cl_mem)rt_gpu_allocate(size * element_size());
     if (!gpu_data) {
         MemoryManager::get().unregister_gpu_impl(this);
-        throw std::runtime_error("[litetorch Error] GPU out of memory: failed to swap in " + std::to_string(size * element_size()) + " bytes");
+        throw std::runtime_error("[litetorch Error] GPU out of memory: failed to swap in " + std::to_string(size * element_size()) + " bytes | " + MemoryManager::get().gpu_oom_diagnostics(size * element_size()));
     }
 
     rt_gpu_write(gpu_data, size * element_size(), cpu_data);

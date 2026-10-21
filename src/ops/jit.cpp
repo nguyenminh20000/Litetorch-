@@ -1,9 +1,7 @@
 #include "litetorch/jit.h"
+#include "litetorch/jit_detail.h"
 #include "litetorch/autograd.h"
 #include "litetorch/ops.h"
-#include "litetorch/cl_backend.h"
-#include "litetorch/backend.h"
-#include "litetorch/backend_route.h"
 #include "litetorch/thread_pool.h"
 #include <sstream>
 #include <fstream>
@@ -11,36 +9,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <iomanip>
+#include <limits>
 
 namespace litetorch {
-
-static std::string to_opencl_expr(std::shared_ptr<JITVar> var) {
-    if (var->op == JITVar::OpType::INPUT) return var->name + "[idx + " + var->name + "_off]";
-    if (var->op == JITVar::OpType::CONST) return std::to_string(var->val) + "f";
-
-    std::string left_expr = to_opencl_expr(var->left);
-    std::string right_expr = var->right ? to_opencl_expr(var->right) : "";
-
-    switch (var->op) {
-        case JITVar::OpType::ADD: return "(" + left_expr + " + " + right_expr + ")";
-        case JITVar::OpType::SUB: return "(" + left_expr + " - " + right_expr + ")";
-        case JITVar::OpType::MUL: return "(" + left_expr + " * " + right_expr + ")";
-        case JITVar::OpType::DIV: return "(" + left_expr + " / " + right_expr + ")";
-        case JITVar::OpType::NEG: return "(-" + left_expr + ")";
-        case JITVar::OpType::RELU: return "max(0.0f, " + left_expr + ")";
-        case JITVar::OpType::SIGMOID: return "(1.0f / (1.0f + exp(-" + left_expr + ")))";
-        case JITVar::OpType::TANH: return "tanh(" + left_expr + ")";
-        case JITVar::OpType::GELU: return "gelu_func(" + left_expr + ")";
-        case JITVar::OpType::SQRT: return "sqrt(" + left_expr + ")";
-        case JITVar::OpType::EXP: return "exp(" + left_expr + ")";
-        case JITVar::OpType::LOG: return "log(" + left_expr + ")";
-        case JITVar::OpType::ABS: return "fabs(" + left_expr + ")";
-        case JITVar::OpType::RELU_GRAD: return "(" + left_expr + " > 0.0f ? " + right_expr + " : 0.0f)";
-        case JITVar::OpType::GELU_GRAD: return "gelu_grad(" + left_expr + ", " + right_expr + ")";
-        case JITVar::OpType::ABS_GRAD: return "(" + left_expr + " > 0.0f ? " + right_expr + " : (" + left_expr + " < 0.0f ? -" + right_expr + " : 0.0f))";
-        default: return "0.0f";
-    }
-}
 
 static float evaluate_cpu(std::shared_ptr<JITVar> var, const std::unordered_map<std::string, float>& env) {
     if (var->op == JITVar::OpType::INPUT) return env.at(var->name);
@@ -75,14 +47,6 @@ static float evaluate_cpu(std::shared_ptr<JITVar> var, const std::unordered_map<
         case JITVar::OpType::ABS_GRAD: return left_val > 0.0f ? right_val : (left_val < 0.0f ? -right_val : 0.0f);
         default: return 0.0f;
     }
-}
-
-static std::string shape_to_key(const std::vector<int64_t>& shape) {
-    std::stringstream ss;
-    for (size_t i = 0; i < shape.size(); ++i) {
-        ss << shape[i] << (i == shape.size() - 1 ? "" : "_");
-    }
-    return ss.str();
 }
 
 JITFunction::JITFunction(const std::string& name, std::shared_ptr<JITVar> expr, const std::vector<std::shared_ptr<JITVar>>& inputs)
@@ -313,56 +277,6 @@ public:
     }
 };
 
-void JITFunction::compile_for_shape(const std::string& shape_key) {
-    if (kernels_map_.find(shape_key) != kernels_map_.end()) return;
-    auto active_backend = BackendDispatcher::get().get_backend();
-    bool is_opencl = (active_backend == nullptr);
-
-    if (is_opencl && !CLBackend::get().is_available()) return;
-    if (!is_opencl && !active_backend->is_available()) return;
-
-    std::stringstream ss;
-    std::string k_name = name_ + "_" + shape_key;
-
-    if (is_opencl) {
-        ss << "inline float gelu_func(float x) {\n";
-        ss << "    return x * 0.5f * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)));\n";
-        ss << "}\n\n";
-
-        ss << "inline float gelu_grad(float x, float grad_out) {\n";
-        ss << "    float tanh_val = tanh(0.7978845608f * (x + 0.044715f * x * x * x));\n";
-        ss << "    float term1 = 0.5f * (1.0f + tanh_val);\n";
-        ss << "    float term2 = x * 0.5f * (1.0f - tanh_val * tanh_val) * 0.7978845608f * (1.0f + 0.134145f * x * x);\n";
-        ss << "    return grad_out * (term1 + term2);\n";
-        ss << "}\n\n";
-
-        ss << "__kernel void " << k_name << "(\n";
-        for (size_t i = 0; i < inputs_.size(); ++i) {
-            ss << "    __global const float* " << inputs_[i]->name << ",\n";
-            ss << "    int " << inputs_[i]->name << "_off,\n";
-        }
-        ss << "    __global float* out,\n";
-        ss << "    int out_off,\n";
-        ss << "    int size\n";
-        ss << ") {\n";
-        ss << "    int idx = get_global_id(0);\n";
-        ss << "    if (idx < size) {\n";
-        for (size_t i = 0; i < inputs_.size(); ++i) {
-            ss << "        float " << inputs_[i]->name << "_val = " << inputs_[i]->name << "[idx + " << inputs_[i]->name << "_off];\n";
-        }
-        ss << "        out[idx + out_off] = " << to_opencl_expr(expr_) << ";\n";
-        ss << "    }\n";
-        ss << "}\n";
-    }
-
-    std::string source = ss.str();
-    void* kernel = nullptr;
-    if (is_opencl && !source.empty()) {
-        kernel = rt_gpu_get_kernel(k_name + "_program", source, k_name);
-    }
-    kernels_map_[shape_key] = kernel;
-}
-
 std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_ptr<Tensor>>& args) {
     if (args.empty()) {
         throw std::runtime_error("[litetorch Error] JITFunction requires at least one input");
@@ -380,21 +294,21 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
 
     std::shared_ptr<Tensor> out = nullptr;
     if (args[0]->device.type == DeviceType::GPU) {
-        if (expr_->op == JITVar::OpType::ADD && args.size() == 2) {
+        if (expr_->op == JITVar::OpType::ADD && jit_detail::fastpath_binary_ok(expr_, inputs_)) {
             out = Ops::add(args[0], args[1]);
-        } else if (expr_->op == JITVar::OpType::SUB && args.size() == 2) {
+        } else if (expr_->op == JITVar::OpType::SUB && jit_detail::fastpath_binary_ok(expr_, inputs_)) {
             out = Ops::sub(args[0], args[1]);
-        } else if (expr_->op == JITVar::OpType::MUL && args.size() == 2) {
+        } else if (expr_->op == JITVar::OpType::MUL && jit_detail::fastpath_binary_ok(expr_, inputs_)) {
             out = Ops::mul(args[0], args[1]);
-        } else if (expr_->op == JITVar::OpType::DIV && args.size() == 2) {
+        } else if (expr_->op == JITVar::OpType::DIV && jit_detail::fastpath_binary_ok(expr_, inputs_)) {
             out = Ops::div(args[0], args[1]);
-        } else if (expr_->op == JITVar::OpType::RELU && args.size() == 1) {
+        } else if (expr_->op == JITVar::OpType::RELU && jit_detail::fastpath_unary_ok(expr_, inputs_)) {
             out = Ops::relu(args[0]);
-        } else if (expr_->op == JITVar::OpType::GELU && args.size() == 1) {
+        } else if (expr_->op == JITVar::OpType::GELU && jit_detail::fastpath_unary_ok(expr_, inputs_)) {
             out = Ops::gelu(args[0]);
-        } else if (expr_->op == JITVar::OpType::NEG && args.size() == 1) {
+        } else if (expr_->op == JITVar::OpType::NEG && jit_detail::fastpath_unary_ok(expr_, inputs_)) {
             out = Ops::neg(args[0]);
-        } else if (expr_->op == JITVar::OpType::ABS && args.size() == 1) {
+        } else if (expr_->op == JITVar::OpType::ABS && jit_detail::fastpath_unary_ok(expr_, inputs_)) {
             out = Ops::abs(args[0]);
         } else {
             std::unordered_map<std::string, std::shared_ptr<Tensor>> env;
@@ -440,6 +354,8 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
             node->next_nodes.push_back(args[i]->creator);
         }
         node->saved_tensors = args;
+        node->saved_versions.clear();
+        for (auto& t : args) node->saved_versions.push_back(t ? t->_version() : 0);
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -470,6 +386,9 @@ static std::shared_ptr<JITVar> trace_tensor(
     std::shared_ptr<Node> creator = t->creator;
     if (!creator) {
         if (t->numel() == 1) {
+            if (t->requires_grad) {
+                throw std::runtime_error("[litetorch Error] Tracer cannot bake a requires_grad scalar leaf as a constant; pass it as an explicit input.");
+            }
             float val = t->to_vector()[0];
             auto var = std::make_shared<JITVar>(val);
             tensor_cache[t.get()] = var;
@@ -479,48 +398,55 @@ static std::shared_ptr<JITVar> trace_tensor(
     }
 
     std::shared_ptr<JITVar> res = nullptr;
+    auto lock_input = [&](size_t i) {
+        auto t = creator->inputs[i].tensor.lock();
+        if (!t) {
+            throw std::runtime_error("[litetorch Error] Tracer found an expired intermediate tensor; keep every intermediate alive until trace returns.");
+        }
+        return t;
+    };
     if (creator->name == "Add") {
-        auto a = creator->inputs[0].tensor.lock();
-        auto b = creator->inputs[1].tensor.lock();
+        auto a = lock_input(0);
+        auto b = lock_input(1);
         res = trace_tensor(a, inputs, input_vars, tensor_cache) + trace_tensor(b, inputs, input_vars, tensor_cache);
     } else if (creator->name == "Sub") {
-        auto a = creator->inputs[0].tensor.lock();
-        auto b = creator->inputs[1].tensor.lock();
+        auto a = lock_input(0);
+        auto b = lock_input(1);
         res = trace_tensor(a, inputs, input_vars, tensor_cache) - trace_tensor(b, inputs, input_vars, tensor_cache);
     } else if (creator->name == "Mul") {
-        auto a = creator->inputs[0].tensor.lock();
-        auto b = creator->inputs[1].tensor.lock();
+        auto a = lock_input(0);
+        auto b = lock_input(1);
         res = trace_tensor(a, inputs, input_vars, tensor_cache) * trace_tensor(b, inputs, input_vars, tensor_cache);
     } else if (creator->name == "Div") {
-        auto a = creator->inputs[0].tensor.lock();
-        auto b = creator->inputs[1].tensor.lock();
+        auto a = lock_input(0);
+        auto b = lock_input(1);
         res = trace_tensor(a, inputs, input_vars, tensor_cache) / trace_tensor(b, inputs, input_vars, tensor_cache);
     } else if (creator->name == "ReLU" || creator->name == "Relu") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::relu(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "GELU" || creator->name == "Gelu") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::gelu(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Sigmoid") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::sigmoid(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Tanh") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::tanh(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Sqrt") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::sqrt(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Exp") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::exp(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Log") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::log(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Abs") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = JIT::abs(trace_tensor(a, inputs, input_vars, tensor_cache));
     } else if (creator->name == "Neg") {
-        auto a = creator->inputs[0].tensor.lock();
+        auto a = lock_input(0);
         res = -trace_tensor(a, inputs, input_vars, tensor_cache);
     } else {
         throw std::runtime_error("[litetorch Error] Unsupported operator name in JIT compilation: " + creator->name);
@@ -679,7 +605,7 @@ std::shared_ptr<JITFunction> JITFunction::load(const std::string& filepath) {
 std::string Tracer::serialize_var(std::shared_ptr<JITVar> var) {
     if (!var) return "N";
     std::stringstream ss;
-    ss << static_cast<int>(var->op) << " " << (var->name.empty() ? "_" : var->name) << " " << var->val << " ";
+    ss << static_cast<int>(var->op) << " " << (var->name.empty() ? "_" : var->name) << " " << std::setprecision(std::numeric_limits<float>::max_digits10) << var->val << " ";
     ss << serialize_var(var->left) << " " << serialize_var(var->right);
     return ss.str();
 }

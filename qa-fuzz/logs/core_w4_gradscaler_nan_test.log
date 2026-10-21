@@ -1,0 +1,7 @@
+nan_grad_skips_step_and_backs_off ok
+inf_grad_detected ok
+clean_grad_steps_and_grows ok
+noncontiguous_nan_grad_detected ok
+fp16_nan_grad_detected ok
+max_propagates_nan ok
+ALL core_w4 gradscaler tests passed

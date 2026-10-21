@@ -4,10 +4,13 @@
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
+#include "litetorch/amp.h"
+#include "autocast_policy.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
@@ -18,19 +21,7 @@ inline void* cached_kernel() {
     static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 }
 
 class LayerNormNode : public Node {
@@ -269,6 +260,7 @@ public:
         auto sum_input = Ops::add(input, residual);
         auto ln_node = std::make_shared<LayerNormNode>(normalized_shape, eps);
         ln_node->saved_tensors = { sum_input, weight, bias, save_mean, save_var };
+        ln_node->saved_versions = {(sum_input ? sum_input->_version() : 0), (weight ? weight->_version() : 0), (bias ? bias->_version() : 0), (save_mean ? save_mean->_version() : 0), (save_var ? save_var->_version() : 0)};
         auto grads = ln_node->backward(grad_output);
         
         return { grads[0], grads[0]->clone(), grads[1], grads[2] };
@@ -407,6 +399,14 @@ public:
 namespace Ops {
 
 std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vector<int64_t>& normalized_shape, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, float eps) {
+    if (amp::autocast_fp32_only("layer_norm") &&
+        (input->dtype != DataType::FP32 || (weight && weight->dtype != DataType::FP32) || (bias && bias->dtype != DataType::FP32))) {
+        auto target = amp::AutocastGuard::get_dtype();
+        auto out_fp32 = layer_norm(cast(input, DataType::FP32), normalized_shape,
+            weight ? cast(weight, DataType::FP32) : nullptr,
+            bias ? cast(bias, DataType::FP32) : nullptr, eps);
+        return cast(out_fp32, target);
+    }
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight ? (weight->is_contiguous() ? weight : weight->contiguous()) : nullptr;
     auto bias_c = bias ? (bias->is_contiguous() ? bias : bias->contiguous()) : nullptr;
@@ -515,6 +515,7 @@ std::shared_ptr<Tensor> layer_norm(std::shared_ptr<Tensor> input, const std::vec
         node->inputs = { {input, input->requires_grad}, {weight, weight && weight->requires_grad}, {bias, bias && bias->requires_grad} };
         node->next_nodes = { input->creator, weight ? weight->creator : nullptr, bias ? bias->creator : nullptr };
         node->saved_tensors = { input, weight, bias, save_mean, save_var };
+        node->saved_versions = {(input ? input->_version() : 0), (weight ? weight->_version() : 0), (bias ? bias->_version() : 0), (save_mean ? save_mean->_version() : 0), (save_var ? save_var->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -641,6 +642,7 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
             node->next_nodes.push_back(nullptr);
         }
         node->saved_tensors = { input, residual, weight, bias, save_mean, save_var };
+        node->saved_versions = {(input ? input->_version() : 0), (residual ? residual->_version() : 0), (weight ? weight->_version() : 0), (bias ? bias->_version() : 0), (save_mean ? save_mean->_version() : 0), (save_var ? save_var->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -648,10 +650,24 @@ std::shared_ptr<Tensor> fused_add_layernorm(std::shared_ptr<Tensor> input, std::
     return out;
 }
 
-
 std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> running_mean, std::shared_ptr<Tensor> running_var, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias, bool training, float momentum, float eps) {
     if (input->shape.size() != 4) {
         throw std::runtime_error("[litetorch Error] BatchNorm2d requires 4D input");
+    }
+    int64_t bn_channels = input->shape[1];
+    if (!weight) weight = Tensor::ones({bn_channels}, input->device, false, input->dtype);
+    if (!bias) bias = Tensor::zeros({bn_channels}, input->device, false, input->dtype);
+    if (amp::autocast_fp32_only("batch_norm2d") && input->dtype != DataType::FP32) {
+        auto target = amp::AutocastGuard::get_dtype();
+        auto in_fp32 = Ops::cast(input, DataType::FP32);
+        auto rm_fp32 = Ops::cast(running_mean, DataType::FP32);
+        auto rv_fp32 = Ops::cast(running_var, DataType::FP32);
+        auto out_fp32 = batch_norm2d(in_fp32, rm_fp32, rv_fp32, Ops::cast(weight, DataType::FP32), Ops::cast(bias, DataType::FP32), training, momentum, eps);
+        if (training) {
+            running_mean->copy_(Ops::cast(rm_fp32, running_mean->dtype));
+            running_var->copy_(Ops::cast(rv_fp32, running_var->dtype));
+        }
+        return Ops::cast(out_fp32, target);
     }
 
     auto input_c = input->is_contiguous() ? input : input->contiguous();
@@ -799,6 +815,7 @@ std::shared_ptr<Tensor> batch_norm2d(std::shared_ptr<Tensor> input, std::shared_
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad}, {bias, bias->requires_grad} };
         node->next_nodes = { input->creator, weight->creator, bias->creator };
         node->saved_tensors = { input, weight, save_mean, save_var };
+        node->saved_versions = {(input ? input->_version() : 0), (weight ? weight->_version() : 0), (save_mean ? save_mean->_version() : 0), (save_var ? save_var->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -919,6 +936,7 @@ std::shared_ptr<Tensor> rmsnorm(std::shared_ptr<Tensor> input, std::shared_ptr<T
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
         node->saved_tensors = { input_c, weight_c, save_inv_rms };
+        node->saved_versions = {(input_c ? input_c->_version() : 0), (weight_c ? weight_c->_version() : 0), (save_inv_rms ? save_inv_rms->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

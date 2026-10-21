@@ -29,6 +29,8 @@ public:
 
     std::shared_ptr<Tensor> local_shard() { return shard_; }
     std::shared_ptr<Tensor> full_buffer() { return full_; }
+    bool has_full_buffer() const { return static_cast<bool>(full_); }
+    void release_full_buffer();
     std::vector<std::shared_ptr<Tensor>> param_views();
 
     void all_gather_flat();

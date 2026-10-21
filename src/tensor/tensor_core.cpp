@@ -8,6 +8,7 @@
 #include "litetorch/backend_route.h"
 #include <numeric>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <random>
 #include <algorithm>
@@ -235,6 +236,149 @@ public:
         return { grad_output->clone() };
     }
 };
+
+static std::vector<int64_t> unravel_index(int64_t linear, const std::vector<int64_t>& shape) {
+    std::vector<int64_t> idx(shape.size());
+    for (int64_t d = static_cast<int64_t>(shape.size()) - 1; d >= 0; --d) {
+        idx[d] = linear % shape[d];
+        linear /= shape[d];
+    }
+    return idx;
+}
+
+static void typed_add(char* dst, const char* src, DataType dtype);
+
+static std::vector<int64_t> read_indices_int64(std::shared_ptr<Tensor> t) {
+    if (t->dtype == DataType::INT64 && t->is_contiguous()) {
+        const int64_t* p = reinterpret_cast<const int64_t*>(t->storage->get_cpu_ptr()) + t->offset;
+        return std::vector<int64_t>(p, p + t->numel());
+    }
+    std::vector<float> f = t->to_vector();
+    std::vector<int64_t> out(f.size());
+    for (size_t i = 0; i < f.size(); ++i) out[i] = static_cast<int64_t>(f[i]);
+    return out;
+}
+
+class SliceNode : public Node {
+public:
+    std::vector<int64_t> orig_shape;
+    int64_t dim;
+    int64_t start;
+    int64_t step;
+    SliceNode(const std::vector<int64_t>& orig_shape, int64_t dim, int64_t start, int64_t step)
+        : Node("Slice"), orig_shape(orig_shape), dim(dim), start(start), step(step) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto grad_input = Tensor::zeros(orig_shape, grad_output->device, false, grad_output->dtype);
+        auto goc = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        size_t esz = goc->storage->element_size();
+        const char* sraw = reinterpret_cast<const char*>(goc->storage->get_cpu_ptr()) + goc->offset * esz;
+        char* draw = reinterpret_cast<char*>(grad_input->storage->get_cpu_ptr());
+        std::vector<int64_t> dstrides = default_strides(orig_shape);
+        int64_t n = static_cast<int64_t>(goc->numel());
+        const std::vector<int64_t>& oshape = goc->shape;
+        for (int64_t i = 0; i < n; ++i) {
+            auto idx = unravel_index(i, oshape);
+            int64_t flat = 0;
+            for (size_t d = 0; d < oshape.size(); ++d) {
+                int64_t id = (static_cast<int64_t>(d) == dim) ? start + idx[d] * step : idx[d];
+                flat += id * dstrides[d];
+            }
+            std::memcpy(draw + flat * esz, sraw + i * esz, esz);
+        }
+        return { grad_input };
+    }
+};
+
+class AsStridedNode : public Node {
+public:
+    std::vector<int64_t> orig_shape;
+    std::vector<int64_t> orig_strides;
+    std::vector<int64_t> view_shape;
+    std::vector<int64_t> view_strides;
+    int64_t orig_offset;
+    int64_t view_offset;
+    size_t storage_numel;
+    AsStridedNode(const std::vector<int64_t>& orig_shape, const std::vector<int64_t>& orig_strides,
+                  int64_t orig_offset, const std::vector<int64_t>& view_shape,
+                  const std::vector<int64_t>& view_strides, int64_t view_offset, size_t storage_numel)
+        : Node("AsStrided"), orig_shape(orig_shape), orig_strides(orig_strides), view_shape(view_shape),
+          view_strides(view_strides), orig_offset(orig_offset), view_offset(view_offset), storage_numel(storage_numel) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto goc = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        size_t esz = goc->storage->element_size();
+        auto buf = Tensor::zeros({static_cast<int64_t>(storage_numel)}, goc->device, false, goc->dtype);
+        char* braw = reinterpret_cast<char*>(buf->storage->get_cpu_ptr());
+        const char* sraw = reinterpret_cast<const char*>(goc->storage->get_cpu_ptr()) + goc->offset * esz;
+        int64_t n = static_cast<int64_t>(goc->numel());
+        for (int64_t i = 0; i < n; ++i) {
+            auto idx = unravel_index(i, view_shape);
+            int64_t p = view_offset;
+            for (size_t d = 0; d < view_shape.size(); ++d) p += idx[d] * view_strides[d];
+            typed_add(braw + p * esz, sraw + i * esz, goc->dtype);
+        }
+        auto grad_input = std::make_shared<Tensor>(buf->storage, orig_shape, orig_strides, orig_offset, goc->device, false);
+        return { grad_input };
+    }
+};
+
+class IndexSelectNode : public Node {
+public:
+    std::vector<int64_t> orig_shape;
+    int64_t dim;
+    IndexSelectNode(const std::vector<int64_t>& orig_shape, int64_t dim)
+        : Node("IndexSelect"), orig_shape(orig_shape), dim(dim) {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto grad_input = Tensor::zeros(orig_shape, grad_output->device, false, grad_output->dtype);
+        auto goc = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        size_t esz = goc->storage->element_size();
+        const char* sraw = reinterpret_cast<const char*>(goc->storage->get_cpu_ptr()) + goc->offset * esz;
+        char* draw = reinterpret_cast<char*>(grad_input->storage->get_cpu_ptr());
+        std::vector<int64_t> idx = read_indices_int64(saved_tensors.at(0));
+        std::vector<int64_t> dstrides = default_strides(orig_shape);
+        int64_t n = static_cast<int64_t>(goc->numel());
+        const std::vector<int64_t>& oshape = goc->shape;
+        int64_t dim_size = orig_shape[dim];
+        for (int64_t i = 0; i < n; ++i) {
+            auto out_idx = unravel_index(i, oshape);
+            int64_t ii = idx[out_idx[dim]];
+            if (ii < 0) ii += dim_size;
+            int64_t flat = 0;
+            for (size_t d = 0; d < oshape.size(); ++d) {
+                int64_t id = (static_cast<int64_t>(d) == dim) ? ii : out_idx[d];
+                flat += id * dstrides[d];
+            }
+            typed_add(draw + flat * esz, sraw + i * esz, goc->dtype);
+        }
+        return { grad_input };
+    }
+};
+
+class MaskedFillNode : public Node {
+public:
+    MaskedFillNode() : Node("MaskedFill") {}
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto goc = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+        size_t esz = goc->storage->element_size();
+        auto g = Tensor::create(goc->shape, goc->device, false, goc->dtype);
+        const char* sraw = reinterpret_cast<const char*>(goc->storage->get_cpu_ptr()) + goc->offset * esz;
+        char* draw = reinterpret_cast<char*>(g->storage->get_cpu_ptr());
+        std::memcpy(draw, sraw, goc->numel() * esz);
+        std::vector<float> mask_data = saved_tensors.at(0)->to_vector();
+        size_t n = std::min(mask_data.size(), goc->numel());
+        for (size_t i = 0; i < n; ++i) {
+            if (mask_data[i] != 0.0f) std::memset(draw + i * esz, 0, esz);
+        }
+        return { g };
+    }
+};
 }
 
 Tensor::CreatorWrapper& Tensor::CreatorWrapper::operator=(std::shared_ptr<Node> p) {
@@ -272,6 +416,10 @@ std::shared_ptr<Tensor> Tensor::create(const std::vector<int64_t>& shape, const 
 
 std::shared_ptr<Tensor> Tensor::from_vector(const std::vector<float>& data, const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
     auto tensor = create(shape, device, requires_grad, DataType::FP32);
+    if (data.size() != static_cast<size_t>(tensor->numel())) {
+        throw std::runtime_error("[litetorch Error] from_vector: data size " + std::to_string(data.size()) +
+                                 " does not match tensor numel " + std::to_string(tensor->numel()));
+    }
     if (tensor->device.type == DeviceType::GPU) {
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
         if (gpu_ptr) {
@@ -304,10 +452,10 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
         if (!kernel) {
             throw std::runtime_error("[litetorch Error] zeros(): fill_zero kernel not available");
         }
-        int size_val = static_cast<int>(tensor->numel());
-        int off_val = static_cast<int>(tensor->offset);
+        int64_t size_val = tensor->numel();
+        int64_t off_val = tensor->offset;
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu && tensor->gpu_data()) {
@@ -350,6 +498,133 @@ static uint16_t float_to_half(float f);
 static float half_to_float(uint16_t h);
 static uint16_t float_to_bf16(float f);
 static float bf16_to_float(uint16_t h);
+
+bool is_integer_dtype(DataType dt) {
+    switch (dt) {
+        case DataType::BOOL:
+        case DataType::UINT8:
+        case DataType::INT8:
+        case DataType::INT16:
+        case DataType::INT32:
+        case DataType::INT64:
+        case DataType::INT4:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool is_float_dtype(DataType dt) {
+    switch (dt) {
+        case DataType::FP64:
+        case DataType::FP32:
+        case DataType::FP16:
+        case DataType::BF16:
+            return true;
+        default:
+            return false;
+    }
+}
+
+namespace {
+bool is_quantized_dtype(DataType dt) {
+    switch (dt) {
+        case DataType::INT4:
+        case DataType::FP8_E4M3:
+        case DataType::FP8_E5M2:
+        case DataType::NF4:
+        case DataType::FP4_E2M1:
+            return true;
+        default:
+            return false;
+    }
+}
+int int_promote_index(DataType dt) {
+    switch (dt) {
+        case DataType::BOOL: return 0;
+        case DataType::UINT8: return 1;
+        case DataType::INT8: return 2;
+        case DataType::INT16: return 3;
+        case DataType::INT32: return 4;
+        case DataType::INT64: return 5;
+        default: return -1;
+    }
+}
+}
+
+DataType promote_types(DataType a, DataType b) {
+    if (a == b) return a;
+    if (is_quantized_dtype(a) || is_quantized_dtype(b)) return DataType::FP32;
+    if (a == DataType::BOOL) return b;
+    if (b == DataType::BOOL) return a;
+    bool fa = is_float_dtype(a);
+    bool fb = is_float_dtype(b);
+    if (fa && fb) {
+        if ((a == DataType::FP16 && b == DataType::BF16) ||
+            (a == DataType::BF16 && b == DataType::FP16))
+            return DataType::FP32;
+        int wa = (a == DataType::FP64) ? 3 : (a == DataType::FP32) ? 2 : 1;
+        int wb = (b == DataType::FP64) ? 3 : (b == DataType::FP32) ? 2 : 1;
+        return wa >= wb ? a : b;
+    }
+    if (fa != fb) return fa ? a : b;
+    static const DataType int_table[6][6] = {
+        {DataType::BOOL, DataType::UINT8, DataType::INT8, DataType::INT16, DataType::INT32, DataType::INT64},
+        {DataType::UINT8, DataType::UINT8, DataType::INT16, DataType::INT16, DataType::INT32, DataType::INT64},
+        {DataType::INT8, DataType::INT16, DataType::INT8, DataType::INT16, DataType::INT32, DataType::INT64},
+        {DataType::INT16, DataType::INT16, DataType::INT16, DataType::INT16, DataType::INT32, DataType::INT64},
+        {DataType::INT32, DataType::INT32, DataType::INT32, DataType::INT32, DataType::INT32, DataType::INT64},
+        {DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64},
+    };
+    int ia = int_promote_index(a);
+    int ib = int_promote_index(b);
+    if (ia < 0 || ib < 0) return DataType::FP32;
+    return int_table[ia][ib];
+}
+
+namespace {
+
+void typed_add(char* dst, const char* src, DataType dtype) {
+    switch (dtype) {
+        case DataType::FP32:
+            *reinterpret_cast<float*>(dst) += *reinterpret_cast<const float*>(src);
+            return;
+        case DataType::FP64:
+            *reinterpret_cast<double*>(dst) += *reinterpret_cast<const double*>(src);
+            return;
+        case DataType::INT32:
+            *reinterpret_cast<int32_t*>(dst) += *reinterpret_cast<const int32_t*>(src);
+            return;
+        case DataType::INT64:
+            *reinterpret_cast<int64_t*>(dst) += *reinterpret_cast<const int64_t*>(src);
+            return;
+        case DataType::INT16:
+            *reinterpret_cast<int16_t*>(dst) += *reinterpret_cast<const int16_t*>(src);
+            return;
+        case DataType::INT8:
+            *reinterpret_cast<int8_t*>(dst) += *reinterpret_cast<const int8_t*>(src);
+            return;
+        case DataType::UINT8:
+            *reinterpret_cast<uint8_t*>(dst) += *reinterpret_cast<const uint8_t*>(src);
+            return;
+        case DataType::FP16: {
+            uint16_t d = *reinterpret_cast<uint16_t*>(dst);
+            uint16_t s = *reinterpret_cast<const uint16_t*>(src);
+            *reinterpret_cast<uint16_t*>(dst) = float_to_half(half_to_float(d) + half_to_float(s));
+            return;
+        }
+        case DataType::BF16: {
+            uint16_t d = *reinterpret_cast<uint16_t*>(dst);
+            uint16_t s = *reinterpret_cast<const uint16_t*>(src);
+            *reinterpret_cast<uint16_t*>(dst) = float_to_bf16(bf16_to_float(d) + bf16_to_float(s));
+            return;
+        }
+        default:
+            throw std::runtime_error("[litetorch Error] strided backward: unsupported dtype for grad accumulation");
+    }
+}
+
+}
 
 std::shared_ptr<Tensor> Tensor::ones(const std::vector<int64_t>& shape, const Device& device, bool requires_grad, DataType dtype) {
     if (dtype != DataType::FP32 && dtype != DataType::FP16) {
@@ -452,6 +727,15 @@ std::shared_ptr<Tensor> Tensor::masked_fill(std::shared_ptr<Tensor> mask, float 
         float* cpu_ptr = out->storage->get_cpu_ptr();
         std::copy(data.begin(), data.end(), cpu_ptr + out->offset);
     }
+    if (requires_grad && Autograd::is_grad_enabled()) {
+        auto node = std::make_shared<MaskedFillNode>();
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->saved_tensors.push_back(mask);
+        node->saved_versions.push_back(mask->_version());
+        node->output = out;
+        out->creator = node;
+    }
     return out;
 }
 
@@ -466,6 +750,12 @@ std::shared_ptr<Tensor> Tensor::slice(int64_t dim, int64_t start, int64_t end, i
     if (end < 0) end += dim_size;
     start = std::max<int64_t>(0, std::min(start, dim_size));
     end = std::max<int64_t>(0, std::min(end, dim_size));
+    if (step == 0) {
+        throw std::runtime_error("[litetorch Error] slice step cannot be zero");
+    }
+    if (step < 0) {
+        throw std::runtime_error("[litetorch Error] slice with negative step is not supported");
+    }
     int64_t new_size = (end - start + step - 1) / step;
     if (new_size < 0) new_size = 0;
     std::vector<int64_t> new_shape = shape;
@@ -475,6 +765,13 @@ std::shared_ptr<Tensor> Tensor::slice(int64_t dim, int64_t start, int64_t end, i
     int64_t new_offset = offset + start * strides[dim];
     auto out = std::make_shared<Tensor>(storage, new_shape, new_strides, new_offset, device, requires_grad);
     out->dtype = dtype;
+    if (requires_grad && Autograd::is_grad_enabled()) {
+        auto node = std::make_shared<SliceNode>(shape, dim, start, step);
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->output = out;
+        out->creator = node;
+    }
     return out;
 }
 
@@ -520,8 +817,17 @@ std::shared_ptr<Tensor> Tensor::index_select(int64_t dim, std::shared_ptr<Tensor
         float* cpu_ptr = out->storage->get_cpu_ptr();
         std::copy(out_data.begin(), out_data.end(), cpu_ptr);
     }
+    if (requires_grad && Autograd::is_grad_enabled()) {
+        auto node = std::make_shared<IndexSelectNode>(shape, dim);
+        node->inputs = { {shared_from_this(), true} };
+        node->next_nodes = { creator };
+        node->saved_tensors.push_back(indices);
+        node->saved_versions.push_back(indices->_version());
+        node->output = out;
+        out->creator = node;
+    }
     if (dtype != DataType::FP32) {
-        return out->cast(dtype);
+        return Ops::cast(out, dtype);
     }
     return out;
 }
@@ -556,6 +862,9 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
         int shape_arr[8] = {0};
         int strides_arr[8] = {0};
         for (size_t i = 0; i < shape.size() && i < 8; ++i) {
+            if (shape[i] > (int64_t)std::numeric_limits<int>::max() || shape[i] < (int64_t)std::numeric_limits<int>::min() ||
+                strides[i] > (int64_t)std::numeric_limits<int>::max() || strides[i] < (int64_t)std::numeric_limits<int>::min())
+                throw std::runtime_error("[litetorch Error] GPU kernel launch: shape/stride exceeds INT32 range");
             shape_arr[i] = static_cast<int>(shape[i]);
             strides_arr[i] = static_cast<int>(strides[i]);
         }
@@ -569,13 +878,13 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
         
         cl_mem src_mem = gpu_data();
         cl_mem dst_mem = out->gpu_data();
-        int src_off = offset;
-        int dst_off = out->offset;
-        int size_val = static_cast<int>(num_elements);
+        int64_t src_off = offset;
+        int64_t dst_off = out->offset;
+        int64_t size_val = num_elements;
         
         rt_gpu_launch(kernel, {num_elements}, {},
             {&src_mem, &src_off, &dst_mem, &dst_off, &ndims_val, &shape_arr, &strides_arr, &size_val},
-            {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(shape_arr), sizeof(strides_arr), sizeof(int)});
+            {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int), sizeof(shape_arr), sizeof(strides_arr), sizeof(int64_t)});
     } else {
         float* src_ptr = data_ptr();
         float* dst_ptr = out->data_ptr();
@@ -800,7 +1109,7 @@ std::shared_ptr<Tensor> Tensor::clone() {
     size_t elem_sz = storage->element_size();
     if (is_contiguous()) {
         if (device.type == DeviceType::CPU) {
-            std::memcpy(cloned->data_ptr(), data_ptr(), numel() * elem_sz);
+            std::memcpy(cloned->raw_data_ptr(), raw_data_ptr(), numel() * elem_sz);
         } else {
             cl_mem src_gpu = gpu_data();
             cl_mem dst_gpu = cloned->gpu_data();
@@ -808,6 +1117,7 @@ std::shared_ptr<Tensor> Tensor::clone() {
         }
     } else {
         auto cont = contiguous();
+        NoGradGuard ng;
         cloned->copy_(cont);
     }
 
@@ -853,10 +1163,18 @@ std::shared_ptr<Tensor> Tensor::as_strided(const std::vector<int64_t>& new_shape
     if (new_strides.size() != new_shape.size()) {
         throw std::runtime_error("[litetorch Error] Strides rank mismatch in as_strided");
     }
+    int64_t lo = offset, hi = offset;
+    for (size_t d = 0; d < new_shape.size(); ++d) {
+        int64_t span = (new_shape[d] - 1) * new_strides[d];
+        if (span < 0) lo += span; else hi += span;
+    }
+    if (lo < 0 || hi >= static_cast<int64_t>(storage->size)) {
+        throw std::out_of_range("[litetorch Error] as_strided: (shape, strides, offset) access out of storage bounds");
+    }
 
     auto out = std::make_shared<Tensor>(storage, new_shape, new_strides, offset, device, requires_grad);
-    if (requires_grad) {
-        auto node = std::make_shared<ViewNode>(shape);
+    if (requires_grad && Autograd::is_grad_enabled()) {
+        auto node = std::make_shared<AsStridedNode>(shape, strides, offset, new_shape, new_strides, offset, storage->size);
         node->inputs = { {shared_from_this(), true} };
         node->next_nodes = { creator };
         node->output = out;
@@ -972,12 +1290,23 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> Tensor::max(int64_t 
 }
 
 float* Tensor::data_ptr() {
-    size_t esz = storage->element_size();
-    if (esz == sizeof(float)) {
-        return storage->get_cpu_ptr() + offset;
+    if (dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] data_ptr(): tensor dtype is not FP32; use raw_data_ptr() for byte-level access");
     }
-    char* base = reinterpret_cast<char*>(storage->get_cpu_ptr());
-    return reinterpret_cast<float*>(base + offset * esz);
+    return storage->get_cpu_ptr() + offset;
+}
+
+void* Tensor::raw_data_ptr() {
+    size_t esz = storage->element_size();
+    return reinterpret_cast<char*>(storage->get_cpu_ptr()) + offset * esz;
+}
+
+void Tensor::_check_inplace(const char* op) const {
+    if (requires_grad && !creator && Autograd::is_grad_enabled()) {
+        std::ostringstream oss;
+        oss << "[litetorch Error] " << op << ": a leaf Tensor that requires grad is being used in an in-place operation";
+        throw std::runtime_error(oss.str());
+    }
 }
 
 cl_mem Tensor::gpu_data() {
@@ -985,9 +1314,11 @@ cl_mem Tensor::gpu_data() {
 }
 
 void Tensor::copy_(std::shared_ptr<Tensor> src) {
+    _check_inplace("copy_");
     if (shape != src->shape) {
         throw std::runtime_error("[litetorch Error] Shape mismatch in copy_");
     }
+    _bump_version();
     std::shared_ptr<Tensor> src_cont = src->is_contiguous() ? src : src->contiguous();
     if (src_cont->device != device) {
         src_cont = src_cont->to(device);
@@ -1008,6 +1339,9 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
             int shape_arr[8] = {0};
             int strides_arr[8] = {0};
             for (size_t i = 0; i < shape.size() && i < 8; ++i) {
+                if (shape[i] > (int64_t)std::numeric_limits<int>::max() || shape[i] < (int64_t)std::numeric_limits<int>::min() ||
+                    strides[i] > (int64_t)std::numeric_limits<int>::max() || strides[i] < (int64_t)std::numeric_limits<int>::min())
+                    throw std::runtime_error("[litetorch Error] GPU kernel launch: shape/stride exceeds INT32 range");
                 shape_arr[i] = static_cast<int>(shape[i]);
                 strides_arr[i] = static_cast<int>(strides[i]);
             }
@@ -1020,13 +1354,13 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
             }
             cl_mem src_mem = src_cont->gpu_data();
             cl_mem dst_mem = gpu_data();
-            int src_off = src_cont->offset;
-            int dst_off = offset;
-            int size_val = static_cast<int>(num_elements);
+            int64_t src_off = src_cont->offset;
+            int64_t dst_off = offset;
+            int64_t size_val = num_elements;
 
             rt_gpu_launch(kernel, {num_elements}, {},
                 {&src_mem, &src_off, &dst_mem, &dst_off, &ndims_val, &shape_arr, &strides_arr, &size_val},
-                {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(shape_arr), sizeof(strides_arr), sizeof(int)});
+                {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int), sizeof(shape_arr), sizeof(strides_arr), sizeof(int64_t)});
             {
                 std::lock_guard<std::mutex> storage_lock(storage->storage_mutex_);
                 if (storage->cpu_data) {
@@ -1096,6 +1430,7 @@ void Tensor::copy_(std::shared_ptr<Tensor> src) {
 }
 
 void Tensor::add_(std::shared_ptr<Tensor> other) {
+    _check_inplace("add_");
     if (shape != other->shape) {
         throw std::runtime_error("[litetorch Error] Shape mismatch in add_");
     }
@@ -1105,13 +1440,14 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
     if (other->device != device) {
         other = other->to(device);
     }
+    _bump_version();
     StorageUseGuard guard({storage, other->storage});
     if (device.type == DeviceType::GPU) {
         bool fp16 = (dtype == DataType::FP16);
         if (dtype != DataType::FP32 && !fp16) {
             throw std::runtime_error("[litetorch Error] add_(): unsupported dtype on GPU");
         }
-        auto launch_add = [&](cl_mem a_mem, int a_off, cl_mem b_mem, int b_off, int size) {
+        auto launch_add = [&](cl_mem a_mem, int64_t a_off, cl_mem b_mem, int64_t b_off, int64_t size) {
             if (fp16) {
                 void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_fp16");
                 if (!kernel) {
@@ -1119,7 +1455,7 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
                 }
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &a_mem, &a_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             } else {
                 void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "elementwise_add_inplace");
                 if (!kernel) {
@@ -1127,11 +1463,11 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
                 }
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&a_mem, &a_off, &b_mem, &b_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         };
         if (is_contiguous() && other->is_contiguous()) {
-            launch_add(gpu_data(), static_cast<int>(offset), other->gpu_data(), static_cast<int>(other->offset), static_cast<int>(numel()));
+            launch_add(gpu_data(), offset, other->gpu_data(), other->offset, numel());
         } else if (is_contiguous()) {
             auto other_cont = other->contiguous();
             launch_add(gpu_data(), static_cast<int>(offset), other_cont->gpu_data(), static_cast<int>(other_cont->offset), static_cast<int>(numel()));
@@ -1174,6 +1510,12 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
                 }
                 case DataType::INT32:
                     reinterpret_cast<int32_t*>(a_raw)[a_idx] += reinterpret_cast<const int32_t*>(b_raw)[b_idx];
+                    break;
+                case DataType::INT64:
+                    reinterpret_cast<int64_t*>(a_raw)[a_idx] += reinterpret_cast<const int64_t*>(b_raw)[b_idx];
+                    break;
+                case DataType::UINT8:
+                    reinterpret_cast<uint8_t*>(a_raw)[a_idx] += reinterpret_cast<const uint8_t*>(b_raw)[b_idx];
                     break;
                 case DataType::INT16:
                     reinterpret_cast<int16_t*>(a_raw)[a_idx] += reinterpret_cast<const int16_t*>(b_raw)[b_idx];
@@ -1219,8 +1561,10 @@ void Tensor::add_(std::shared_ptr<Tensor> other) {
     }
 }
 
-void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph) {
-    if (!requires_grad) return;
+void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph, bool retain_graph) {
+    if (!requires_grad) {
+        throw std::runtime_error("[litetorch Error] backward(): tensor does not require grad");
+    }
     
     {
         std::lock_guard<std::mutex> lock(grad_mutex);
@@ -1243,13 +1587,12 @@ void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph) {
     }
 
     if (creator) {
-        Autograd::backward(shared_from_this(), create_graph);
+        Autograd::backward(shared_from_this(), create_graph, retain_graph);
     }
 }
 
 void Tensor::zero_grad() {
     grad = nullptr;
-    Autograd::active_tensors.clear();
 }
 
 float Tensor::item() const {
@@ -1445,6 +1788,32 @@ static float bf16_to_float(uint16_t h) {
     return *(float*)&x;
 }
 
+static int64_t read_int_scalar(const char* base, DataType dt, int64_t i) {
+    switch (dt) {
+        case DataType::BOOL: return reinterpret_cast<const uint8_t*>(base)[i] ? 1 : 0;
+        case DataType::UINT8: return reinterpret_cast<const uint8_t*>(base)[i];
+        case DataType::INT8: return reinterpret_cast<const int8_t*>(base)[i];
+        case DataType::INT4: return reinterpret_cast<const int8_t*>(base)[i];
+        case DataType::INT16: return reinterpret_cast<const int16_t*>(base)[i];
+        case DataType::INT32: return reinterpret_cast<const int32_t*>(base)[i];
+        case DataType::INT64: return reinterpret_cast<const int64_t*>(base)[i];
+        default: return 0;
+    }
+}
+
+static void write_int_scalar(char* base, DataType dt, int64_t i, int64_t v) {
+    switch (dt) {
+        case DataType::BOOL: reinterpret_cast<uint8_t*>(base)[i] = v ? 1 : 0; break;
+        case DataType::UINT8: reinterpret_cast<uint8_t*>(base)[i] = static_cast<uint8_t>(v); break;
+        case DataType::INT8: reinterpret_cast<int8_t*>(base)[i] = static_cast<int8_t>(v); break;
+        case DataType::INT4: reinterpret_cast<int8_t*>(base)[i] = static_cast<int8_t>(v); break;
+        case DataType::INT16: reinterpret_cast<int16_t*>(base)[i] = static_cast<int16_t>(v); break;
+        case DataType::INT32: reinterpret_cast<int32_t*>(base)[i] = static_cast<int32_t>(v); break;
+        case DataType::INT64: reinterpret_cast<int64_t*>(base)[i] = v; break;
+        default: break;
+    }
+}
+
 std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
     if (dtype == target_dtype) {
         return shared_from_this();
@@ -1507,13 +1876,13 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
                 auto self_c = is_contiguous() ? shared_from_this() : contiguous();
                 auto out = Tensor::create(shape, device, requires_grad, target_dtype);
                 cl_mem src_mem = self_c->gpu_data();
-                int src_off = self_c->offset;
+                int64_t src_off = self_c->offset;
                 cl_mem dst_mem = out->gpu_data();
-                int dst_off = out->offset;
-                int size = numel();
+                int64_t dst_off = out->offset;
+                int64_t size = numel();
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&src_mem, &src_off, &dst_mem, &dst_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
                 return out;
             }
         }
@@ -1615,6 +1984,54 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
         for (size_t i = 0; i < numel_; ++i) {
             dst[i] = (float)src[i];
         }
+    } else if (dtype == DataType::FP32 && target_dtype == DataType::INT64) {
+        float* src = (float*)src_cpu;
+        int64_t* dst = (int64_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (int64_t)src[i];
+        }
+    } else if (dtype == DataType::INT64 && target_dtype == DataType::FP32) {
+        int64_t* src = (int64_t*)src_cpu;
+        float* dst = (float*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (float)src[i];
+        }
+    } else if (dtype == DataType::FP64 && target_dtype == DataType::INT64) {
+        double* src = (double*)src_cpu;
+        int64_t* dst = (int64_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (int64_t)src[i];
+        }
+    } else if (dtype == DataType::INT64 && target_dtype == DataType::FP64) {
+        int64_t* src = (int64_t*)src_cpu;
+        double* dst = (double*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (double)src[i];
+        }
+    } else if (dtype == DataType::FP32 && target_dtype == DataType::UINT8) {
+        float* src = (float*)src_cpu;
+        uint8_t* dst = (uint8_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (uint8_t)std::max(0.0f, std::min(255.0f, src[i]));
+        }
+    } else if (dtype == DataType::UINT8 && target_dtype == DataType::FP32) {
+        uint8_t* src = (uint8_t*)src_cpu;
+        float* dst = (float*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = (float)src[i];
+        }
+    } else if (dtype == DataType::FP32 && target_dtype == DataType::BOOL) {
+        float* src = (float*)src_cpu;
+        uint8_t* dst = (uint8_t*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = src[i] != 0.0f ? 1 : 0;
+        }
+    } else if (dtype == DataType::BOOL && target_dtype == DataType::FP32) {
+        uint8_t* src = (uint8_t*)src_cpu;
+        float* dst = (float*)dst_cpu;
+        for (size_t i = 0; i < numel_; ++i) {
+            dst[i] = src[i] ? 1.0f : 0.0f;
+        }
     } else if (dtype == DataType::FP32 && target_dtype == DataType::INT8) {
         float* src = (float*)src_cpu;
         int8_t* dst = (int8_t*)dst_cpu;
@@ -1687,6 +2104,14 @@ std::shared_ptr<Tensor> Tensor::cast(DataType target_dtype) {
         for (size_t i = 0; i < numel_; ++i) {
             dst[i] = fp4_e2m1_to_float(src[i]);
         }
+    } else if (is_integer_dtype(dtype) && is_integer_dtype(target_dtype)) {
+        int64_t n = static_cast<int64_t>(numel_);
+        const char* sbase = reinterpret_cast<const char*>(src_cpu);
+        char* dbase = reinterpret_cast<char*>(dst_cpu);
+        for (int64_t i = 0; i < n; ++i) {
+            int64_t v = read_int_scalar(sbase, dtype, i);
+            write_int_scalar(dbase, target_dtype, i, v);
+        }
     } else {
         throw std::runtime_error("Unsupported cast operation");
     }
@@ -1713,7 +2138,7 @@ int64_t Tensor::dim() const {
 std::shared_ptr<Tensor> Tensor::half() { return to(DataType::FP16); }
 std::shared_ptr<Tensor> Tensor::to_float() { return to(DataType::FP32); }
 std::shared_ptr<Tensor> Tensor::to_double() { return to(DataType::FP64); }
-std::shared_ptr<Tensor> Tensor::to_long() { return to(DataType::INT32); }
+std::shared_ptr<Tensor> Tensor::to_long() { return to(DataType::INT64); }
 std::shared_ptr<Tensor> Tensor::to_int() { return to(DataType::INT32); }
 
 std::shared_ptr<Tensor> Tensor::type_as(std::shared_ptr<Tensor> other) {
@@ -1732,8 +2157,11 @@ double read_as_double(const char* base, DataType dtype, size_t i) {
         case DataType::FP16: return half_to_float(reinterpret_cast<const uint16_t*>(base)[i]);
         case DataType::BF16: return bf16_to_float(reinterpret_cast<const uint16_t*>(base)[i]);
         case DataType::INT32: return static_cast<double>(reinterpret_cast<const int32_t*>(base)[i]);
+        case DataType::INT64: return static_cast<double>(reinterpret_cast<const int64_t*>(base)[i]);
         case DataType::INT16: return static_cast<double>(reinterpret_cast<const int16_t*>(base)[i]);
         case DataType::INT8: return static_cast<double>(reinterpret_cast<const int8_t*>(base)[i]);
+        case DataType::UINT8: return static_cast<double>(reinterpret_cast<const uint8_t*>(base)[i]);
+        case DataType::BOOL: return reinterpret_cast<const uint8_t*>(base)[i] ? 1.0 : 0.0;
         default: throw std::runtime_error("[litetorch Error] flat_doubles(): unsupported dtype");
     }
 }

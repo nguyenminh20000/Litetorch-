@@ -41,6 +41,7 @@ struct FusionReport {
 std::shared_ptr<nn::Conv2d> fold_conv_bn(std::shared_ptr<nn::Conv2d> conv,
                                          std::shared_ptr<nn::BatchNorm2d> bn);
 FusionReport fuse_conv_bn(std::shared_ptr<nn::Sequential> seq);
+FusionReport detect_layernorm_candidates(std::shared_ptr<nn::Module> root);
 FusionReport detect_layernorm_fusion(std::shared_ptr<nn::Module> root);
 bool verify_linear_bias_fusion();
 

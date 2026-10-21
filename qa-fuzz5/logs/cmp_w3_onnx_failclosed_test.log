@@ -1,0 +1,31 @@
+PASS linear_traces_op_types
+PASS textproto_regression
+PASS identity_child_traces_as_real_op
+PASS residual_block_throws
+PASS residual_block_msg_loud
+PASS nested_sequential_throws
+PASS nested_sequential_msg_loud
+PASS custom_leaf_throws
+PASS custom_leaf_msg_loud
+PASS empty_sequential_throws
+PASS empty_sequential_msg_loud
+PASS branch_depth2_throws
+PASS branch_depth2_msg_loud
+PASS binary_nonempty
+PASS binary_ir_version_bytes
+PASS binary_parse_clean
+PASS binary_ir_version
+PASS binary_producer
+PASS binary_has_graph
+PASS binary_has_opset
+PASS binary_opset17
+PASS binary_graph_parse_clean
+PASS binary_gemm_transb_attr
+PASS binary_epsilon_bitexact
+PASS binary_initializer_bitexact
+PASS binary_dim_param
+PASS binary_deterministic
+PASS export_onnx_writes_binary
+PASS export_onnx_not_textproto
+----
+RESULT cmp_w3_onnx_failclosed_test: 29 passed, 0 failed

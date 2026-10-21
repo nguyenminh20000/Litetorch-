@@ -35,6 +35,16 @@ void write_vec(const std::shared_ptr<Tensor>& out, const std::vector<float>& dat
     }
 }
 
+void write_vec_i64(const std::shared_ptr<Tensor>& out, const std::vector<int64_t>& data) {
+    size_t bytes = data.size() * sizeof(int64_t);
+    if (out->device.type == DeviceType::GPU) {
+        rt_gpu_write(out->gpu_data(), bytes, data.data(), 0);
+    } else {
+        int64_t* dst = reinterpret_cast<int64_t*>(out->storage->get_cpu_ptr()) + out->offset;
+        std::copy(data.begin(), data.end(), dst);
+    }
+}
+
 std::vector<int64_t> bcast2(const std::vector<int64_t>& a, const std::vector<int64_t>& b) {
     size_t na = a.size(), nb = b.size();
     size_t n = std::max(na, nb);
@@ -247,6 +257,7 @@ std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { index };
+        node->saved_versions = {(index ? index->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -256,7 +267,7 @@ std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::
 
 static void argmax_impl(const std::vector<float>& data, const std::vector<int64_t>& shape,
                         int64_t dim, bool keepdim, bool want_min,
-                        std::vector<float>& out_vals, std::vector<float>& out_idx,
+                        std::vector<float>& out_vals, std::vector<int64_t>& out_idx,
                         std::vector<int64_t>& out_shape) {
     int64_t ndim = (int64_t)shape.size();
     auto in_strides = default_strides(shape);
@@ -270,7 +281,7 @@ static void argmax_impl(const std::vector<float>& data, const std::vector<int64_
     size_t n = 1;
     for (auto s : out_shape) n *= (size_t)s;
     out_vals.assign(n, 0.0f);
-    out_idx.assign(n, 0.0f);
+    out_idx.assign(n, 0);
     int64_t dim_size = shape[(size_t)dim];
     int64_t m = (int64_t)rdims.size();
     ThreadPool::get().parallel_for(0, (int64_t)n, [&](int64_t o) {
@@ -289,29 +300,31 @@ static void argmax_impl(const std::vector<float>& data, const std::vector<int64_
             if ((want_min && v < best) || (!want_min && v > best)) { best = v; bi = k; }
         }
         out_vals[(size_t)o] = best;
-        out_idx[(size_t)o] = (float)bi;
+        out_idx[(size_t)o] = bi;
     });
 }
 
 std::shared_ptr<Tensor> argmax(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
     int64_t d = norm_dim(dim, (int64_t)a->shape.size());
     std::vector<float> data = a->to_vector();
-    std::vector<float> vals, idx;
+    std::vector<float> vals;
+    std::vector<int64_t> idx;
     std::vector<int64_t> out_shape;
     argmax_impl(data, a->shape, d, keepdim, false, vals, idx, out_shape);
-    auto out = Tensor::create(out_shape, a->device);
-    write_vec(out, idx);
+    auto out = Tensor::create(out_shape, a->device, false, DataType::INT64);
+    write_vec_i64(out, idx);
     return out;
 }
 
 std::shared_ptr<Tensor> argmin(std::shared_ptr<Tensor> a, int64_t dim, bool keepdim) {
     int64_t d = norm_dim(dim, (int64_t)a->shape.size());
     std::vector<float> data = a->to_vector();
-    std::vector<float> vals, idx;
+    std::vector<float> vals;
+    std::vector<int64_t> idx;
     std::vector<int64_t> out_shape;
     argmax_impl(data, a->shape, d, keepdim, true, vals, idx, out_shape);
-    auto out = Tensor::create(out_shape, a->device);
-    write_vec(out, idx);
+    auto out = Tensor::create(out_shape, a->device, false, DataType::INT64);
+    write_vec_i64(out, idx);
     return out;
 }
 
@@ -328,7 +341,8 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> topk(std::shared_ptr
     out_shape[(size_t)d] = k;
     size_t n = 1;
     for (auto s : out_shape) n *= (size_t)s;
-    std::vector<float> out_vals(n), out_idx(n);
+    std::vector<float> out_vals(n);
+    std::vector<int64_t> out_idx(n);
     int64_t m = (int64_t)rdims.size();
     for (int64_t o = 0; o < (int64_t)n / k; ++o) {
         int64_t rem = o;
@@ -351,13 +365,13 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> topk(std::shared_ptr
         for (int64_t j = 0; j < k; ++j) {
             int64_t kk = order[(size_t)j];
             out_vals[(size_t)(o * k + j)] = data[(size_t)(base + kk * in_strides[(size_t)d])];
-            out_idx[(size_t)(o * k + j)] = (float)kk;
+            out_idx[(size_t)(o * k + j)] = kk;
         }
     }
     auto vals_fp32 = Tensor::create(out_shape, a->device);
-    auto idx = Tensor::create(out_shape, a->device);
+    auto idx = Tensor::create(out_shape, a->device, false, DataType::INT64);
     write_vec(vals_fp32, out_vals);
-    write_vec(idx, out_idx);
+    write_vec_i64(idx, out_idx);
     auto vals = (a->dtype == DataType::FP32) ? vals_fp32 : vals_fp32->cast(a->dtype);
     return { vals, idx };
 }
@@ -451,9 +465,78 @@ public:
     }
 };
 
+namespace {
+
+std::shared_ptr<Tensor> densify_int64(std::shared_ptr<Tensor> t) {
+    auto out = Tensor::create(t->shape, Device(DeviceType::CPU, 0), false, DataType::INT64);
+    const size_t esz = 8;
+    t->storage->ensure_cpu();
+    const char* src_base = reinterpret_cast<const char*>(t->storage->get_cpu_ptr()) + t->offset * esz;
+    char* dst_base = reinterpret_cast<char*>(out->storage->get_cpu_ptr());
+    int64_t nd = (int64_t)t->shape.size();
+    int64_t n = t->numel();
+    for (int64_t lin = 0; lin < n; ++lin) {
+        int64_t rem = lin;
+        int64_t off = 0;
+        for (int64_t d = nd - 1; d >= 0; --d) {
+            int64_t c = rem % t->shape[(size_t)d];
+            rem /= t->shape[(size_t)d];
+            off += c * t->strides[(size_t)d];
+        }
+        std::memcpy(dst_base + lin * esz, src_base + off * esz, esz);
+    }
+    return out;
+}
+
+}
+
 std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     unify_device(a, b);
     if (cond->device != a->device) cond = cond->to(a->device);
+    DataType out_dtype = promote_types(a->dtype, b->dtype);
+    if (is_integer_dtype(out_dtype)) {
+        auto ai = cast(a, DataType::INT64);
+        auto bi = cast(b, DataType::INT64);
+        if (!ai->is_contiguous() || ai->offset != 0) ai = densify_int64(ai);
+        if (!bi->is_contiguous() || bi->offset != 0) bi = densify_int64(bi);
+        std::vector<float> cv = cond->to_vector();
+        const int64_t* av = reinterpret_cast<const int64_t*>(ai->raw_data_ptr());
+        const int64_t* bv = reinterpret_cast<const int64_t*>(bi->raw_data_ptr());
+        auto c_strides = default_strides(cond->shape);
+        auto a_strides = default_strides(ai->shape);
+        auto b_strides = default_strides(bi->shape);
+        std::vector<int64_t> out_shape = bcast2(bcast2(cond->shape, ai->shape), bi->shape);
+        int64_t ndim = (int64_t)out_shape.size();
+        size_t n = 1;
+        for (auto s : out_shape) n *= (size_t)s;
+        std::vector<int64_t> out_data(n);
+        std::vector<int64_t> coords((size_t)ndim);
+        for (size_t i = 0; i < n; ++i) {
+            size_t rem = i;
+            for (int64_t dd = ndim - 1; dd >= 0; --dd) {
+                coords[(size_t)dd] = (int64_t)(rem % (size_t)out_shape[(size_t)dd]);
+                rem /= (size_t)out_shape[(size_t)dd];
+            }
+            float c = cv[(size_t)bcast_index(cond->shape, c_strides, ndim, coords.data())];
+            out_data[i] = (c != 0.0f)
+                ? av[(size_t)bcast_index(ai->shape, a_strides, ndim, coords.data())]
+                : bv[(size_t)bcast_index(bi->shape, b_strides, ndim, coords.data())];
+        }
+        auto out_i64 = Tensor::create(out_shape, a->device, false, DataType::INT64);
+        write_vec_i64(out_i64, out_data);
+        auto out = cast(out_i64, out_dtype);
+        if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
+            auto node = std::make_shared<WhereNode>(ai->shape, bi->shape, out_shape, ai->dtype, bi->dtype);
+            node->inputs = { {ai, ai->requires_grad}, {bi, bi->requires_grad} };
+            node->next_nodes = { ai->creator, bi->creator };
+            node->saved_tensors = { cond };
+            node->saved_versions = {(cond ? cond->_version() : 0)};
+            node->output = out;
+            out->creator = node;
+            out->requires_grad = true;
+        }
+        return out;
+    }
     std::vector<float> cv = cond->to_vector();
     std::vector<float> av = a->to_vector();
     std::vector<float> bv = b->to_vector();
@@ -477,7 +560,6 @@ std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tens
             ? av[(size_t)bcast_index(a->shape, a_strides, ndim, coords.data())]
             : bv[(size_t)bcast_index(b->shape, b_strides, ndim, coords.data())];
     }
-    DataType out_dtype = (a->dtype == b->dtype) ? a->dtype : DataType::FP32;
     auto out_fp32 = Tensor::create(out_shape, a->device);
     write_vec(out_fp32, out_data);
     auto out = (out_dtype == DataType::FP32) ? out_fp32 : out_fp32->cast(out_dtype);
@@ -486,6 +568,7 @@ std::shared_ptr<Tensor> where(std::shared_ptr<Tensor> cond, std::shared_ptr<Tens
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
         node->saved_tensors = { cond };
+        node->saved_versions = {(cond ? cond->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -548,6 +631,7 @@ std::shared_ptr<Tensor> log_softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { out };
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -595,6 +679,7 @@ std::shared_ptr<Tensor> silu(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { s, xf };
+        node->saved_versions = {(s ? s->_version() : 0), (xf ? xf->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -833,7 +918,8 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> sort_impl(
     auto in_strides = default_strides(a_c->shape);
     int64_t dim_size = a_c->shape[(size_t)d];
     size_t n = data.size();
-    std::vector<float> out_vals(n), out_idx(n);
+    std::vector<float> out_vals(n);
+    std::vector<int64_t> out_idx(n);
     int64_t slices = (int64_t)n / dim_size;
     std::vector<int64_t> rdims;
     for (int64_t i = 0; i < ndim; ++i) if (i != d) rdims.push_back(i);
@@ -857,18 +943,19 @@ std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> sort_impl(
         int64_t dstride = in_strides[(size_t)d];
         for (int64_t k = 0; k < dim_size; ++k) {
             out_vals[(size_t)(base + k * dstride)] = data[(size_t)(base + order[(size_t)k] * dstride)];
-            out_idx[(size_t)(base + k * dstride)] = (float)order[(size_t)k];
+            out_idx[(size_t)(base + k * dstride)] = order[(size_t)k];
         }
     });
     auto vals = Tensor::create(a_c->shape, a_c->device);
-    auto idx = Tensor::create(a_c->shape, a_c->device);
+    auto idx = Tensor::create(a_c->shape, a_c->device, false, DataType::INT64);
     write_vec(vals, out_vals);
-    write_vec(idx, out_idx);
+    write_vec_i64(idx, out_idx);
     if (Autograd::is_grad_enabled() && a->requires_grad) {
         auto node = std::make_shared<SortNode>(d, idx, a->shape);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { idx };
+        node->saved_versions = {(idx ? idx->_version() : 0)};
         node->output = vals;
         vals->creator = node;
         vals->requires_grad = true;
@@ -1059,6 +1146,7 @@ std::shared_ptr<Tensor> scatter_impl(std::shared_ptr<Tensor> input, int64_t dim,
         node->inputs = { {input, input->requires_grad}, {src, src->requires_grad} };
         node->next_nodes = { input->creator, src->creator };
         node->saved_tensors = { index };
+        node->saved_versions = {(index ? index->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

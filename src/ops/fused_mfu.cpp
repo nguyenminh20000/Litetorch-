@@ -43,7 +43,7 @@ std::shared_ptr<Tensor> fused_swiglu(std::shared_ptr<Tensor> gate, std::shared_p
     if (gate->device != up->device) {
         throw std::runtime_error("[litetorch Error] fused_swiglu: gate and up must be on the same device");
     }
-    DataType out_dtype = (gate->dtype == up->dtype) ? gate->dtype : DataType::FP32;
+    DataType out_dtype = promote_types(gate->dtype, up->dtype);
     auto gc = gate->is_contiguous() ? gate : gate->contiguous();
     auto uc = up->is_contiguous() ? up : up->contiguous();
     auto gf = (gc->dtype == DataType::FP32) ? gc : cast(gc, DataType::FP32);
@@ -69,6 +69,7 @@ std::shared_ptr<Tensor> fused_swiglu(std::shared_ptr<Tensor> gate, std::shared_p
         node->inputs = { {gate, gate->requires_grad}, {up, up->requires_grad} };
         node->next_nodes = { gate->creator, up->creator };
         node->saved_tensors = { gfc, ufc };
+        node->saved_versions = {(gfc ? gfc->_version() : 0), (ufc ? ufc->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

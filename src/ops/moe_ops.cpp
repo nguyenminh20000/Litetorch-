@@ -61,7 +61,8 @@ public:
             auto cpu_in = c32(input);
             auto cpu_gw = c32(gate_weight);
             auto cpu_probs = c32(probs);
-            auto cpu_indices = c32(indices);
+            auto cpu_indices = indices->to(cpu, DataType::INT64);
+            if (!cpu_indices->is_contiguous()) cpu_indices = cpu_indices->contiguous();
 
             auto cpu_gin = Tensor::create(grad_input->shape, cpu, false, DataType::FP32);
             auto cpu_ggw = Tensor::create(grad_gate_weight->shape, cpu, false, DataType::FP32);
@@ -70,7 +71,7 @@ public:
             float* in_ptr = cpu_in->data_ptr();
             float* gw_ptr = cpu_gw->data_ptr();
             float* p_ptr = cpu_probs->data_ptr();
-            float* idx_ptr = cpu_indices->data_ptr();
+            int64_t* idx_ptr = reinterpret_cast<int64_t*>(cpu_indices->raw_data_ptr());
             float* gi_ptr = cpu_gin->data_ptr();
             float* ggw_ptr = cpu_ggw->data_ptr();
 
@@ -100,7 +101,7 @@ public:
                 }
                 float T = 0.0f;
                 for (int k = 0; k < top_k; ++k) {
-                    int e = static_cast<int>(idx_ptr[i * top_k + k]);
+                    int64_t e = idx_ptr[i * top_k + k];
                     T += S[i * E + e];
                 }
                 float sum_dp_p = 0.0f;
@@ -108,7 +109,7 @@ public:
                     sum_dp_p += d_out[i * top_k + k] * p_ptr[i * top_k + k];
                 }
                 for (int k = 0; k < top_k; ++k) {
-                    int e = static_cast<int>(idx_ptr[i * top_k + k]);
+                    int64_t e = idx_ptr[i * top_k + k];
                     dS[i * E + e] = (d_out[i * top_k + k] - sum_dp_p) / (T + 1e-9f);
                 }
             }
@@ -168,7 +169,7 @@ std::shared_ptr<Tensor> moe_gate(
 
     auto logits = Ops::matmul(input, gate_weight->transpose(0, 1));
     auto out_probs = Tensor::create({N, top_k}, input->device, false);
-    indices_out = Tensor::create({N, top_k}, input->device, false);
+    indices_out = Tensor::create({N, top_k}, input->device, false, DataType::INT64);
 
     bool run_gpu = false;
     if (top_k <= 8 && input->device.type == DeviceType::GPU) {
@@ -207,7 +208,7 @@ std::shared_ptr<Tensor> moe_gate(
         auto cpu_out_probs = out_probs->to(Device(DeviceType::CPU, 0));
         auto cpu_indices_out = indices_out->to(Device(DeviceType::CPU, 0));
         float* op_ptr = cpu_out_probs->data_ptr();
-        float* io_ptr = cpu_indices_out->data_ptr();
+        int64_t* io_ptr = reinterpret_cast<int64_t*>(cpu_indices_out->raw_data_ptr());
 
         for (int64_t i = 0; i < N; ++i) {
             std::vector<std::pair<float, int>> exp_probs;
@@ -223,7 +224,7 @@ std::shared_ptr<Tensor> moe_gate(
             }
             for (int k = 0; k < top_k; ++k) {
                 op_ptr[i * top_k + k] = exp_probs[k].first / (sum_top_k + 1e-9f);
-                io_ptr[i * top_k + k] = static_cast<float>(exp_probs[k].second);
+                io_ptr[i * top_k + k] = exp_probs[k].second;
             }
         }
         out_probs->copy_(cpu_out_probs);
@@ -237,6 +238,7 @@ std::shared_ptr<Tensor> moe_gate(
         node->next_nodes = {input->creator, gate_weight->creator};
         node->inputs = {{input, input->requires_grad}, {gate_weight, gate_weight->requires_grad}};
         node->saved_tensors = {input, gate_weight, out_probs};
+        node->saved_versions = {(input ? input->_version() : 0), (gate_weight ? gate_weight->_version() : 0), (out_probs ? out_probs->_version() : 0)};
         out_probs->creator = node;
         node->output = out_probs;
     }

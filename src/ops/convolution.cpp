@@ -5,6 +5,7 @@
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
 #include "litetorch/amp.h"
+#include "autocast_policy.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
@@ -39,19 +41,6 @@ inline Fn cached_native_kernel(const char* name) {
     static void* k = get_native_kernel_cached(name);
     return reinterpret_cast<Fn>(k);
 }
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
 
 void im2col_cpu(const float* in_data, int C, int H, int W,
                 int KH, int KW, int padding, int stride,
@@ -756,7 +745,7 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
         bias = bias->to(input->device);
     }
 
-    if (amp::AutocastGuard::is_enabled()) {
+    if (amp::autocast_fp16_eligible("conv2d")) {
         auto cast_dtype = amp::AutocastGuard::get_dtype();
         if (input->dtype != cast_dtype) {
             input = Ops::cast(input, cast_dtype);
@@ -1006,13 +995,16 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
         node->saved_tensors = { input, weight };
+        node->saved_versions = {(input ? input->_version() : 0), (weight ? weight->_version() : 0)};
         if (bias) {
             node->inputs.push_back({bias, bias->requires_grad});
             node->next_nodes.push_back(bias->creator);
             node->saved_tensors.push_back(bias);
+            node->saved_versions.push_back(bias->_version());
         }
         if (apply_relu) {
             node->saved_tensors.push_back(out);
+            node->saved_versions.push_back(out->_version());
         }
         node->output = out;
         out->creator = node;
@@ -1154,10 +1146,12 @@ std::shared_ptr<Tensor> conv3d(std::shared_ptr<Tensor> input, std::shared_ptr<Te
         node->inputs = { {input, input->requires_grad}, {weight, weight->requires_grad} };
         node->next_nodes = { input->creator, weight->creator };
         node->saved_tensors = { input, weight };
+        node->saved_versions = {(input ? input->_version() : 0), (weight ? weight->_version() : 0)};
         if (bias) {
             node->inputs.push_back({bias, bias->requires_grad});
             node->next_nodes.push_back(bias->creator);
             node->saved_tensors.push_back(bias);
+            node->saved_versions.push_back(bias->_version());
         }
         node->output = out;
         out->creator = node;

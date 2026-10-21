@@ -1,0 +1,107 @@
+[rank 0] ok pure_tp_allreduce_sum
+[rank 1] ok pure_tp_allreduce_sum
+[rank 0] ok pure_tp_allgather
+[rank 1] ok pure_tp_allgather
+[rank 1] ok pure_tp_allgather_autograd_fwd shape
+[rank 1] ok pure_tp_allgather_autograd_fwd
+[rank 0] ok pure_tp_allgather_autograd_fwd shape
+[rank 0] ok pure_tp_allgather_autograd_fwd
+[rank 1] ok pure_tp_allgather_autograd_bwd
+[rank 0] ok pure_tp_allgather_autograd_bwd
+[rank 0] ok pure_tp_allreduce_autograd_bwd_identity
+[rank 1] ok pure_tp_allreduce_autograd_bwd_identity
+[rank 0] phase 0 PASS
+[rank 1] phase 0 PASS
+PHASE 0 (world=2) ALL RANKS DONE
+[rank 3] ok hybrid_tp_allreduce_sum
+[rank 0] ok hybrid_tp_allreduce_sum
+[rank 2] ok hybrid_tp_allreduce_sum
+[rank 1] ok hybrid_tp_allreduce_sum
+[rank 0] ok hybrid_tp_allreduce_sum_repeat
+[rank 3] ok hybrid_tp_allreduce_sum_repeat
+[rank 2] ok hybrid_tp_allreduce_sum_repeat
+[rank 1] ok hybrid_tp_allreduce_sum_repeat
+[rank 2] ok hybrid_tp_allgather
+[rank 3] ok hybrid_tp_allgather
+[rank 0] ok hybrid_tp_allgather
+[rank 1] ok hybrid_tp_allgather
+[rank 2] ok hybrid_allgather_autograd_fwd shape
+[rank 3] ok hybrid_allgather_autograd_fwd shape
+[rank 2] ok hybrid_allgather_autograd_fwd
+[rank 3] ok hybrid_allgather_autograd_fwd
+[rank 1] ok hybrid_allgather_autograd_fwd shape
+[rank 1] ok hybrid_allgather_autograd_fwd
+[rank 0] ok hybrid_allgather_autograd_fwd shape
+[rank 0] ok hybrid_allgather_autograd_fwd
+[rank 0] ok hybrid_allgather_autograd_bwd
+[rank 1] ok hybrid_allgather_autograd_bwd
+[rank 3] ok hybrid_allgather_autograd_bwd
+[rank 2] ok hybrid_allgather_autograd_bwd
+[rank 0] ok hybrid_world_allreduce_untouched
+[rank 1] ok hybrid_world_allreduce_untouched
+[rank 3] ok hybrid_world_allreduce_untouched
+[rank 1] phase 1 PASS
+[rank 3] phase 1 PASS
+[rank 0] phase 1 PASS
+[rank 2] ok hybrid_world_allreduce_untouched
+[rank 2] phase 1 PASS
+PHASE 1 (world=4) ALL RANKS DONE
+[rank 1] ok singleton_tp_allreduce_noop
+[rank 2] ok singleton_tp_allreduce_noop
+[rank 2] ok singleton_tp_allgather_copy
+[rank 1] ok singleton_tp_allgather_copy
+[rank 2] phase 2 PASS
+[rank 0] ok singleton_tp_allreduce_noop
+[rank 0] ok singleton_tp_allgather_copy
+[rank 0] phase 2 PASS
+[rank 3] ok singleton_tp_allreduce_noop
+[rank 1] phase 2 PASS
+[rank 3] ok singleton_tp_allgather_copy
+[rank 3] phase 2 PASS
+PHASE 2 (world=4) ALL RANKS DONE
+[rank 1] ok asym_tp_allreduce_sum
+[rank 4] ok asym_tp_allreduce_sum
+[rank 3] ok asym_tp_allreduce_sum
+[rank 0] ok asym_tp_allreduce_sum
+[rank 2] ok asym_tp_allreduce_sum
+[rank 5] ok asym_tp_allreduce_sum
+[rank 4] ok asym_tp_allgather
+[rank 3] ok asym_tp_allgather
+[rank 1] ok asym_tp_allgather
+[rank 2] ok asym_tp_allgather
+[rank 0] ok asym_tp_allgather
+[rank 5] ok asym_tp_allgather
+[rank 1] phase 3 PASS
+[rank 5] phase 3 PASS
+[rank 4] phase 3 PASS
+[rank 3] phase 3 PASS
+[rank 2] phase 3 PASS
+[rank 0] phase 3 PASS
+PHASE 3 (world=6) ALL RANKS DONE
+[rank 3] ok hybrid_tp_allreduce_int32
+[rank 0] ok hybrid_tp_allreduce_int32
+[rank 2] ok hybrid_tp_allreduce_int32
+[rank 1] ok hybrid_tp_allreduce_int32
+[rank 1] ok hybrid_tp_allreduce_fp16
+[rank 3] ok hybrid_tp_allreduce_fp16
+[rank 3] phase 4 PASS
+[rank 0] ok hybrid_tp_allreduce_fp16
+[rank 1] phase 4 PASS
+[rank 2] ok hybrid_tp_allreduce_fp16
+[rank 2] phase 4 PASS
+[rank 0] phase 4 PASS
+PHASE 4 (world=4) ALL RANKS DONE
+[rank 1] ok socket_hybrid_tp_allreduce_sum
+[rank 2] ok socket_hybrid_tp_allreduce_sum
+[rank 0] ok socket_hybrid_tp_allreduce_sum
+[rank 3] ok socket_hybrid_tp_allreduce_sum
+[rank 1] ok socket_hybrid_tp_allgather
+[rank 2] ok socket_hybrid_tp_allgather
+[rank 0] ok socket_hybrid_tp_allgather
+[rank 2] phase 5 PASS
+[rank 3] ok socket_hybrid_tp_allgather
+[rank 1] phase 5 PASS
+[rank 3] phase 5 PASS
+[rank 0] phase 5 PASS
+PHASE 5 (world=4) ALL RANKS DONE
+ALL PHASES DONE

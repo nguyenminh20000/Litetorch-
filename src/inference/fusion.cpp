@@ -11,13 +11,39 @@ std::shared_ptr<nn::Conv2d> fold_conv_bn(std::shared_ptr<nn::Conv2d> conv,
     if (!conv || !bn) {
         throw std::runtime_error("[litetorch Error] fold_conv_bn: null conv or bn");
     }
+    if (bn->training) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: BatchNorm2d must be in eval mode; folding training-mode batch statistics is mathematically wrong (call eval() first)");
+    }
+    if (!bn->running_mean || !bn->running_var) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: BatchNorm2d running_mean/running_var is null (untrained BN or track_running_stats=false); cannot fold");
+    }
+    if (!conv->weight) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: conv weight is null");
+    }
+    if (bn->affine && !bn->weight) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: BatchNorm2d affine=true but weight (gamma) is null");
+    }
     if (conv->weight->shape[0] != bn->num_features) {
         throw std::runtime_error("[litetorch Error] fold_conv_bn: out_channels mismatch");
+    }
+    const Device& wdev = conv->weight->device;
+    if (bn->running_mean->device != wdev || bn->running_var->device != wdev ||
+        (bn->weight && bn->weight->device != wdev) ||
+        (bn->bias && bn->bias->device != wdev)) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: conv weight and BatchNorm2d tensors must be on the same device; move them to a common device first");
+    }
+    if (conv->weight->dtype != DataType::FP32) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: conv weight must be FP32; mixed-dtype folding (e.g. FP16 conv weight with FP32 BN stats) would silently promote to FP32 and is unverified");
+    }
+    if (bn->running_mean->dtype != DataType::FP32 || bn->running_var->dtype != DataType::FP32 ||
+        (bn->weight && bn->weight->dtype != DataType::FP32) ||
+        (bn->bias && bn->bias->dtype != DataType::FP32)) {
+        throw std::runtime_error("[litetorch Error] fold_conv_bn: BatchNorm2d statistics/affine tensors must be FP32");
     }
     int C = bn->num_features;
     std::shared_ptr<Tensor> scale;
     {
-        auto eps_t = Ops::full({C}, bn->eps, bn->running_var->device, false, DataType::FP32);
+        auto eps_t = Ops::full({C}, bn->eps, wdev, false, DataType::FP32);
         auto var_eps = Ops::add(bn->running_var, eps_t);
         auto inv = Ops::rsqrt(var_eps);
         scale = bn->affine ? Ops::mul(bn->weight, inv) : inv;
@@ -38,9 +64,9 @@ std::shared_ptr<nn::Conv2d> fold_conv_bn(std::shared_ptr<nn::Conv2d> conv,
     auto folded = std::make_shared<nn::Conv2d>(
         static_cast<int>(w_shape[1] * conv->groups),
         C,
-        std::vector<int>{static_cast<int>(w_shape[2]), static_cast<int>(w_shape[3])},
-        std::vector<int>{conv->stride, conv->stride},
-        std::vector<int>{conv->padding, conv->padding},
+        conv->kernel_size,
+        conv->stride_vec,
+        conv->padding_vec,
         true, conv->groups);
     folded->weight = new_w;
     folded->bias = new_b;
@@ -55,6 +81,9 @@ FusionReport fuse_conv_bn(std::shared_ptr<nn::Sequential> seq) {
         auto conv = std::dynamic_pointer_cast<nn::Conv2d>(seq->modules[i]);
         auto bn = std::dynamic_pointer_cast<nn::BatchNorm2d>(seq->modules[i + 1]);
         if (conv && bn) {
+            if (conv.use_count() > 3) {
+                throw std::runtime_error("[litetorch Error] fuse_conv_bn: Conv2d at Sequential[" + std::to_string(i) + "] is shared with another owner (use_count=" + std::to_string(conv.use_count()) + " > 3: a Sequential built with add() holds each module twice - modules vector + named-children map - plus this function's local handle); refusing in-place rewrite. Clone the module or pass an unshared Sequential.");
+            }
             auto folded = fold_conv_bn(conv, bn);
             seq->modules[i] = folded;
             seq->modules[i + 1] = std::make_shared<nn::Identity>();
@@ -77,10 +106,14 @@ static void scan_layernorm(std::shared_ptr<nn::Module> m, FusionReport& rep, con
     }
 }
 
-FusionReport detect_layernorm_fusion(std::shared_ptr<nn::Module> root) {
+FusionReport detect_layernorm_candidates(std::shared_ptr<nn::Module> root) {
     FusionReport rep;
     scan_layernorm(root, rep, "root");
     return rep;
+}
+
+FusionReport detect_layernorm_fusion(std::shared_ptr<nn::Module> root) {
+    return detect_layernorm_candidates(root);
 }
 
 bool verify_linear_bias_fusion() {

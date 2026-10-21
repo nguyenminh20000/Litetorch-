@@ -1,0 +1,13 @@
+==================================================
+       LITETORCH MULTI-HEAD ATTENTION TEST        
+==================================================
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+
+--- Testing MultiHeadAttention on CPU ---
+Input shape: (2, 4, 8)
+Output shape: (2, 4, 8)
+Forward success. Mock Loss: -8.25392
+Backward success. Input Gradient absolute sum: 16.4
+QKV Proj Weight Gradient absolute sum: 14.4504
+[RESULT] SUCCESS: MultiHeadAttention forward/backward passed on CPU
+==================================================

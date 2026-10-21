@@ -1,0 +1,8 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+==================================================
+          KERNEL FUSION BENCHMARK (GPU)           
+==================================================
+Sequential (Add + LayerNorm): 319.363 ms
+Fused (Add + LayerNorm):       229.958 ms
+Speedup:                      1.38879x
+==================================================

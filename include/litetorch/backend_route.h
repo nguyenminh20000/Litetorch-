@@ -2,6 +2,7 @@
 #include "litetorch/backend.h"
 #include "litetorch/cl_backend.h"
 #include "litetorch/allocator.h"
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,12 @@ inline void* rt_gpu_allocate(size_t bytes) {
 inline void rt_gpu_free(void* gpu_ptr) {
     if (!gpu_ptr) return;
     if (has_native_gpu()) { CachingAllocator::get().free_gpu(gpu_ptr); return; }
+    CLBackend::get().free((cl_mem)gpu_ptr);
+}
+
+inline void rt_gpu_free_now(void* gpu_ptr) {
+    if (!gpu_ptr) return;
+    if (has_native_gpu()) { CachingAllocator::get().free_gpu_now(gpu_ptr); return; }
     CLBackend::get().free((cl_mem)gpu_ptr);
 }
 
@@ -89,7 +96,7 @@ inline void* rt_gpu_get_kernel_by_id(KernelID id) {
 
 inline void rt_gpu_launch(void* kernel, const std::vector<size_t>& gws, const std::vector<size_t>& lws,
                           const std::vector<void*>& args, const std::vector<size_t>& arg_sizes) {
-    if (!kernel) return;
+    if (!kernel) throw std::runtime_error("rt_gpu_launch: null kernel handle (precompiled kernel not found and nvcc fallback compile failed or unavailable)");
     if (auto n = native_gpu_backend()) { n->launch(kernel, gws, lws, args, arg_sizes); return; }
     CLBackend::get().launch((cl_kernel)kernel, gws, lws, args, arg_sizes);
 }

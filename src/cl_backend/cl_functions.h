@@ -27,6 +27,7 @@ typedef cl_int (*clReleaseContext_t)(cl_context);
 typedef cl_int (*clGetProgramBuildInfo_t)(cl_program, cl_device_id, cl_uint, size_t, void*, size_t*);
 typedef cl_int (*clGetDeviceInfo_t)(cl_device_id, cl_device_info, size_t, void*, size_t*);
 typedef cl_mem (*clCreateSubBuffer_t)(cl_mem, cl_mem_flags, cl_uint, const void*, cl_int*);
+typedef cl_kernel (*clCloneKernel_t)(cl_kernel, cl_int*);
 
 extern clGetPlatformIDs_t p_clGetPlatformIDs;
 extern clGetDeviceIDs_t p_clGetDeviceIDs;
@@ -50,6 +51,7 @@ extern clReleaseContext_t p_clReleaseContext;
 extern clGetProgramBuildInfo_t p_clGetProgramBuildInfo;
 extern clCreateSubBuffer_t p_clCreateSubBuffer;
 extern clGetDeviceInfo_t p_clGetDeviceInfo;
+extern clCloneKernel_t p_clCloneKernel;
 
 }
 

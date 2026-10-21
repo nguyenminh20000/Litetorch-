@@ -1,0 +1,6 @@
+PASS max_empty_throws_full
+PASS max_empty_throws_dim
+PASS max_with_indices_empty_throws
+PASS max_nonempty_nan
+----
+RESULT be_max_empty_throw_test: 4 passed, 0 failed

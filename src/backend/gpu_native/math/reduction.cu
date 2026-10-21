@@ -1,4 +1,5 @@
 #include "gpu_common.h"
+#include <limits>
 #include <unordered_map>
 
 struct ReduceScratch {
@@ -54,23 +55,45 @@ extern "C" void gpu_sum_forward(void* A, int64_t a_off, void* B, int64_t b_off, 
 #endif
 }
 
+struct NanAwareMaxOp {
+    __host__ __device__ __forceinline__ float operator()(float a, float b) const {
+        if (a != a || b != b) return a + b;
+        return (a > b) ? a : b;
+    }
+};
+
 extern "C" void gpu_max_forward(void* A, int64_t a_off, void* B, int64_t b_off, int64_t size) {
     auto_set_device(A);
-    if (size <= 0) return;
+    if (size <= 0) throw std::runtime_error("[litetorch Error] gpu_max_forward: max() of empty input");
     if (size > 2147483647LL) throw std::runtime_error("[litetorch Error] gpu_max_forward: size exceeds INT_MAX");
     float* d_in = (float*)A + a_off;
     float* d_out = (float*)B + b_off;
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
+    float init = -std::numeric_limits<float>::infinity();
 #ifndef __HIP_PLATFORM_AMD__
-    cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
+    cub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, NanAwareMaxOp(), init, dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    cudaError_t st = cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, dev_stream(current_device()));
-    if (st != cudaSuccess) throw std::runtime_error(std::string("[litetorch Error] cub::DeviceReduce::Max failed: ") + cudaGetErrorString(st));
+    cudaError_t st = cub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, (int)size, NanAwareMaxOp(), init, dev_stream(current_device()));
+    if (st != cudaSuccess) throw std::runtime_error(std::string("[litetorch Error] cub::DeviceReduce::Reduce (NaN-aware max) failed: ") + cudaGetErrorString(st));
 #else
-    float initial_value = -1e38f;
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, (int)size, rocprim::maximum<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, init, (int)size, NanAwareMaxOp(), dev_stream(current_device()));
     d_temp_storage = get_scratch_storage(temp_storage_bytes);
-    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, initial_value, (int)size, rocprim::maximum<float>(), dev_stream(current_device()));
+    rocprim::reduce(d_temp_storage, temp_storage_bytes, d_in, d_out, init, (int)size, NanAwareMaxOp(), dev_stream(current_device()));
 #endif
+}
+
+extern "C" void gpu_reduce_free_scratch() {
+    for (auto& kv : s_scratch_map) {
+        if (kv.second.ptr) {
+            int dev = kv.first;
+            int cur = current_device();
+            if (cur != dev) GPU_API(SetDevice)(dev);
+            GPU_API(Free)(kv.second.ptr);
+            if (cur != dev) GPU_API(SetDevice)(cur);
+            kv.second.ptr = nullptr;
+            kv.second.bytes = 0;
+        }
+    }
+    s_scratch_map.clear();
 }

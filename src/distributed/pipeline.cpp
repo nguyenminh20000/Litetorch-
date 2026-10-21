@@ -1,5 +1,6 @@
 #include "litetorch/pipeline.h"
 #include "litetorch/distributed.h"
+#include "litetorch/parallel_3d.h"
 #include "litetorch/p2p_async.h"
 
 namespace litetorch {
@@ -25,6 +26,38 @@ bool PipelineParallelModule::active_() const {
     return world_size_() > 1;
 }
 
+int PipelineParallelModule::pp_size_() const {
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_size();
+    return world_size_();
+}
+
+int PipelineParallelModule::pp_rank_() const {
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_rank();
+    return rank_();
+}
+
+int PipelineParallelModule::pp_prev_() const {
+    int pr = pp_rank_();
+    if (pr <= 0) return -1;
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_group()[pr - 1];
+    return rank_() - 1;
+}
+
+int PipelineParallelModule::pp_next_() const {
+    int pr = pp_rank_();
+    if (pr >= pp_size_() - 1) return -1;
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_group()[pr + 1];
+    return rank_() + 1;
+}
+
+bool PipelineParallelModule::pp_first_() const {
+    return pp_rank_() == 0;
+}
+
+bool PipelineParallelModule::pp_last_() const {
+    return pp_rank_() == pp_size_() - 1;
+}
+
 Device PipelineParallelModule::stage_device_(std::shared_ptr<Tensor> ref) const {
     if (ref) return ref->device;
     return Device(DeviceType::CPU);
@@ -33,7 +66,7 @@ Device PipelineParallelModule::stage_device_(std::shared_ptr<Tensor> ref) const 
 std::shared_ptr<Tensor> PipelineParallelModule::recv_activation_(std::shared_ptr<Tensor> ref) {
     auto x = Tensor::create({1}, stage_device_(ref));
     x->requires_grad = true;
-    auto w = irecv(x, rank_() - 1);
+    auto w = irecv(x, pp_prev_());
     w->wait();
     return x;
 }
@@ -59,18 +92,15 @@ void PipelineParallelModule::sync() {
 }
 
 std::shared_ptr<Tensor> PipelineParallelModule::forward(std::shared_ptr<Tensor> input) {
-    int rank = rank_();
-    int world_size = world_size_();
-
     std::shared_ptr<Tensor> x = input;
-    if (rank > 0 && active_()) {
+    if (!pp_first_() && active_()) {
         x = recv_activation_(input);
     }
 
     std::shared_ptr<Tensor> out = local_module->forward(x);
 
-    if (rank < world_size - 1 && active_()) {
-        pending_sends_.push_back(isend(out, rank + 1));
+    if (!pp_last_() && active_()) {
+        pending_sends_.push_back(isend(out, pp_next_()));
     }
     wait_sends_();
     return out;
@@ -83,8 +113,6 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::forward_microbatche
 
 std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::schedule_1f1b(
     const std::vector<std::shared_ptr<Tensor>>& microbatches) {
-    int rank = rank_();
-    int world_size = world_size_();
     int n = static_cast<int>(microbatches.size());
     std::vector<std::shared_ptr<Tensor>> outputs(n);
     if (n == 0) return outputs;
@@ -99,14 +127,14 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::schedule_1f1b(
     for (int i = 0; i < n; ++i) {
         std::shared_ptr<Tensor> x = microbatches[i];
         std::shared_ptr<Work> w_recv;
-        if (rank > 0) {
+        if (!pp_first_()) {
             x = Tensor::create({1}, stage_device_(microbatches[i]));
-            w_recv = irecv(x, rank - 1);
+            w_recv = irecv(x, pp_prev_());
         }
         if (w_recv) w_recv->wait();
         auto out = local_module->forward(x);
-        if (rank < world_size - 1)
-            pending_sends_.push_back(isend(out, rank + 1));
+        if (!pp_last_())
+            pending_sends_.push_back(isend(out, pp_next_()));
         outputs[i] = out;
     }
     wait_sends_();
@@ -116,8 +144,6 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::schedule_1f1b(
 std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
     const std::vector<std::shared_ptr<Tensor>>& microbatches,
     std::function<std::shared_ptr<Tensor>(std::shared_ptr<Tensor>, int)> loss_fn) {
-    int rank = rank_();
-    int world_size = world_size_();
     int n = static_cast<int>(microbatches.size());
     std::vector<std::shared_ptr<Tensor>> losses;
     float grad_scale = n > 0 ? 1.0f / n : 1.0f;
@@ -138,9 +164,9 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
         return losses;
     }
 
-    int num_warmup = std::min(n, world_size - rank - 1);
+    int num_warmup = std::min(n, pp_size_() - pp_rank_() - 1);
     int num_1f1b = n - num_warmup;
-    bool is_last = (rank == world_size - 1);
+    bool is_last = pp_last_();
 
     struct Frame {
         std::shared_ptr<Tensor> x;
@@ -153,15 +179,15 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
     auto do_forward = [&](int mb_idx) {
         std::shared_ptr<Tensor> x = microbatches[mb_idx];
         std::shared_ptr<Work> w_recv;
-        if (rank > 0) {
+        if (!pp_first_()) {
             x = Tensor::create({1}, stage_device_(microbatches[mb_idx]));
             x->requires_grad = true;
-            w_recv = irecv(x, rank - 1);
+            w_recv = irecv(x, pp_prev_());
         }
         if (w_recv) w_recv->wait();
         auto out = local_module->forward(x);
-        if (rank < world_size - 1)
-            pending_sends_.push_back(isend(out, rank + 1));
+        if (!pp_last_())
+            pending_sends_.push_back(isend(out, pp_next_()));
         fifo.push({x, out, mb_idx});
     };
 
@@ -183,8 +209,8 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
             if (w_grad) w_grad->wait();
             fr.out->backward(g_buf);
         }
-        if (rank > 0 && fr.x && fr.x->grad)
-            pending_sends_.push_back(isend(fr.x->grad, rank - 1));
+        if (!pp_first_() && fr.x && fr.x->grad)
+            pending_sends_.push_back(isend(fr.x->grad, pp_prev_()));
     };
 
     for (int i = 0; i < num_warmup; ++i)
@@ -196,7 +222,7 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
         if (!is_last && !fifo.empty()) {
             const auto& fr = fifo.front();
             g_buf = Tensor::create(fr.out->shape, fr.out->device);
-            w_grad = irecv(g_buf, rank + 1);
+            w_grad = irecv(g_buf, pp_next_());
         }
         do_forward(fwd_idx++);
         do_backward(w_grad, g_buf);
@@ -208,7 +234,7 @@ std::vector<std::shared_ptr<Tensor>> PipelineParallelModule::train_step_1f1b(
         if (!is_last) {
             const auto& fr = fifo.front();
             g_buf = Tensor::create(fr.out->shape, fr.out->device);
-            w_grad = irecv(g_buf, rank + 1);
+            w_grad = irecv(g_buf, pp_next_());
             w_grad->wait();
         }
         do_backward(nullptr, g_buf);
@@ -262,6 +288,21 @@ bool InterleavedPipelineModule::active_() const {
     return world_size_() > 1;
 }
 
+int InterleavedPipelineModule::pp_size_() const {
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_size();
+    return world_size_();
+}
+
+int InterleavedPipelineModule::pp_rank_() const {
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_rank();
+    return rank_();
+}
+
+int InterleavedPipelineModule::pp_stage_global_(int stage) const {
+    if (Parallel3D::get().is_initialized()) return Parallel3D::get().pp_group()[stage];
+    return stage;
+}
+
 Device InterleavedPipelineModule::stage_device_(std::shared_ptr<Tensor> ref) const {
     if (ref) return ref->device;
     return Device(DeviceType::CPU);
@@ -298,8 +339,8 @@ std::shared_ptr<Tensor> InterleavedPipelineModule::forward(std::shared_ptr<Tenso
 
 std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::schedule_interleaved_1f1b(
     const std::vector<std::shared_ptr<Tensor>>& microbatches) {
-    int rank = rank_();
-    int p = world_size_();
+    int my_stage = pp_rank_();
+    int p = pp_size_();
     int v = static_cast<int>(chunks_.size());
     int V = p * v;
     int m = static_cast<int>(microbatches.size());
@@ -331,17 +372,17 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::schedule_interle
     for (int i = 0; i < m; ++i) {
         for (int vs = 0; vs < V; ++vs) {
             int r = vs % p;
-            if (rank != r) continue;
+            if (my_stage != r) continue;
             int j = (vs - r) / p;
             std::shared_ptr<Tensor> x;
             if (vs == 0) {
                 x = microbatches[i];
             } else {
-                x = sync_recv(microbatches[i], (vs - 1 + p) % p);
+                x = sync_recv(microbatches[i], pp_stage_global_((vs - 1 + p) % p));
             }
             auto out = chunks_[j]->forward(x);
             if (vs < V - 1) {
-                sync_send(out, (vs + 1) % p);
+                sync_send(out, pp_stage_global_((vs + 1) % p));
             } else {
                 outputs[i] = out;
             }
@@ -353,8 +394,8 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::schedule_interle
 std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::train_step_interleaved_1f1b(
     const std::vector<std::shared_ptr<Tensor>>& microbatches,
     std::function<std::shared_ptr<Tensor>(std::shared_ptr<Tensor>, int)> loss_fn) {
-    int rank = rank_();
-    int p = world_size_();
+    int my_stage = pp_rank_();
+    int p = pp_size_();
     int v = static_cast<int>(chunks_.size());
     int V = p * v;
     int m = static_cast<int>(microbatches.size());
@@ -394,13 +435,13 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::train_step_inter
     for (int i = 0; i < m; ++i) {
         for (int vs = 0; vs < V; ++vs) {
             int r = vs % p;
-            if (rank != r) continue;
+            if (my_stage != r) continue;
             int j = (vs - r) / p;
             std::shared_ptr<Tensor> x;
             if (vs == 0) {
                 x = microbatches[i];
             } else {
-                int src = (vs - 1 + p) % p;
+                int src = pp_stage_global_((vs - 1 + p) % p);
                 x = Tensor::create({1}, stage_device_(microbatches[i]));
                 x->requires_grad = true;
                 auto w = irecv(x, src);
@@ -408,7 +449,7 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::train_step_inter
             }
             auto out = chunks_[j]->forward(x);
             if (vs < V - 1) {
-                sync_send(out, (vs + 1) % p);
+                sync_send(out, pp_stage_global_((vs + 1) % p));
             }
             frames[j].push_back({x, out, i});
         }
@@ -418,7 +459,7 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::train_step_inter
     for (int i = m - 1; i >= 0; --i) {
         for (int vs = V - 1; vs >= 0; --vs) {
             int r = vs % p;
-            if (rank != r) continue;
+            if (my_stage != r) continue;
             int j = (vs - r) / p;
             Frame fr = frames[j][i];
             if (vs == V - 1) {
@@ -432,14 +473,14 @@ std::vector<std::shared_ptr<Tensor>> InterleavedPipelineModule::train_step_inter
                     fr.out->backward(scale);
                 }
             } else {
-                int src = (vs + 1) % p;
+                int src = pp_stage_global_((vs + 1) % p);
                 auto g_buf = Tensor::create(fr.out->shape, fr.out->device);
                 auto w = irecv(g_buf, src);
                 w->wait();
                 fr.out->backward(g_buf);
             }
             if (vs > 0 && fr.x && fr.x->grad) {
-                sync_send(fr.x->grad, (vs - 1 + p) % p);
+                sync_send(fr.x->grad, pp_stage_global_((vs - 1 + p) % p));
             }
         }
     }

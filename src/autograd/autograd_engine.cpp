@@ -107,10 +107,31 @@ void topological_sort(Node* root_node, TraversalState& st) {
         }
     }
 }
+void check_saved_versions_w2(Node* node) {
+    const SavedTensorsVector& saved = node->saved_tensors;
+    const std::vector<uint64_t>& versions = node->saved_versions;
+    size_t n = std::min(saved.size(), versions.size());
+    for (size_t i = 0; i < n; ++i) {
+        const std::shared_ptr<Tensor>& t = saved[i];
+        if (!t) continue;
+        uint64_t cur = t->_version();
+        if (cur != versions[i]) {
+            std::ostringstream msg;
+            msg << "[litetorch Error] one of the variables needed for gradient computation has been modified by an inplace operation: saved tensor " << i
+                << " of node '" << node->name << "' with shape [";
+            for (size_t d = 0; d < t->shape.size(); ++d) {
+                if (d) msg << ", ";
+                msg << t->shape[d];
+            }
+            msg << "] is at version " << cur << "; expected version " << versions[i] << " instead.";
+            throw std::runtime_error(msg.str());
+        }
+    }
+}
 
 }
 
-void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) {
+void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, bool retain_graph) {
     if (!root_tensor || !root_tensor->creator) return;
     if (!root_tensor->grad) {
         if (root_tensor->numel() != 1) {
@@ -123,10 +144,14 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
     bool old_create_graph = is_create_graph_;
     is_create_graph_ = create_graph;
 
+    try {
     StateLease lease;
     TraversalState& st = *lease.s;
 
     Node* root_node = root_tensor->creator.ptr.get();
+    if (root_node->consumed) {
+        throw std::runtime_error("[litetorch Error] Autograd::backward: graph was already freed by a previous backward() call; pass retain_graph=true to run backward multiple times");
+    }
     topological_sort(root_node, st);
     std::vector<Node*>& order = st.order;
     std::unordered_map<Node*, std::shared_ptr<Tensor>>& grads = st.grads;
@@ -143,6 +168,11 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
         if (git == grads.end()) continue;
         std::shared_ptr<Tensor> grad_output = git->second;
         if (!grad_output) continue;
+
+        if (node->consumed && node->had_saved_data) {
+            throw std::runtime_error("[litetorch Error] Autograd::backward: graph was already freed by a previous backward() call; pass retain_graph=true to run backward multiple times");
+        }
+        check_saved_versions_w2(node);
 
         std::vector<std::shared_ptr<Tensor>> input_grads = node->backward(grad_output);
         const std::vector<NodeInput>& inputs = node->inputs;
@@ -188,10 +218,17 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph) 
                 }
             }
         }
-        if (!create_graph) {
+        if (!create_graph && !retain_graph) {
+            node->had_saved_data = !node->saved_tensors.empty();
             node->saved_tensors.clear();
+            node->saved_versions.clear();
+            node->consumed = true;
             node->output = SavedTensor();
         }
+    }
+    } catch (...) {
+        is_create_graph_ = old_create_graph;
+        throw;
     }
     is_create_graph_ = old_create_graph;
 }
@@ -314,6 +351,9 @@ std::vector<std::shared_ptr<Tensor>> Autograd::grad(
             }
             Node* root = out->creator.ptr.get();
             if (!root) continue;
+            if (root->consumed) {
+                throw std::runtime_error("[litetorch Error] autograd.grad: graph was already freed by a previous backward() call; pass retain_graph=true to differentiate multiple times");
+            }
             auto nit = grads.find(root);
             if (nit == grads.end()) grads.emplace(root, seed);
             else accumulate_grad_w2t4(nit->second, seed, create_graph);
@@ -329,6 +369,9 @@ std::vector<std::shared_ptr<Tensor>> Autograd::grad(
             Node* node = *it;
             auto git = grads.find(node);
             if (git == grads.end() || !git->second) continue;
+            if (node->consumed && node->had_saved_data) {
+                throw std::runtime_error("[litetorch Error] autograd.grad: graph was already freed by a previous backward() call; pass retain_graph=true to differentiate multiple times");
+            }
             std::vector<std::shared_ptr<Tensor>> in_grads = node->backward(git->second);
             const std::vector<NodeInput>& node_inputs = node->inputs;
             const std::vector<std::shared_ptr<Node>>& next_nodes = node->next_nodes;
@@ -353,7 +396,10 @@ std::vector<std::shared_ptr<Tensor>> Autograd::grad(
         }
         if (!retain_graph && !create_graph) {
             for (Node* n : order) {
+                n->had_saved_data = !n->saved_tensors.empty();
                 n->saved_tensors.clear();
+                n->saved_versions.clear();
+                n->consumed = true;
                 n->output = SavedTensor();
             }
         }
@@ -501,8 +547,8 @@ bool autograd_gradcheck(const AutogradFunc& func,
             if (g.size() == n) avec = g;
         }
         bool is_fp64 = (t->dtype == DataType::FP64);
-        double* dptr = is_fp64 ? reinterpret_cast<double*>(t->data_ptr()) : nullptr;
-        float* fptr = is_fp64 ? nullptr : t->data_ptr();
+        double* dptr = is_fp64 ? reinterpret_cast<double*>(t->raw_data_ptr()) : nullptr;
+        float* fptr = is_fp64 ? nullptr : reinterpret_cast<float*>(t->raw_data_ptr());
         for (size_t j = 0; j < n; ++j) {
             double orig = is_fp64 ? dptr[j] : (double)fptr[j];
             if (is_fp64) dptr[j] = orig + eps; else fptr[j] = (float)(orig + eps);

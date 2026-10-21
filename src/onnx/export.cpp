@@ -1,5 +1,6 @@
 #include "litetorch/onnx.h"
 #include "litetorch/ops.h"
+#include <cstring>
 #include <cxxabi.h>
 #include <fstream>
 #include <sstream>
@@ -201,8 +202,160 @@ std::string export_onnx_text(const Graph& graph) {
 void export_onnx(const Graph& graph, const std::string& path) {
     std::ofstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("[litetorch Error] onnx: cannot write " + path);
-    f << export_onnx_text(graph);
+    std::string bin = export_onnx_binary(graph);
+    f.write(bin.data(), static_cast<std::streamsize>(bin.size()));
     if (!f) throw std::runtime_error("[litetorch Error] onnx: write failed for " + path);
+}
+
+namespace {
+
+void pb_varint(std::string& out, uint64_t v) {
+    while (v >= 0x80) {
+        out.push_back(static_cast<char>(0x80 | (v & 0x7f)));
+        v >>= 7;
+    }
+    out.push_back(static_cast<char>(v));
+}
+
+void pb_tag(std::string& out, uint32_t field, uint32_t wire) {
+    pb_varint(out, (static_cast<uint64_t>(field) << 3) | wire);
+}
+
+void pb_varint_field(std::string& out, uint32_t field, uint64_t v) {
+    pb_tag(out, field, 0);
+    pb_varint(out, v);
+}
+
+void pb_fixed32_field(std::string& out, uint32_t field, float v) {
+    pb_tag(out, field, 5);
+    uint32_t b;
+    std::memcpy(&b, &v, 4);
+    out.push_back(static_cast<char>(b & 0xff));
+    out.push_back(static_cast<char>((b >> 8) & 0xff));
+    out.push_back(static_cast<char>((b >> 16) & 0xff));
+    out.push_back(static_cast<char>((b >> 24) & 0xff));
+}
+
+void pb_bytes_field(std::string& out, uint32_t field, const std::string& s) {
+    pb_tag(out, field, 2);
+    pb_varint(out, s.size());
+    out.append(s);
+}
+
+void pb_msg_field(std::string& out, uint32_t field, const std::string& msg) {
+    pb_bytes_field(out, field, msg);
+}
+
+std::string pb_dim(const ValueInfo& v, size_t i) {
+    std::string m;
+    if (i < v.dim_params.size() && !v.dim_params[i].empty())
+        pb_bytes_field(m, 2, v.dim_params[i]);
+    else
+        pb_varint_field(m, 1, static_cast<uint64_t>(v.shape[i]));
+    return m;
+}
+
+std::string pb_value_info(const ValueInfo& v) {
+    std::string tt;
+    pb_varint_field(tt, 1, static_cast<uint64_t>(onnx_elem_type(v.dtype)));
+    std::string shape;
+    for (size_t i = 0; i < v.shape.size(); ++i) pb_msg_field(shape, 1, pb_dim(v, i));
+    pb_msg_field(tt, 2, shape);
+    std::string tp;
+    pb_msg_field(tp, 1, tt);
+    std::string m;
+    pb_bytes_field(m, 1, v.name);
+    pb_msg_field(m, 2, tp);
+    return m;
+}
+
+std::string pb_attr_string(const std::string& k, const std::string& val) {
+    std::string m;
+    pb_bytes_field(m, 1, k);
+    pb_bytes_field(m, 4, val);
+    pb_varint_field(m, 20, 3);
+    return m;
+}
+
+std::string pb_attr_int(const std::string& k, int64_t val) {
+    std::string m;
+    pb_bytes_field(m, 1, k);
+    pb_varint_field(m, 3, static_cast<uint64_t>(val));
+    pb_varint_field(m, 20, 2);
+    return m;
+}
+
+std::string pb_attr_float(const std::string& k, float val) {
+    std::string m;
+    pb_bytes_field(m, 1, k);
+    pb_fixed32_field(m, 2, val);
+    pb_varint_field(m, 20, 1);
+    return m;
+}
+
+std::string pb_attr_ints(const std::string& k, const std::vector<int64_t>& vals) {
+    std::string m;
+    pb_bytes_field(m, 1, k);
+    std::string packed;
+    for (int64_t x : vals) pb_varint(packed, static_cast<uint64_t>(x));
+    pb_bytes_field(m, 8, packed);
+    pb_varint_field(m, 20, 7);
+    return m;
+}
+
+std::string pb_tensor_proto(const std::string& name, const Tensor& t) {
+    std::string m;
+    for (int64_t d : t.shape) pb_varint_field(m, 1, static_cast<uint64_t>(d));
+    pb_varint_field(m, 2, static_cast<uint64_t>(onnx_elem_type(t.dtype)));
+    std::vector<float> vals;
+    if (tensor_to_floats(t, vals)) {
+        std::string packed;
+        packed.reserve(vals.size() * 4);
+        for (float x : vals) {
+            uint32_t b;
+            std::memcpy(&b, &x, 4);
+            packed.push_back(static_cast<char>(b & 0xff));
+            packed.push_back(static_cast<char>((b >> 8) & 0xff));
+            packed.push_back(static_cast<char>((b >> 16) & 0xff));
+            packed.push_back(static_cast<char>((b >> 24) & 0xff));
+        }
+        pb_bytes_field(m, 4, packed);
+    }
+    pb_bytes_field(m, 8, name);
+    return m;
+}
+
+std::string pb_node(const Node& n) {
+    std::string m;
+    for (const auto& i : n.inputs) pb_bytes_field(m, 1, i);
+    for (const auto& o : n.outputs) pb_bytes_field(m, 2, o);
+    pb_bytes_field(m, 3, n.name);
+    pb_bytes_field(m, 4, n.op_type);
+    for (const auto& kv : n.attrs) pb_msg_field(m, 5, pb_attr_string(kv.first, kv.second));
+    for (const auto& kv : n.int_attrs) pb_msg_field(m, 5, pb_attr_int(kv.first, kv.second));
+    for (const auto& kv : n.float_attrs) pb_msg_field(m, 5, pb_attr_float(kv.first, kv.second));
+    for (const auto& kv : n.ints_attrs) pb_msg_field(m, 5, pb_attr_ints(kv.first, kv.second));
+    if (!n.domain.empty()) pb_bytes_field(m, 7, n.domain);
+    return m;
+}
+
+}
+
+std::string export_onnx_binary(const Graph& graph) {
+    std::string g;
+    for (const auto& n : graph.nodes) pb_msg_field(g, 1, pb_node(n));
+    pb_bytes_field(g, 2, graph.name);
+    for (const auto& kv : graph.initializers) pb_msg_field(g, 5, pb_tensor_proto(kv.first, *kv.second));
+    for (const auto& v : graph.inputs) pb_msg_field(g, 11, pb_value_info(v));
+    for (const auto& v : graph.outputs) pb_msg_field(g, 12, pb_value_info(v));
+    std::string opset;
+    pb_varint_field(opset, 2, 17);
+    std::string m;
+    pb_varint_field(m, 1, 8);
+    pb_bytes_field(m, 2, "litetorch");
+    pb_msg_field(m, 7, g);
+    pb_msg_field(m, 8, opset);
+    return m;
 }
 
 namespace {
@@ -252,6 +405,7 @@ std::pair<std::string, std::string> map_op(const std::string& cls) {
         {"PixelShuffle", "DepthToSpace"}, {"PixelUnshuffle", "SpaceToDepth"},
         {"Fold", "Fold"}, {"Unfold", "Unfold"},
         {"RNN", "RNN"}, {"LSTM", "LSTM"}, {"GRU", "GRU"},
+        {"Identity", "Identity"},
     };
     auto it = table.find(cls);
     if (it != table.end()) return {it->second, ""};
@@ -418,6 +572,10 @@ Graph trace_module_impl(std::shared_ptr<nn::Module> model, std::shared_ptr<Tenso
             g.add_output("output", out->shape, out->dtype);
         }
         auto mapped = map_op(module_class_name(*model));
+        if (!mapped.second.empty())
+            throw std::runtime_error("[litetorch Error] onnx: trace_module: module '" +
+                module_class_name(*model) + "' has no ONNX operator mapping; refusing to emit " +
+                "opaque '" + mapped.first + "' node (branched or custom topologies cannot be traced)");
         std::vector<std::string> node_inputs = {cur};
         for (auto& kv : model->named_parameters()) g.add_initializer("param_" + kv.first, fold_prune_mask(*model, kv.first, kv.second));
         auto params = model->named_parameters();
@@ -440,6 +598,11 @@ Graph trace_module_impl(std::shared_ptr<nn::Module> model, std::shared_ptr<Tenso
         auto out = child->forward(example_input);
         std::string cls = module_class_name(*child);
         auto mapped = map_op(cls);
+        if (!mapped.second.empty())
+            throw std::runtime_error("[litetorch Error] onnx: trace_module: child #" +
+                std::to_string(idx) + " ('" + cls + "') has no ONNX operator mapping; refusing " +
+                "to flatten it into an opaque '" + mapped.first + "' node (branched, nested, or " +
+                "custom module topologies cannot be traced)");
         std::map<std::string, std::string> sattrs;
         sattrs["module"] = cls;
         TypedAttrs ta = extract_attrs(*child);

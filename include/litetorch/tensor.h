@@ -26,8 +26,15 @@ enum class DataType {
     FP8_E5M2,
     NF4,
     FP4_E2M1,
-    INT32
+    INT32,
+    INT64,
+    UINT8,
+    BOOL
 };
+
+bool is_integer_dtype(DataType dt);
+bool is_float_dtype(DataType dt);
+DataType promote_types(DataType a, DataType b);
 
 class Node;
 namespace distributed { class ProcessGroup; }
@@ -45,18 +52,25 @@ public:
     bool has_lru_iterator = false;
     std::list<StorageImpl*>::iterator lru_iterator;
     mutable std::mutex storage_mutex_;
+    std::atomic<uint64_t> version_{0};
 
     friend class MemoryManager;
 
     StorageImpl(size_t size, const Device& device, DataType dtype = DataType::FP32);
     ~StorageImpl();
 
+    uint64_t version() const { return version_.load(std::memory_order_relaxed); }
+    void bump_version() { version_.fetch_add(1, std::memory_order_relaxed); }
+
     size_t element_size() const {
         if (dtype == DataType::FP64) return 8;
+        if (dtype == DataType::INT64) return 8;
         if (dtype == DataType::FP16) return 2;
         if (dtype == DataType::BF16) return 2;
         if (dtype == DataType::INT16) return 2;
         if (dtype == DataType::INT8) return 1;
+        if (dtype == DataType::UINT8) return 1;
+        if (dtype == DataType::BOOL) return 1;
         if (dtype == DataType::INT4) return 1;
         if (dtype == DataType::FP8_E4M3) return 1;
         if (dtype == DataType::FP8_E5M2) return 1;
@@ -71,8 +85,6 @@ public:
     void to(const Device& new_device);
     void evict();
     void evict_impl();
-    void discard_gpu();
-    void discard_gpu_impl();
     void swap_in_impl();
     void swap_in();
     void ensure_cpu();
@@ -171,9 +183,14 @@ public:
     std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>> max(int64_t dim, bool keepdim = false);
 
     float* data_ptr();
+    void* raw_data_ptr();
     cl_mem gpu_data();
 
-    void backward(std::shared_ptr<Tensor> gradient = nullptr, bool create_graph = false);
+    uint64_t _version() const { return storage ? storage->version() : 0; }
+    void _bump_version() { if (storage) storage->bump_version(); }
+    void _check_inplace(const char* op) const;
+
+    void backward(std::shared_ptr<Tensor> gradient = nullptr, bool create_graph = false, bool retain_graph = false);
     void zero_grad();
 
     float item() const;

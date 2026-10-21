@@ -1,0 +1,3 @@
+First derivative dy/dx: 6 (Expected: 6.0)
+Second derivative d2y/dx2: 2 (Expected: 2.0)
+SUCCESS: Double backward verified!

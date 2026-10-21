@@ -1,0 +1,21 @@
+PASS fastpath pure x-y in-order
+PASS fastpath y-x arg-order rejected
+PASS fastpath composite (a+b)-c rejected
+PASS fastpath unary relu(x)
+PASS fastpath unary relu(x*2) rejected
+PASS fastpath null expr rejected
+PASS fold null conv throws
+PASS fold training-mode BN throws
+PASS fold geometry stride2/pad1 preserved
+PASS fold numerics match (worst diff)
+  worst fold diff: 1.04308e-07
+PASS fuse shared Conv2d refused loudly
+PASS onnx trace nested residual throws loudly
+PASS onnx ir_version=8
+PASS onnx producer_name=litetorch
+PASS onnx graph field present
+PASS onnx opset field present
+PASS onnx opset version=17
+PASS onnx graph has Gemm/Relu nodes
+----
+RESULT qa_fuzz5: 18 passed, 0 failed

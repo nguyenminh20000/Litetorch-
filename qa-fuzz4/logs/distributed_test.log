@@ -1,0 +1,5 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+dist-w3: reduce-op semantics pinned: all_reduce default=SUM; SUM/AVG/PRODUCT/MIN/MAX explicit; DDP default=AVG (gradient average)
+Rank 0 passed all tests!
+Rank 1 passed all tests!

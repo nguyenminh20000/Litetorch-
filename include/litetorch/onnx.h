@@ -63,6 +63,7 @@ struct Graph {
 
 int onnx_elem_type(DataType dtype);
 std::string export_onnx_text(const Graph& graph);
+std::string export_onnx_binary(const Graph& graph);
 void export_onnx(const Graph& graph, const std::string& path);
 Graph trace_module(std::shared_ptr<nn::Module> model, std::shared_ptr<Tensor> example_input);
 Graph trace_module_dynamic(std::shared_ptr<nn::Module> model, std::shared_ptr<Tensor> example_input,

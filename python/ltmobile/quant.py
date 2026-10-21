@@ -38,7 +38,7 @@ class QuantizedLinear(nn.Module):
         return y
 
     def parameters(self):
-        return [self.weight_f] + ([self.bias_t] if self.has_bias else [])
+        return [self.bias_t] if self.has_bias else []
 
     def to(self, device):
         self.weight_f = self.weight_f.to(device)

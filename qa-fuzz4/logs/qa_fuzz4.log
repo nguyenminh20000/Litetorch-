@@ -1,0 +1,8 @@
+PASS F1 shape-mismatch both-ranks-throw
+PASS F2 peer-exit must throw not hang
+PASS F3 empty-tensor all_reduce completes
+PASS F5b all_reduce default op is SUM
+PASS F5c DDP find_unused throws
+PASS F5a DDP default reduce op is AVG
+----
+RESULT qa_fuzz4: 6 passed, 0 failed

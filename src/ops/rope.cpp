@@ -5,22 +5,11 @@
 #include "litetorch/backend_route.h"
 #include <cmath>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 namespace {
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 }
 
 class RopeNode : public Node {
@@ -164,6 +153,7 @@ std::shared_ptr<Tensor> rope(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> 
         node->next_nodes = {x->creator, cos->creator, sin->creator};
         node->inputs = {{x, x->requires_grad}, {cos, cos->requires_grad}, {sin, sin->requires_grad}};
         node->saved_tensors = {cos, sin, x};
+        node->saved_versions = {(cos ? cos->_version() : 0), (sin ? sin->_version() : 0), (x ? x->_version() : 0)};
         y->creator = node;
         node->output = y;
     }

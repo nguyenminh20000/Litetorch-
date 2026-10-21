@@ -27,5 +27,6 @@ clReleaseContext_t p_clReleaseContext = nullptr;
 clGetProgramBuildInfo_t p_clGetProgramBuildInfo = nullptr;
 clCreateSubBuffer_t p_clCreateSubBuffer = nullptr;
 clGetDeviceInfo_t p_clGetDeviceInfo = nullptr;
+clCloneKernel_t p_clCloneKernel = nullptr;
 
 }

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
@@ -17,19 +18,7 @@ inline void* cached_kernel() {
     static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 }
 
 class MaxPool2dNode : public Node {
@@ -44,9 +33,6 @@ public:
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto save_indices = saved_tensors[1];
-        auto out_shared = output.lock();
-        if (!out_shared) return { nullptr };
-        
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto ind_c = save_indices->is_contiguous() ? save_indices : save_indices->contiguous();
@@ -81,7 +67,7 @@ public:
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
                                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
-            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->data_ptr());
+            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->raw_data_ptr());
             float* gout_ptr = gout_c->data_ptr();
             float* gin_ptr = grad_input->data_ptr();
             std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
@@ -116,9 +102,6 @@ public:
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
         auto save_indices = saved_tensors[1];
-        auto out_shared = output.lock();
-        if (!out_shared) return { nullptr };
-        
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto ind_c = save_indices->is_contiguous() ? save_indices : save_indices->contiguous();
@@ -155,7 +138,7 @@ public:
                                     {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int),
                                      sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         } else {
-            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->data_ptr());
+            int32_t* ind_ptr = reinterpret_cast<int32_t*>(ind_c->raw_data_ptr());
             float* gout_ptr = gout_c->data_ptr();
             float* gin_ptr = grad_input->data_ptr();
             std::fill(gin_ptr, gin_ptr + grad_input->numel(), 0.0f);
@@ -190,8 +173,6 @@ public:
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
         auto input = saved_tensors[0];
-        auto out_shared = output.lock();
-        if (!out_shared) return { nullptr };
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
@@ -368,7 +349,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
                     }
                     int out_idx = ((b * C + c) * H_out + ho) * W_out + wo;
                     out_ptr[out_idx] = max_val;
-                    reinterpret_cast<int32_t*>(save_indices->data_ptr())[out_idx] = max_idx;
+                    reinterpret_cast<int32_t*>(save_indices->raw_data_ptr())[out_idx] = max_idx;
                 }
             }
         });
@@ -379,6 +360,7 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { input, save_indices, out };
+        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -442,7 +424,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
             int b = job / (D_out * C);
 
             float* out_slice = out_ptr + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
-            int32_t* ind_slice = reinterpret_cast<int32_t*>(save_indices->data_ptr()) + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
+            int32_t* ind_slice = reinterpret_cast<int32_t*>(save_indices->raw_data_ptr()) + ((((b * C + c) * D_out + d_out) * H_out) * W_out);
 
             for (int ho = 0; ho < H_out; ++ho) {
                 for (int wo = 0; wo < W_out; ++wo) {
@@ -481,6 +463,7 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { input, save_indices, out };
+        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -552,6 +535,7 @@ std::shared_ptr<Tensor> adaptive_avg_pool2d(std::shared_ptr<Tensor> input, int o
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { input };
+        node->saved_versions = {(input ? input->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -616,6 +600,7 @@ std::shared_ptr<Tensor> avg_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
         node->saved_tensors = { input };
+        node->saved_versions = {(input ? input->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

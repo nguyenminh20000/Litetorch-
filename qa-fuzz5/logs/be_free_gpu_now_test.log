@@ -1,0 +1,9 @@
+PASS free_gpu_now_unknown_throws
+PASS free_gpu_now_null_noop
+SKIP free_gpu_now_known_pointer (KAGGLE-GATED: requires T4 GPU)
+KAGGLE-GATED free_gpu_now eviction verification (mandatory QA-phase item for H11):
+  1. On Kaggle T4 x2: run this binary. free_gpu_now_known_pointer must PASS.
+  2. nvidia-smi before/after: allocate 400MB via Tensor on GPU, evict via MemoryManager evict path (or swap), run `nvidia-smi --query-gpu=memory.used --format=csv,noheader` before and after. Expect device footprint to drop by ~400MB (true release), not stay parked in cache.
+  3. Repeat alloc/evict 50x: footprint must not grow (no leak), cached bytes stay 0.
+----
+RESULT test_free_gpu_now: 2 passed, 0 failed

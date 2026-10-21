@@ -23,6 +23,9 @@ void bind_tpu(py::module_& m) {
             .value("FP4_E2M1", DataType::FP4_E2M1)
             .value("FP4", DataType::FP4_E2M1)
             .value("INT32", DataType::INT32)
+            .value("INT64", DataType::INT64)
+            .value("UINT8", DataType::UINT8)
+            .value("BOOL", DataType::BOOL)
             .export_values();
 
         py::class_<Tensor, std::shared_ptr<Tensor>>(m, "Tensor")

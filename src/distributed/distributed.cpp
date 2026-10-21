@@ -5,6 +5,7 @@
 #include "litetorch/ops.h"
 #include <iostream>
 #include <fstream>
+#include <cstdio>
 #include <chrono>
 #include <thread>
 #include <cstring>
@@ -18,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <poll.h>
 #endif
 
 namespace litetorch {
@@ -25,6 +27,7 @@ namespace distributed {
 
 static constexpr int32_t kDirectMagic = 0x4C54444D;
 static constexpr int32_t kRelayMagic = 0x4C54524D;
+static constexpr int32_t kAgreeMagic = 0x4C544147;
 
 void ProcessGroup::relay_send_all(int fd, const char* buf, size_t n) {
     size_t sent = 0;
@@ -55,31 +58,43 @@ size_t ProcessGroup::relay_dtype_bytes(int32_t dtype_val) {
 
 void ProcessGroup::relay_loop() {
     while (!stop_relay_) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        int maxfd = -1;
+        std::vector<struct pollfd> pfds;
+        std::vector<int> pfd_ranks;
+        pfds.reserve((size_t)(world_size_ > 1 ? world_size_ - 1 : 0));
+        pfd_ranks.reserve((size_t)(world_size_ > 1 ? world_size_ - 1 : 0));
         for (int i = 1; i < world_size_; ++i) {
             int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
             if (fd >= 0) {
-                FD_SET(fd, &rfds);
-                if (fd > maxfd) maxfd = fd;
+                struct pollfd p;
+                p.fd = fd;
+                p.events = POLLIN;
+                p.revents = 0;
+                pfds.push_back(p);
+                pfd_ranks.push_back(i);
             }
         }
-        if (maxfd < 0) {
+        if (pfds.empty()) {
             usleep(100000);
             continue;
         }
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000;
-        int n = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        int n = poll(pfds.data(), pfds.size(), 100);
         if (n <= 0) continue;
-        for (int i = 1; i < world_size_; ++i) {
-            int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
-            if (fd < 0 || !FD_ISSET(fd, &rfds)) continue;
-            int32_t magic = 0;
-            ssize_t r = recv(fd, &magic, sizeof(magic), MSG_WAITALL);
-            if (r != sizeof(magic)) continue;
+        bool agree_wait = false;
+        {
+            std::lock_guard<std::mutex> raw_lock(raw_socket_mutex_);
+            for (size_t k = 0; k < pfds.size(); ++k) {
+                if (!(pfds[k].revents & (POLLIN | POLLERR | POLLHUP))) continue;
+                int i = pfd_ranks[k];
+                int fd = pfds[k].fd;
+                int32_t magic = 0;
+                ssize_t pr = recv(fd, &magic, sizeof(magic), MSG_PEEK);
+                if (pr != sizeof(magic)) continue;
+                if (magic == kAgreeMagic) {
+                    agree_wait = true;
+                    continue;
+                }
+                ssize_t r = recv(fd, &magic, sizeof(magic), MSG_WAITALL);
+                if (r != sizeof(magic)) continue;
             bool is_relay = (magic == kRelayMagic);
             if (!is_relay && magic != kDirectMagic) continue;
             int32_t dst = 0;
@@ -129,6 +144,8 @@ void ProcessGroup::relay_loop() {
                 relay_inbox_cv_.notify_one();
             }
         }
+        }
+        if (agree_wait) usleep(1000);
     }
 }
 
@@ -143,21 +160,34 @@ ProcessGroup::~ProcessGroup() {
 
 #ifdef _WIN32
 void ProcessGroup::init(int rank, int world_size, const std::string&, int) {
-    rank_ = rank;
-    world_size_ = world_size;
-    initialized_ = true;
+    (void)rank; (void)world_size;
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
 }
 void ProcessGroup::shutdown() { initialized_ = false; }
-void ProcessGroup::all_reduce(std::shared_ptr<Tensor>) {}
-std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor>) {
-    return std::async(std::launch::deferred, [](){});
+void ProcessGroup::all_reduce(std::shared_ptr<Tensor>) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
 }
-void ProcessGroup::broadcast(std::shared_ptr<Tensor>, int) {}
-void ProcessGroup::all_gather(std::shared_ptr<Tensor>, std::shared_ptr<Tensor>) {}
-void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor>, std::shared_ptr<Tensor>) {}
-void ProcessGroup::send_tensor(std::shared_ptr<Tensor>, int) {}
-void ProcessGroup::recv_tensor(std::shared_ptr<Tensor>, int) {}
-void ProcessGroup::sync_comm() {}
+std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor>) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::broadcast(std::shared_ptr<Tensor>, int) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::all_gather(std::shared_ptr<Tensor>, std::shared_ptr<Tensor>) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor>, std::shared_ptr<Tensor>) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::send_tensor(std::shared_ptr<Tensor>, int) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::recv_tensor(std::shared_ptr<Tensor>, int) {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
+void ProcessGroup::sync_comm() {
+    throw std::runtime_error("LiteTorch distributed is not implemented on Windows");
+}
 #else
 void ProcessGroup::init(int rank, int world_size, const std::string& master_addr, int master_port) {
     if (initialized_) return;
@@ -344,8 +374,63 @@ void ProcessGroup::shutdown() {
     initialized_ = false;
 }
 
+bool ProcessGroup::socket_recv_all(int fd, char* buf, size_t n) {
+    size_t recvd = 0;
+    while (recvd < n) {
+        ssize_t r = recv(fd, buf + recvd, n - recvd, 0);
+        if (r <= 0) return false;
+        recvd += (size_t)r;
+    }
+    return true;
+}
+
+void ProcessGroup::check_collective_agreement(int32_t dtype_val, const std::vector<int64_t>& shape) {
+    if (!initialized_ || world_size_ <= 1) return;
+    int32_t ndim = static_cast<int32_t>(shape.size());
+    if (rank_ == 0) {
+        bool agree = true;
+        for (int i = 1; i < world_size_; ++i) {
+            int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
+            int32_t magic = 0;
+            int32_t hdr[2] = {0, -1};
+            bool ok = fd >= 0 && socket_recv_all(fd, reinterpret_cast<char*>(&magic), sizeof(magic));
+            ok = ok && magic == kAgreeMagic && socket_recv_all(fd, reinterpret_cast<char*>(hdr), sizeof(hdr));
+            std::vector<int64_t> rshape;
+            if (ok && hdr[1] >= 0 && hdr[1] <= 8) {
+                rshape.resize((size_t)hdr[1]);
+                ok = socket_recv_all(fd, reinterpret_cast<char*>(rshape.data()), rshape.size() * sizeof(int64_t));
+            } else {
+                ok = false;
+            }
+            if (!ok) { agree = false; break; }
+            if (hdr[0] != dtype_val || rshape != shape) agree = false;
+        }
+        int32_t status = agree ? 0 : 1;
+        for (int i = 1; i < world_size_; ++i) {
+            int fd = (i < (int)client_fds_.size()) ? client_fds_[i] : -1;
+            if (fd < 0) continue;
+            try {
+                relay_send_all(fd, reinterpret_cast<const char*>(&status), sizeof(status));
+            } catch (...) {}
+        }
+        if (!agree) throw std::runtime_error("collective tensor dtype/shape mismatch across ranks");
+    } else {
+        int32_t magic = kAgreeMagic;
+        int32_t hdr[2] = {dtype_val, ndim};
+        relay_send_all(peer_fd_, reinterpret_cast<const char*>(&magic), sizeof(magic));
+        relay_send_all(peer_fd_, reinterpret_cast<const char*>(hdr), sizeof(hdr));
+        if (ndim > 0) relay_send_all(peer_fd_, reinterpret_cast<const char*>(shape.data()), shape.size() * sizeof(int64_t));
+        int32_t status = -1;
+        if (!socket_recv_all(peer_fd_, reinterpret_cast<char*>(&status), sizeof(status)) || status != 0)
+            throw std::runtime_error("collective tensor dtype/shape mismatch across ranks");
+    }
+}
+
 void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
     if (!initialized_ || world_size_ <= 1) return;
+    std::lock_guard<std::mutex> coll_lock(raw_socket_mutex_);
+
+    check_collective_agreement(static_cast<int32_t>(tensor->dtype), tensor->shape);
 
     if (NCCLBridge::get().all_reduce(tensor)) {
         return;
@@ -362,7 +447,7 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
     if (tensor->device.type == DeviceType::GPU) {
         rt_gpu_read(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
     } else {
-        std::memcpy(data.data(), tensor->data_ptr(), N * elem_sz);
+        std::memcpy(data.data(), tensor->raw_data_ptr(), N * elem_sz);
     }
 
     if (rank_ == 0) {
@@ -545,12 +630,15 @@ void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor) {
     if (tensor->device.type == DeviceType::GPU) {
         rt_gpu_write(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
     } else {
-        std::memcpy(tensor->data_ptr(), data.data(), N * elem_sz);
+        std::memcpy(tensor->raw_data_ptr(), data.data(), N * elem_sz);
     }
 }
 
 void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
     if (!initialized_ || world_size_ <= 1) return;
+    std::lock_guard<std::mutex> coll_lock(raw_socket_mutex_);
+
+    check_collective_agreement(static_cast<int32_t>(tensor->dtype), tensor->shape);
 
     if (NCCLBridge::get().broadcast(tensor, src)) {
         return;
@@ -568,7 +656,7 @@ void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
         if (tensor->device.type == DeviceType::GPU) {
             rt_gpu_read(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(data.data(), tensor->data_ptr(), N * elem_sz);
+            std::memcpy(data.data(), tensor->raw_data_ptr(), N * elem_sz);
         }
     }
 
@@ -629,7 +717,7 @@ void ProcessGroup::broadcast(std::shared_ptr<Tensor> tensor, int src) {
         if (tensor->device.type == DeviceType::GPU) {
             rt_gpu_write(tensor->gpu_data(), N * elem_sz, data.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(tensor->data_ptr(), data.data(), N * elem_sz);
+            std::memcpy(tensor->raw_data_ptr(), data.data(), N * elem_sz);
         }
     }
 }
@@ -671,6 +759,9 @@ void ProcessGroup::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Ten
         full->copy_(shard);
         return;
     }
+    std::lock_guard<std::mutex> coll_lock(raw_socket_mutex_);
+
+    check_collective_agreement(static_cast<int32_t>(shard->dtype), shard->shape);
 
     if (NCCLBridge::get().all_gather(shard, full)) {
         return;
@@ -687,7 +778,7 @@ void ProcessGroup::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Ten
     if (shard->device.type == DeviceType::GPU) {
         rt_gpu_read(shard->gpu_data(), S * elem_sz, data.data(), shard->offset * elem_sz);
     } else {
-        std::memcpy(data.data(), shard->data_ptr(), S * elem_sz);
+        std::memcpy(data.data(), shard->raw_data_ptr(), S * elem_sz);
     }
 
     std::vector<char> full_cpu(S * world_size_ * elem_sz);
@@ -731,7 +822,7 @@ void ProcessGroup::all_gather(std::shared_ptr<Tensor> shard, std::shared_ptr<Ten
     if (full->device.type == DeviceType::GPU) {
         rt_gpu_write(full->gpu_data(), S * world_size_ * elem_sz, full_cpu.data(), full->offset * elem_sz);
     } else {
-        std::memcpy(full->data_ptr(), full_cpu.data(), S * world_size_ * elem_sz);
+        std::memcpy(full->raw_data_ptr(), full_cpu.data(), S * world_size_ * elem_sz);
     }
 }
 
@@ -767,29 +858,42 @@ void ProcessGroup::send_tensor(std::shared_ptr<Tensor> tensor, int dst) {
     int dtype_val = static_cast<int>(tensor->dtype);
 
     if (use_shm_ && shm_ctrl_ && shm_buffers_[rank_]) {
-        int cur_step = shm_ctrl_->steps[rank_].load();
-        while (shm_ctrl_->steps[dst].load() < cur_step) {
+        std::lock_guard<std::mutex> lock(shm_step_mutex_);
+        char* base = reinterpret_cast<char*>(shm_buffers_[rank_]);
+        size_t hdr_bytes = 8 + 8 * (size_t)ndim;
+        if (hdr_bytes + N * elem_sz > shm_buffer_size_) {
+            int32_t neg = -1;
+            std::memcpy(base, &neg, sizeof(neg));
+            shm_ctrl_->p2p_steps[rank_].store(shm_ctrl_->p2p_steps[rank_].load() + 1);
+            throw std::runtime_error("send_tensor: tensor exceeds shm buffer [dist-w6]");
+        }
+        int cur_step = shm_ctrl_->p2p_steps[rank_].load();
+        while (shm_ctrl_->p2p_steps[dst].load() < cur_step) {
             usleep(1);
         }
-        shm_buffers_[rank_][0] = static_cast<float>(ndim);
-        shm_buffers_[rank_][1] = static_cast<float>(dtype_val);
+        int32_t ndim32 = (int32_t)ndim;
+        int32_t dt32 = (int32_t)dtype_val;
+        std::memcpy(base, &ndim32, 4);
+        std::memcpy(base + 4, &dt32, 4);
         for (int i = 0; i < ndim; ++i) {
-            shm_buffers_[rank_][2 + i] = static_cast<float>(tensor->shape[i]);
+            int64_t d = tensor->shape[i];
+            std::memcpy(base + 8 + 8 * i, &d, 8);
         }
+        char* dp = base + hdr_bytes;
 
         if (tensor->device.type == DeviceType::GPU) {
-            rt_gpu_read(tensor->gpu_data(), N * elem_sz, shm_buffers_[rank_] + 2 + ndim, tensor->offset * elem_sz);
+            rt_gpu_read(tensor->gpu_data(), N * elem_sz, dp, tensor->offset * elem_sz);
         } else {
-            std::memcpy(shm_buffers_[rank_] + 2 + ndim, tensor->data_ptr(), N * elem_sz);
+            std::memcpy(dp, tensor->raw_data_ptr(), N * elem_sz);
         }
 
-        shm_ctrl_->steps[rank_].store(cur_step + 1);
+        shm_ctrl_->p2p_steps[rank_].store(cur_step + 1);
     } else {
         std::vector<char> temp_buf(N * elem_sz);
         if (tensor->device.type == DeviceType::GPU) {
             rt_gpu_read(tensor->gpu_data(), N * elem_sz, temp_buf.data(), tensor->offset * elem_sz);
         } else {
-            std::memcpy(temp_buf.data(), tensor->data_ptr(), N * elem_sz);
+            std::memcpy(temp_buf.data(), tensor->raw_data_ptr(), N * elem_sz);
         }
         int32_t dmagic = kDirectMagic;
         int32_t snd_ndim = ndim;
@@ -831,17 +935,28 @@ void ProcessGroup::recv_tensor(std::shared_ptr<Tensor> tensor, int src) {
     std::vector<int64_t> shape;
 
     if (use_shm_ && shm_ctrl_ && shm_buffers_[src]) {
-        int cur_step = shm_ctrl_->steps[rank_].load();
-        while (shm_ctrl_->steps[src].load() < cur_step + 1) {
+        std::lock_guard<std::mutex> lock(shm_step_mutex_);
+        int cur_step = shm_ctrl_->p2p_steps[rank_].load();
+        while (shm_ctrl_->p2p_steps[src].load() < cur_step + 1) {
             usleep(1);
         }
-        ndim = static_cast<int>(shm_buffers_[src][0]);
-        dtype_val = static_cast<int>(shm_buffers_[src][1]);
+        const char* base = reinterpret_cast<const char*>(shm_buffers_[src]);
+        int32_t ndim32 = 0;
+        int32_t dt32 = 0;
+        std::memcpy(&ndim32, base, 4);
+        std::memcpy(&dt32, base + 4, 4);
+        if (ndim32 < 0) throw std::runtime_error("recv_tensor: peer reported send error [dist-w6]");
+        if (ndim32 > 32) throw std::runtime_error("recv_tensor: corrupt shm header [dist-w6]");
+        ndim = ndim32;
+        dtype_val = dt32;
         shape.resize(ndim);
         size_t N = 1;
         for (int i = 0; i < ndim; ++i) {
-            shape[i] = static_cast<int64_t>(shm_buffers_[src][2 + i]);
-            N *= shape[i];
+            int64_t d = 0;
+            std::memcpy(&d, base + 8 + 8 * i, 8);
+            if (d < 0 || d > 16777216) throw std::runtime_error("recv_tensor: corrupt shm header [dist-w6]");
+            shape[i] = d;
+            N *= (size_t)d;
         }
         DataType dtype = static_cast<DataType>(dtype_val);
 
@@ -852,14 +967,15 @@ void ProcessGroup::recv_tensor(std::shared_ptr<Tensor> tensor, int src) {
         tensor->dtype = dtype;
         tensor->storage = std::make_shared<StorageImpl>(N, tensor->device, dtype);
         size_t elem_sz = tensor->storage->element_size();
+        const char* dp = base + 8 + 8 * (size_t)ndim;
 
         if (tensor->device.type == DeviceType::GPU) {
-            rt_gpu_write(tensor->gpu_data(), N * elem_sz, shm_buffers_[src] + 2 + ndim, 0);
+            rt_gpu_write(tensor->gpu_data(), N * elem_sz, dp, 0);
         } else {
-            std::memcpy(tensor->data_ptr(), shm_buffers_[src] + 2 + ndim, N * elem_sz);
+            std::memcpy(tensor->raw_data_ptr(), dp, N * elem_sz);
         }
 
-        shm_ctrl_->steps[rank_].store(cur_step + 1);
+        shm_ctrl_->p2p_steps[rank_].store(cur_step + 1);
     } else {
         RelayMsg msg;
         bool have_msg = false;
@@ -934,7 +1050,7 @@ void ProcessGroup::recv_tensor(std::shared_ptr<Tensor> tensor, int src) {
         if (tensor->device.type == DeviceType::GPU) {
             rt_gpu_write(tensor->gpu_data(), N * elem_sz, msg.data.data(), 0);
         } else {
-            std::memcpy(tensor->data_ptr(), msg.data.data(), N * elem_sz);
+            std::memcpy(tensor->raw_data_ptr(), msg.data.data(), N * elem_sz);
         }
     }
 }
@@ -1522,18 +1638,24 @@ void sync_overlapped_all_reduce() {
 }
 
 void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, size_t bucket_size_bytes) {
+    all_reduce_bucketed(tensors, bucket_size_bytes, ReduceOp::SUM);
+}
+
+void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, size_t bucket_size_bytes,
+                         ReduceOp op) {
     if (tensors.empty()) return;
     std::vector<std::shared_ptr<Tensor>> current_bucket;
     size_t current_bucket_bytes = 0;
 
-    auto flush_bucket = [](const std::vector<std::shared_ptr<Tensor>>& bucket) {
+    auto flush_bucket = [op](const std::vector<std::shared_ptr<Tensor>>& bucket) {
         if (bucket.empty()) return;
         if (bucket.size() == 1) {
-            if (NCCLBridge::get().is_available() && bucket[0]->device.type == DeviceType::GPU) {
+            if (op == ReduceOp::SUM && NCCLBridge::get().is_available() &&
+                bucket[0]->device.type == DeviceType::GPU) {
                 OverlappedAllReducer::get().push_and_all_reduce(bucket[0]);
                 OverlappedAllReducer::get().sync();
             } else {
-                ProcessGroup::get().all_reduce(bucket[0]);
+                ProcessGroup::get().all_reduce(bucket[0], op);
             }
             return;
         }
@@ -1548,18 +1670,18 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
             if (t->device.type == DeviceType::CPU) {
                 t->storage->ensure_cpu();
                 flat_buffer->storage->ensure_cpu();
-                std::memcpy(flat_buffer->data_ptr() + offset, t->data_ptr(), n * t->storage->element_size());
+                std::memcpy(flat_buffer->raw_data_ptr() + offset, t->raw_data_ptr(), n * t->storage->element_size());
             } else {
                 rt_gpu_copy(t->gpu_data(), flat_buffer->gpu_data(), n * t->storage->element_size(), 0, offset * t->storage->element_size());
             }
             offset += n;
         }
 
-        if (NCCLBridge::get().is_available() && flat_buffer->device.type == DeviceType::GPU) {
+        if (op == ReduceOp::SUM && NCCLBridge::get().is_available() && flat_buffer->device.type == DeviceType::GPU) {
             OverlappedAllReducer::get().push_and_all_reduce(flat_buffer);
             OverlappedAllReducer::get().sync();
         } else {
-            ProcessGroup::get().all_reduce(flat_buffer);
+            ProcessGroup::get().all_reduce(flat_buffer, op);
             ProcessGroup::get().sync_comm();
         }
 
@@ -1569,7 +1691,7 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
             if (t->device.type == DeviceType::CPU) {
                 t->storage->ensure_cpu();
                 flat_buffer->storage->ensure_cpu();
-                std::memcpy(t->data_ptr(), flat_buffer->data_ptr() + offset, n * t->storage->element_size());
+                std::memcpy(t->raw_data_ptr(), flat_buffer->raw_data_ptr() + offset, n * t->storage->element_size());
             } else {
                 rt_gpu_copy(flat_buffer->gpu_data(), t->gpu_data(), n * t->storage->element_size(), offset * t->storage->element_size(), 0);
             }
@@ -1580,7 +1702,10 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
     for (auto& t : tensors) {
         if (!t) continue;
         size_t tensor_bytes = t->numel() * t->storage->element_size();
-        if (current_bucket_bytes + tensor_bytes > bucket_size_bytes && !current_bucket.empty()) {
+        bool same_layout = current_bucket.empty() ||
+            (t->dtype == current_bucket[0]->dtype && t->device == current_bucket[0]->device);
+        if ((!same_layout || current_bucket_bytes + tensor_bytes > bucket_size_bytes) &&
+            !current_bucket.empty()) {
             flush_bucket(current_bucket);
             current_bucket.clear();
             current_bucket_bytes = 0;
@@ -1654,7 +1779,14 @@ static void dist_encode(DataType dtype, char* p, double v) {
         case DataType::BF16: {
             float f = static_cast<float>(v);
             uint32_t u = *reinterpret_cast<uint32_t*>(&f);
-            *reinterpret_cast<uint16_t*>(p) = static_cast<uint16_t>(u >> 16);
+            uint32_t q = u >> 16;
+            uint16_t out;
+            if ((q & 0x7F80u) == 0x7F80u) {
+                out = static_cast<uint16_t>(q);
+            } else {
+                out = static_cast<uint16_t>((u + 0x7FFFu + (q & 1u)) >> 16);
+            }
+            *reinterpret_cast<uint16_t*>(p) = out;
             return;
         }
         case DataType::INT32:
@@ -1711,7 +1843,7 @@ static void dist_read_bytes(std::shared_ptr<Tensor> t, char* dst, size_t n) {
     if (t->device.type == DeviceType::GPU) {
         rt_gpu_read(t->gpu_data(), n, dst, t->offset * esz);
     } else {
-        std::memcpy(dst, t->data_ptr(), n);
+        std::memcpy(dst, t->raw_data_ptr(), n);
     }
 }
 
@@ -1720,20 +1852,115 @@ static void dist_write_bytes(std::shared_ptr<Tensor> t, const char* src, size_t 
     if (t->device.type == DeviceType::GPU) {
         rt_gpu_write(t->gpu_data(), n, src, t->offset * esz);
     } else {
-        std::memcpy(t->data_ptr(), src, n);
+        std::memcpy(t->raw_data_ptr(), src, n);
+    }
+}
+
+static std::string shm_abort_message(int code, int err_rank, bool self) {
+    std::string m = "distributed: shm collective aborted [dist-w6] rank " + std::to_string(err_rank);
+    if (code == (int)ShmErr::VALIDATION) m += ": validation failed";
+    else if (code == (int)ShmErr::DTYPE) m += ": unsupported dtype";
+    else if (code == (int)ShmErr::BUFFER) m += ": tensor exceeds shm buffer";
+    else m += ": unknown error";
+    if (!self) m += " (propagated from peer)";
+    return m;
+}
+
+uint64_t ProcessGroup::shm_shape_hash(const std::vector<int64_t>& shape) {
+    uint64_t h = 1469598103934665603ull;
+    h ^= (uint64_t)shape.size(); h *= 1099511628211ull;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        h ^= (uint64_t)shape[i] + 0x9e3779b97f4a7c15ull;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+uint64_t ProcessGroup::shm_shape_hash2(const std::vector<int64_t>& s1, const std::vector<int64_t>& s2) {
+    uint64_t h = shm_shape_hash(s1);
+    h ^= shm_shape_hash(s2) + 0x9e3779b97f4a7c15ull;
+    h *= 1099511628211ull;
+    return h;
+}
+
+uint64_t ProcessGroup::shm_make_sig(uint64_t tag, uint64_t sh, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    uint64_t h = 1469598103934665603ull;
+    h ^= tag; h *= 1099511628211ull;
+    h ^= sh; h *= 1099511628211ull;
+    h ^= a; h *= 1099511628211ull;
+    h ^= b; h *= 1099511628211ull;
+    h ^= c; h *= 1099511628211ull;
+    h ^= d; h *= 1099511628211ull;
+    return h;
+}
+
+int ProcessGroup::shm_proto_begin() {
+    shm_ctrl_->err[rank_].store(0);
+    return shm_ctrl_->steps[rank_].load();
+}
+
+void ProcessGroup::shm_proto_abort(int code, int cur_step) {
+    shm_ctrl_->err[rank_].store(code);
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    throw ShmAbortError(shm_abort_message(code, rank_, true));
+}
+
+void ProcessGroup::shm_proto_check_sig(uint64_t sig, int cur_step) {
+    for (int r = 0; r < world_size_; ++r) {
+        if (shm_ctrl_->sig[r].load() != sig) shm_proto_abort((int)ShmErr::VALIDATION, cur_step);
+    }
+}
+
+int ProcessGroup::shm_proto_phase1() {
+    int cur_step = shm_ctrl_->steps[rank_].load();
+    shm_ctrl_->steps[rank_].store(cur_step + 1);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 1) {
+            int code = shm_ctrl_->err[r].load();
+            if (code != 0) {
+                shm_ctrl_->steps[rank_].store(cur_step + 2);
+                throw ShmAbortError(shm_abort_message(code, r, false));
+            }
+            usleep(1);
+        }
+    }
+    for (int r = 0; r < world_size_; ++r) {
+        int code = shm_ctrl_->err[r].load();
+        if (code != 0) {
+            shm_ctrl_->steps[rank_].store(cur_step + 2);
+            throw ShmAbortError(shm_abort_message(code, r, r == rank_));
+        }
+    }
+    return cur_step;
+}
+
+void ProcessGroup::shm_proto_phase2(int cur_step) {
+    shm_ctrl_->steps[rank_].store(cur_step + 2);
+    for (int r = 0; r < world_size_; ++r) {
+        while (shm_ctrl_->steps[r].load() < cur_step + 2) {
+            int code = shm_ctrl_->err[r].load();
+            if (code != 0) {
+                throw ShmAbortError(shm_abort_message(code, r, false));
+            }
+            usleep(1);
+        }
+    }
+    for (int r = 0; r < world_size_; ++r) {
+        int code = shm_ctrl_->err[r].load();
+        if (code != 0) {
+            throw ShmAbortError(shm_abort_message(code, r, r == rank_));
+        }
     }
 }
 
 void ProcessGroup::barrier_shm() {
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
-    }
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    shm_proto_begin();
+    int cur_step = shm_proto_phase1();
+    shm_proto_phase2(cur_step);
 }
 
 void ProcessGroup::barrier_socket() {
@@ -1763,17 +1990,25 @@ void ProcessGroup::barrier() {
 }
 
 void ProcessGroup::all_reduce(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed collectives not implemented on Windows");
+#endif
     if (!initialized_ || world_size_ <= 1) return;
     if (op == ReduceOp::SUM) {
         all_reduce(tensor);
         return;
     }
+    std::lock_guard<std::mutex> coll_lock(raw_socket_mutex_);
+    check_collective_agreement(static_cast<int32_t>(tensor->dtype), tensor->shape);
     if (NCCLBridge::get().all_reduce(tensor, op)) return;
     if (all_reduce_shm(tensor, op)) return;
     all_reduce_socket_op(tensor, op);
 }
 
 std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed collectives not implemented on Windows");
+#endif
     auto promise = std::make_shared<std::promise<void>>();
     if (!initialized_ || world_size_ <= 1) {
         promise->set_value();
@@ -1788,38 +2023,52 @@ std::future<void> ProcessGroup::all_reduce_async(std::shared_ptr<Tensor> tensor,
 }
 
 bool ProcessGroup::all_reduce_shm(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
     if (op == ReduceOp::SUM) return all_reduce_shm(tensor);
     if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
-    auto work = dist_contig_in(tensor);
-    dist_require_reduce_dtype(work->dtype);
-    size_t N = work->numel();
-    size_t elem_sz = work->storage->element_size();
-    if (N * elem_sz > shm_buffer_size_) return false;
-    dist_read_bytes(work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    std::vector<char> out(N * elem_sz);
-    for (size_t j = 0; j < N; ++j) {
-        double acc = dist_op_init(op);
-        for (int r = 0; r < world_size_; ++r) {
-            const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
-            acc = dist_op_apply(op, acc, dist_decode(work->dtype, rp));
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    int cur0 = shm_proto_begin();
+    try {
+        auto work = dist_contig_in(tensor);
+        try {
+            dist_require_reduce_dtype(work->dtype);
+        } catch (...) {
+            shm_proto_abort((int)ShmErr::DTYPE, cur0);
         }
-        dist_encode(work->dtype, out.data() + j * elem_sz, dist_op_finalize(op, acc, world_size_));
-    }
-    dist_write_bytes(work, out.data(), N * elem_sz);
-    dist_contig_out(tensor, work);
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+        size_t N = work->numel();
+        size_t elem_sz = work->storage->element_size();
+        if (N * elem_sz > shm_buffer_size_) shm_proto_abort((int)ShmErr::BUFFER, cur0);
+        dist_read_bytes(work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+        uint64_t sig = shm_make_sig(5, shm_shape_hash(work->shape), (uint64_t)N, (uint64_t)work->dtype, (uint64_t)op, 0);
+        shm_ctrl_->sig[rank_].store(sig);
+        int cur_step = shm_proto_phase1();
+        shm_proto_check_sig(sig, cur_step);
+        std::vector<char> out(N * elem_sz);
+        for (size_t j = 0; j < N; ++j) {
+            double acc = dist_op_init(op);
+            for (int r = 0; r < world_size_; ++r) {
+                const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
+                acc = dist_op_apply(op, acc, dist_decode(work->dtype, rp));
+            }
+            dist_encode(work->dtype, out.data() + j * elem_sz, dist_op_finalize(op, acc, world_size_));
+        }
+        dist_write_bytes(work, out.data(), N * elem_sz);
+        dist_contig_out(tensor, work);
+        shm_proto_phase2(cur_step);
+    } catch (const ShmAbortError&) {
+        throw;
+    } catch (...) {
+        shm_proto_abort((int)ShmErr::VALIDATION, cur0);
     }
     return true;
 }
 
 void ProcessGroup::all_reduce_socket_op(std::shared_ptr<Tensor> tensor, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed collectives not implemented on Windows");
+#endif
     dist_require_reduce_dtype(tensor->dtype);
     size_t N = tensor->numel();
     size_t elem_sz = tensor->storage->element_size();
@@ -1880,31 +2129,38 @@ void ProcessGroup::all_to_all(std::shared_ptr<Tensor> input, std::shared_ptr<Ten
 }
 
 bool ProcessGroup::all_to_all_shm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
     if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
-    auto in_work = dist_contig_in(input);
-    size_t N = in_work->numel();
-    size_t elem_sz = in_work->storage->element_size();
-    if (N % (size_t)world_size_ != 0) throw std::runtime_error("all_to_all: numel not divisible by world_size");
-    if (output->numel() != (int64_t)N) throw std::runtime_error("all_to_all: output numel mismatch");
-    size_t S = N / (size_t)world_size_;
-    if (N * elem_sz > shm_buffer_size_) return false;
-    dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    auto out_work = dist_contig_in(output);
-    std::vector<char> out(N * elem_sz);
-    for (int r = 0; r < world_size_; ++r) {
-        const char* src = reinterpret_cast<const char*>(shm_buffers_[r]) + (size_t)rank_ * S * elem_sz;
-        std::memcpy(out.data() + (size_t)r * S * elem_sz, src, S * elem_sz);
-    }
-    dist_write_bytes(out_work, out.data(), N * elem_sz);
-    dist_contig_out(output, out_work);
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    int cur0 = shm_proto_begin();
+    try {
+        auto in_work = dist_contig_in(input);
+        size_t N = in_work->numel();
+        size_t elem_sz = in_work->storage->element_size();
+        if (N % (size_t)world_size_ != 0) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+        if (output->numel() != (int64_t)N) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+        size_t S = N / (size_t)world_size_;
+        if (N * elem_sz > shm_buffer_size_) shm_proto_abort((int)ShmErr::BUFFER, cur0);
+        dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+        uint64_t sig = shm_make_sig(6, shm_shape_hash(in_work->shape), (uint64_t)N, (uint64_t)in_work->dtype, 0, 0);
+        shm_ctrl_->sig[rank_].store(sig);
+        int cur_step = shm_proto_phase1();
+        shm_proto_check_sig(sig, cur_step);
+        auto out_work = dist_contig_in(output);
+        std::vector<char> out(N * elem_sz);
+        for (int r = 0; r < world_size_; ++r) {
+            const char* src = reinterpret_cast<const char*>(shm_buffers_[r]) + (size_t)rank_ * S * elem_sz;
+            std::memcpy(out.data() + (size_t)r * S * elem_sz, src, S * elem_sz);
+        }
+        dist_write_bytes(out_work, out.data(), N * elem_sz);
+        dist_contig_out(output, out_work);
+        shm_proto_phase2(cur_step);
+    } catch (const ShmAbortError&) {
+        throw;
+    } catch (...) {
+        shm_proto_abort((int)ShmErr::VALIDATION, cur0);
     }
     return true;
 }
@@ -1965,31 +2221,38 @@ void ProcessGroup::scatter(std::shared_ptr<Tensor> output, std::shared_ptr<Tenso
 }
 
 bool ProcessGroup::scatter_shm(std::shared_ptr<Tensor> output, std::shared_ptr<Tensor> input, int src) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
     if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
-    size_t S = output->numel();
-    size_t elem_sz = output->storage->element_size();
-    size_t N = S * (size_t)world_size_;
-    if (N * elem_sz > shm_buffer_size_) return false;
-    if (rank_ == src) {
-        auto in_work = dist_contig_in(input);
-        if (in_work->numel() != (int64_t)N) throw std::runtime_error("scatter: input numel mismatch");
-        if (in_work->dtype != output->dtype) throw std::runtime_error("scatter: dtype mismatch");
-        dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[src]), N * elem_sz);
-    }
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    auto out_work = dist_contig_in(output);
-    const char* srcp = reinterpret_cast<const char*>(shm_buffers_[src]) + (size_t)rank_ * S * elem_sz;
-    std::vector<char> out(S * elem_sz);
-    std::memcpy(out.data(), srcp, S * elem_sz);
-    dist_write_bytes(out_work, out.data(), S * elem_sz);
-    dist_contig_out(output, out_work);
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    int cur0 = shm_proto_begin();
+    try {
+        size_t S = output->numel();
+        size_t elem_sz = output->storage->element_size();
+        size_t N = S * (size_t)world_size_;
+        if (N * elem_sz > shm_buffer_size_) shm_proto_abort((int)ShmErr::BUFFER, cur0);
+        if (rank_ == src) {
+            auto in_work = dist_contig_in(input);
+            if (in_work->numel() != (int64_t)N) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+            if (in_work->dtype != output->dtype) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+            dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[src]), N * elem_sz);
+        }
+        uint64_t sig = shm_make_sig(7, shm_shape_hash(output->shape), (uint64_t)S, (uint64_t)N, (uint64_t)output->dtype, (uint64_t)src);
+        shm_ctrl_->sig[rank_].store(sig);
+        int cur_step = shm_proto_phase1();
+        shm_proto_check_sig(sig, cur_step);
+        auto out_work = dist_contig_in(output);
+        const char* srcp = reinterpret_cast<const char*>(shm_buffers_[src]) + (size_t)rank_ * S * elem_sz;
+        std::vector<char> out(S * elem_sz);
+        std::memcpy(out.data(), srcp, S * elem_sz);
+        dist_write_bytes(out_work, out.data(), S * elem_sz);
+        dist_contig_out(output, out_work);
+        shm_proto_phase2(cur_step);
+    } catch (const ShmAbortError&) {
+        throw;
+    } catch (...) {
+        shm_proto_abort((int)ShmErr::VALIDATION, cur0);
     }
     return true;
 }
@@ -2037,31 +2300,38 @@ void ProcessGroup::gather(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor>
 }
 
 bool ProcessGroup::gather_shm(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> output, int dst) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
     if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
-    auto in_work = dist_contig_in(input);
-    size_t S = in_work->numel();
-    size_t elem_sz = in_work->storage->element_size();
-    size_t N = S * (size_t)world_size_;
-    if (N * elem_sz > shm_buffer_size_) return false;
-    if (rank_ == dst && output->numel() != (int64_t)N) throw std::runtime_error("gather: output numel mismatch");
-    dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), S * elem_sz);
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    if (rank_ == dst) {
-        auto out_work = dist_contig_in(output);
-        std::vector<char> out(N * elem_sz);
-        for (int r = 0; r < world_size_; ++r) {
-            std::memcpy(out.data() + (size_t)r * S * elem_sz, shm_buffers_[r], S * elem_sz);
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    int cur0 = shm_proto_begin();
+    try {
+        auto in_work = dist_contig_in(input);
+        size_t S = in_work->numel();
+        size_t elem_sz = in_work->storage->element_size();
+        size_t N = S * (size_t)world_size_;
+        if (N * elem_sz > shm_buffer_size_) shm_proto_abort((int)ShmErr::BUFFER, cur0);
+        if (rank_ == dst && output->numel() != (int64_t)N) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+        dist_read_bytes(in_work, reinterpret_cast<char*>(shm_buffers_[rank_]), S * elem_sz);
+        uint64_t sig = shm_make_sig(8, shm_shape_hash(in_work->shape), (uint64_t)S, (uint64_t)N, (uint64_t)in_work->dtype, (uint64_t)dst);
+        shm_ctrl_->sig[rank_].store(sig);
+        int cur_step = shm_proto_phase1();
+        shm_proto_check_sig(sig, cur_step);
+        if (rank_ == dst) {
+            auto out_work = dist_contig_in(output);
+            std::vector<char> out(N * elem_sz);
+            for (int r = 0; r < world_size_; ++r) {
+                std::memcpy(out.data() + (size_t)r * S * elem_sz, shm_buffers_[r], S * elem_sz);
+            }
+            dist_write_bytes(out_work, out.data(), N * elem_sz);
+            dist_contig_out(output, out_work);
         }
-        dist_write_bytes(out_work, out.data(), N * elem_sz);
-        dist_contig_out(output, out_work);
-    }
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+        shm_proto_phase2(cur_step);
+    } catch (const ShmAbortError&) {
+        throw;
+    } catch (...) {
+        shm_proto_abort((int)ShmErr::VALIDATION, cur0);
     }
     return true;
 }
@@ -2093,6 +2363,9 @@ void ProcessGroup::gather_socket(std::shared_ptr<Tensor> input, std::shared_ptr<
 }
 
 void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed collectives not implemented on Windows");
+#endif
     if (!initialized_ || world_size_ <= 1) {
         shard->copy_(full);
         return;
@@ -2107,38 +2380,49 @@ void ProcessGroup::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr
 }
 
 bool ProcessGroup::reduce_scatter_shm(std::shared_ptr<Tensor> shard, std::shared_ptr<Tensor> full, ReduceOp op) {
+#ifdef _WIN32
+    throw std::runtime_error("distributed: shm transport unavailable on Windows [dist-w6]");
+#endif
     if (op == ReduceOp::SUM) return reduce_scatter_shm(shard, full);
     if (!use_shm_ || !shm_ctrl_ || !shm_buffers_[rank_]) return false;
-    auto full_work = dist_contig_in(full);
-    auto shard_work = dist_contig_in(shard);
-    dist_require_reduce_dtype(full_work->dtype);
-    size_t N = full_work->numel();
-    size_t elem_sz = full_work->storage->element_size();
-    if (N % (size_t)world_size_ != 0) throw std::runtime_error("reduce_scatter: numel not divisible by world_size");
-    size_t S = N / (size_t)world_size_;
-    if (shard_work->numel() != (int64_t)S) throw std::runtime_error("reduce_scatter: shard numel mismatch");
-    if (N * elem_sz > shm_buffer_size_) return false;
-    dist_read_bytes(full_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
-    int cur_step = shm_ctrl_->steps[rank_].load();
-    shm_ctrl_->steps[rank_].store(cur_step + 1);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 1) usleep(1);
-    }
-    std::vector<char> out(S * elem_sz);
-    for (size_t k = 0; k < S; ++k) {
-        size_t j = (size_t)rank_ * S + k;
-        double acc = dist_op_init(op);
-        for (int r = 0; r < world_size_; ++r) {
-            const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
-            acc = dist_op_apply(op, acc, dist_decode(full_work->dtype, rp));
+    std::lock_guard<std::mutex> lock(shm_step_mutex_);
+    int cur0 = shm_proto_begin();
+    try {
+        auto full_work = dist_contig_in(full);
+        auto shard_work = dist_contig_in(shard);
+        try {
+            dist_require_reduce_dtype(full_work->dtype);
+        } catch (...) {
+            shm_proto_abort((int)ShmErr::DTYPE, cur0);
         }
-        dist_encode(shard_work->dtype, out.data() + k * elem_sz, dist_op_finalize(op, acc, world_size_));
-    }
-    dist_write_bytes(shard_work, out.data(), S * elem_sz);
-    dist_contig_out(shard, shard_work);
-    shm_ctrl_->steps[rank_].store(cur_step + 2);
-    for (int r = 0; r < world_size_; ++r) {
-        while (shm_ctrl_->steps[r].load() < cur_step + 2) usleep(1);
+        size_t N = full_work->numel();
+        size_t elem_sz = full_work->storage->element_size();
+        if (N % (size_t)world_size_ != 0) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+        size_t S = N / (size_t)world_size_;
+        if (shard_work->numel() != (int64_t)S) shm_proto_abort((int)ShmErr::VALIDATION, cur0);
+        if (N * elem_sz > shm_buffer_size_) shm_proto_abort((int)ShmErr::BUFFER, cur0);
+        dist_read_bytes(full_work, reinterpret_cast<char*>(shm_buffers_[rank_]), N * elem_sz);
+        uint64_t sig = shm_make_sig(9, shm_shape_hash2(shard_work->shape, full_work->shape), (uint64_t)S, (uint64_t)N, (uint64_t)full_work->dtype, (uint64_t)op);
+        shm_ctrl_->sig[rank_].store(sig);
+        int cur_step = shm_proto_phase1();
+        shm_proto_check_sig(sig, cur_step);
+        std::vector<char> out(S * elem_sz);
+        for (size_t k = 0; k < S; ++k) {
+            size_t j = (size_t)rank_ * S + k;
+            double acc = dist_op_init(op);
+            for (int r = 0; r < world_size_; ++r) {
+                const char* rp = reinterpret_cast<const char*>(shm_buffers_[r]) + j * elem_sz;
+                acc = dist_op_apply(op, acc, dist_decode(full_work->dtype, rp));
+            }
+            dist_encode(shard_work->dtype, out.data() + k * elem_sz, dist_op_finalize(op, acc, world_size_));
+        }
+        dist_write_bytes(shard_work, out.data(), S * elem_sz);
+        dist_contig_out(shard, shard_work);
+        shm_proto_phase2(cur_step);
+    } catch (const ShmAbortError&) {
+        throw;
+    } catch (...) {
+        shm_proto_abort((int)ShmErr::VALIDATION, cur0);
     }
     return true;
 }
@@ -2177,11 +2461,60 @@ void DistributedDataParallel::backward(std::shared_ptr<Tensor> loss, std::shared
 }
 
 void DistributedDataParallel::sync_grads() {
+    if (no_sync_) return;
+    auto& pg = ProcessGroup::get();
+    if (!pg.is_initialized() || pg.get_world_size() <= 1) return;
+    std::vector<std::shared_ptr<Tensor>> grads;
+    size_t missing = 0;
     for (auto& p : module->parameters()) {
-        if (p && p->requires_grad && p->grad) {
-            ProcessGroup::get().all_reduce(p->grad, reduce_op);
-        }
+        if (!p || !p->requires_grad) continue;
+        if (p->grad) grads.push_back(p->grad);
+        else ++missing;
     }
+    if (missing > 0) {
+        if (find_unused_params_)
+            throw std::runtime_error("[litetorch Error] DistributedDataParallel: " +
+                                     std::to_string(missing) +
+                                     " parameter(s) received no gradient; check the model or disable find_unused_parameters");
+        std::fprintf(stderr,
+                     "[litetorch Warning] DistributedDataParallel: %zu parameter(s) have no grad and were skipped in sync_grads\n",
+                     missing);
+    }
+    all_reduce_bucketed(grads, bucket_bytes_, reduce_op);
+}
+
+void DistributedDataParallel::set_no_sync(bool skip) {
+    no_sync_ = skip;
+}
+
+bool DistributedDataParallel::no_sync() const {
+    return no_sync_;
+}
+
+void DistributedDataParallel::set_find_unused_parameters(bool enable) {
+    find_unused_params_ = enable;
+}
+
+bool DistributedDataParallel::find_unused_parameters() const {
+    return find_unused_params_;
+}
+
+void DistributedDataParallel::set_bucket_size_bytes(size_t bytes) {
+    if (bytes == 0)
+        throw std::runtime_error("[litetorch Error] DistributedDataParallel: bucket size must be > 0");
+    bucket_bytes_ = bytes;
+}
+
+size_t DistributedDataParallel::bucket_size_bytes() const {
+    return bucket_bytes_;
+}
+
+DDPNoSyncGuard::DDPNoSyncGuard(DistributedDataParallel& ddp) : ddp_(ddp), prev_(ddp.no_sync()) {
+    ddp_.set_no_sync(true);
+}
+
+DDPNoSyncGuard::~DDPNoSyncGuard() {
+    ddp_.set_no_sync(prev_);
 }
 
 std::vector<std::shared_ptr<Tensor>> DistributedDataParallel::parameters() {

@@ -72,7 +72,7 @@ public:
 
             float* d_out = cpu_gout->data_ptr();
             float* in_ptr = cpu_in->data_ptr();
-            float* idx_ptr = cpu_indices->data_ptr();
+            int64_t* idx_ptr = reinterpret_cast<int64_t*>(cpu_indices->raw_data_ptr());
             float* p_ptr = cpu_probs->data_ptr();
             float* gi_ptr = cpu_gin->data_ptr();
             float* gp_ptr = cpu_gprobs->data_ptr();
@@ -96,7 +96,7 @@ public:
 
                 for (int64_t i = 0; i < N; ++i) {
                     for (int k = 0; k < top_k; ++k) {
-                        int exp_idx = static_cast<int>(idx_ptr[i * top_k + k]);
+                        int64_t exp_idx = idx_ptr[i * top_k + k];
                         if (exp_idx == e) {
                             float p = p_ptr[i * top_k + k];
 
@@ -206,7 +206,7 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
         
         float* in_ptr = cpu_in->data_ptr();
         float* p_ptr = cpu_probs->data_ptr();
-        float* idx_ptr = cpu_indices->data_ptr();
+        int64_t* idx_ptr = reinterpret_cast<int64_t*>(cpu_indices->raw_data_ptr());
         float* out_ptr = cpu_out->data_ptr();
 
         for (int e = 0; e < num_experts; ++e) {
@@ -218,7 +218,7 @@ std::shared_ptr<Tensor> MoELinear::forward(std::shared_ptr<Tensor> input) {
 
             for (int64_t i = 0; i < N; ++i) {
                 for (int k = 0; k < top_k; ++k) {
-                    int exp_idx = static_cast<int>(idx_ptr[i * top_k + k]);
+                    int64_t exp_idx = idx_ptr[i * top_k + k];
                     if (exp_idx == e) {
                         float p = p_ptr[i * top_k + k];
                         for (int64_t o = 0; o < out_features; ++o) {

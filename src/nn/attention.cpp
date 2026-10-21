@@ -12,7 +12,7 @@ std::shared_ptr<Tensor> ensure_contiguous(std::shared_ptr<Tensor> t) {
     return t->is_contiguous() ? t : t->contiguous();
 }
 
-bool is_integer_dtype(DataType dt) {
+bool is_int_mask_dtype(DataType dt) {
     return dt == DataType::INT32 || dt == DataType::INT16 ||
            dt == DataType::INT8 || dt == DataType::INT4;
 }
@@ -37,7 +37,7 @@ std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
         if (!is_2d && !is_3d) {
             throw std::runtime_error("[litetorch Error] MultiHeadAttention: attn_mask must have shape (Tq, Tk) or (B*num_heads, Tq, Tk)");
         }
-        bool is_bool_like = is_integer_dtype(mc->dtype);
+        bool is_bool_like = is_int_mask_dtype(mc->dtype);
         auto vals = mc->to_vector();
         for (int64_t bh = 0; bh < BH; ++bh) {
             for (int64_t i = 0; i < Tq; ++i) {
@@ -59,7 +59,7 @@ std::shared_ptr<Tensor> build_additive_mask(std::shared_ptr<Tensor> attn_mask,
             throw std::runtime_error("[litetorch Error] MultiHeadAttention: key_padding_mask must have shape (B, Tk)");
         }
         auto vals = mc->to_vector();
-        bool is_bool_like = is_integer_dtype(mc->dtype);
+        bool is_bool_like = is_int_mask_dtype(mc->dtype);
         for (int64_t b = 0; b < B; ++b) {
             for (int64_t j = 0; j < Tk; ++j) {
                 float v = vals[b * Tk + j];

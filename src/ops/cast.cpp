@@ -39,6 +39,7 @@ std::shared_ptr<Tensor> cast(std::shared_ptr<Tensor> a, DataType target_dtype) {
         node->inputs = { {a, a->requires_grad} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {};
+        node->saved_versions = {};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

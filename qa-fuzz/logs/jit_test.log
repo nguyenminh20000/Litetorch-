@@ -1,0 +1,16 @@
+--- Testing JIT on CPU ---
+CPU Element 0: Sequential=1.39957, JIT=1.39957
+CPU Element 1: Sequential=1.9546, JIT=1.9546
+CPU Element 2: Sequential=-0, JIT=-0
+CPU Element 3: Sequential=-0.0454023, JIT=-0.0454023
+CPU JIT matches Sequential!
+
+GPU not available, skipping GPU tests.
+
+--- Testing Automated Graph Capture / Tracing ---
+Traced Element 0: Eager=1.5, Traced=1.5
+Traced Element 1: Eager=3, Traced=3
+Traced Element 2: Eager=5, Traced=5
+Automated Tracing matched eager execution!
+
+SUCCESS: JIT Elementwise compilation verified!

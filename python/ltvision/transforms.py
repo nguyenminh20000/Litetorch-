@@ -24,6 +24,12 @@ def _to_pil(img):
     raise TypeError("expected PIL Image or litetorch Tensor")
 
 
+def _restore_type(out, img):
+    if isinstance(img, lt.Tensor):
+        return ToTensor()(out)
+    return out
+
+
 class Compose:
     def __init__(self, transforms):
         self.transforms = transforms
@@ -136,7 +142,7 @@ class Resize:
         resample = {"bilinear": Image.BILINEAR, "nearest": Image.NEAREST,
                     "bicubic": Image.BICUBIC, "lanczos": Image.LANCZOS}.get(self.interpolation, Image.BILINEAR)
         out = pil.resize((self.size[1], self.size[0]), resample)
-        return out if isinstance(img, Image.Image) or _PIL else out
+        return _restore_type(out, img)
 
     def __repr__(self):
         return "Resize(size=%s)" % (self.size,)
@@ -155,7 +161,7 @@ class CenterCrop:
         w, h = pil.size
         top = max(0, (h - th) // 2)
         left = max(0, (w - tw) // 2)
-        return pil.crop((left, top, left + tw, top + th))
+        return _restore_type(pil.crop((left, top, left + tw, top + th)), img)
 
     def __repr__(self):
         return "CenterCrop(size=%s)" % (self.size,)
@@ -187,7 +193,7 @@ class RandomCrop:
             raise ValueError("image smaller than crop size")
         top = random.randint(0, h - th)
         left = random.randint(0, w - tw)
-        return pil.crop((left, top, left + tw, top + th))
+        return _restore_type(pil.crop((left, top, left + tw, top + th)), img)
 
     def __repr__(self):
         return "RandomCrop(size=%s)" % (self.size,)
@@ -200,8 +206,8 @@ class RandomHorizontalFlip:
     def __call__(self, img):
         pil = _to_pil(img)
         if random.random() < self.p:
-            return ImageOps.mirror(pil)
-        return pil
+            pil = ImageOps.mirror(pil)
+        return _restore_type(pil, img)
 
     def __repr__(self):
         return "RandomHorizontalFlip(p=%s)" % self.p
@@ -214,8 +220,8 @@ class RandomVerticalFlip:
     def __call__(self, img):
         pil = _to_pil(img)
         if random.random() < self.p:
-            return ImageOps.flip(pil)
-        return pil
+            pil = ImageOps.flip(pil)
+        return _restore_type(pil, img)
 
     def __repr__(self):
         return "RandomVerticalFlip(p=%s)" % self.p
@@ -229,7 +235,7 @@ class Grayscale:
         pil = _to_pil(img).convert("L")
         if self.num_output_channels == 3:
             pil = pil.convert("RGB")
-        return pil
+        return _restore_type(pil, img)
 
     def __repr__(self):
         return "Grayscale(num_output_channels=%d)" % self.num_output_channels
@@ -256,7 +262,7 @@ class ColorJitter:
         if self.hue > 0:
             shift = random.uniform(-self.hue, self.hue)
             pil = _shift_hue(pil, shift)
-        return pil
+        return _restore_type(pil, img)
 
     def __repr__(self):
         return "ColorJitter(brightness=%s, contrast=%s, saturation=%s, hue=%s)" % (
@@ -317,7 +323,7 @@ class RandomRotation:
     def __call__(self, img):
         pil = _to_pil(img)
         angle = random.uniform(self.degrees[0], self.degrees[1])
-        return pil.rotate(angle, expand=self.expand)
+        return _restore_type(pil.rotate(angle, expand=self.expand), img)
 
     def __repr__(self):
         return "RandomRotation(degrees=%s)" % (self.degrees,)
@@ -331,7 +337,7 @@ class Pad:
 
     def __call__(self, img):
         pil = _to_pil(img)
-        return ImageOps.expand(pil, border=self.padding, fill=self.fill)
+        return _restore_type(ImageOps.expand(pil, border=self.padding, fill=self.fill), img)
 
     def __repr__(self):
         return "Pad(padding=%s)" % (self.padding,)

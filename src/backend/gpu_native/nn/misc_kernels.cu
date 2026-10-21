@@ -280,6 +280,58 @@ extern "C" __global__ void embedding_backward(
                   grad_output[gout_off + i * embedding_dim + d]);
     }
 }
+
+extern "C" __global__ void embedding_zero_padding_rows_i64(
+    const int64_t* input, int in_off,
+    float* out, int out_off,
+    int num_indices, int embedding_dim, int padding_idx)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_indices) return;
+    if (input[in_off + i] == padding_idx) {
+        for (int d = 0; d < embedding_dim; ++d) {
+            out[out_off + i * embedding_dim + d] = 0.0f;
+        }
+    }
+}
+
+extern "C" __global__ void embedding_backward_i64(
+    const int64_t* input, int in_off,
+    const float* grad_output, int gout_off,
+    float* grad_weight, int gw_off,
+    int num_indices, int num_embeddings, int embedding_dim)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_indices) return;
+    int64_t idx = input[in_off + i];
+    if (idx < 0 || idx >= num_embeddings) return;
+    for (int d = 0; d < embedding_dim; ++d) {
+        int64_t gwidx = (int64_t)gw_off + idx * (int64_t)embedding_dim + d;
+        atomicAdd(&grad_weight[gwidx],
+                  grad_output[gout_off + i * embedding_dim + d]);
+    }
+}
+
+extern "C" __global__ void embedding_forward_i64(
+    const int64_t* input, int in_off,
+    const float* weight, int w_off,
+    float* output, int out_off,
+    int num_indices, int num_embeddings, int embedding_dim)
+{
+    int idx_thread = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx_thread >= num_indices * embedding_dim) return;
+
+    int i = idx_thread / embedding_dim;
+    int d = idx_thread % embedding_dim;
+
+    int64_t idx = input[in_off + i];
+    if (idx >= 0 && idx < num_embeddings) {
+        int64_t widx = (int64_t)w_off + idx * (int64_t)embedding_dim + d;
+        output[out_off + i * embedding_dim + d] = weight[widx];
+    } else {
+        output[out_off + i * embedding_dim + d] = 0.0f;
+    }
+}
 extern "C" __global__ void generate_dropout_mask(
     float* mask, int mask_off,
     float p, float scale, unsigned int seed, int size)
@@ -428,7 +480,7 @@ extern "C" __global__ void w8a8_matmul_kernel(
 __global__ void moe_gate_kernel(
     const float* logits, int l_off,
     float* probs, int p_off,
-    float* indices, int idx_off,
+    int64_t* indices, int idx_off,
     int N, int E, int top_k)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -474,7 +526,7 @@ __global__ void moe_gate_kernel(
 
     for (int k = 0; k < top_k && k < 8; ++k) {
         probs[p_off + i * top_k + k] = top_p[k] / (sum_top_k + 1e-9f);
-        indices[idx_off + i * top_k + k] = static_cast<float>(top_idx[k]);
+        indices[idx_off + i * top_k + k] = top_idx[k];
     }
 }
 
@@ -483,7 +535,7 @@ __global__ void moe_gate_backward_kernel(
     const float* input, int in_off,
     const float* gate_weight, int gw_off,
     const float* probs, int p_off,
-    const float* indices, int idx_off,
+    const int64_t* indices, int idx_off,
     float* grad_input, int gin_off,
     float* grad_gate_weight, int ggw_off,
     int N, int D, int E, int top_k)
@@ -509,7 +561,7 @@ __global__ void moe_gate_backward_kernel(
     }
     float T = 0.0f;
     for (int k = 0; k < top_k; ++k) {
-        int e = static_cast<int>(indices[idx_off + i * top_k + k]);
+        int64_t e = indices[idx_off + i * top_k + k];
         if (e >= 0 && e < E) {
             float logit = 0.0f;
             for (int d = 0; d < D; ++d) {
@@ -524,7 +576,7 @@ __global__ void moe_gate_backward_kernel(
     }
 
     for (int k = 0; k < top_k; ++k) {
-        int e = static_cast<int>(indices[idx_off + i * top_k + k]);
+        int64_t e = indices[idx_off + i * top_k + k];
         if (e >= 0 && e < E) {
             float p = probs[p_off + i * top_k + k];
             float ds = (grad_output[gout_off + i * top_k + k] - sum_dp_p) / (T + 1e-9f);
@@ -542,7 +594,7 @@ __global__ void moe_gate_backward_kernel(
                 float s_ee = expf(logit_ee - max_logit) / (sum_exp + 1e-9f);
                 float ds_ee = 0.0f;
                 for (int kk = 0; kk < top_k; ++kk) {
-                    int ek = static_cast<int>(indices[idx_off + i * top_k + kk]);
+                    int64_t ek = indices[idx_off + i * top_k + kk];
                     if (ek == ee) {
                         ds_ee = (grad_output[gout_off + i * top_k + kk] - sum_dp_p) / (T + 1e-9f);
                         break;
@@ -564,7 +616,7 @@ __global__ void moe_expert_forward_kernel(
     const float* expert_weight, int ew_off,
     const float* expert_bias, int eb_off,
     const float* probs, int p_off,
-    const float* indices, int idx_off,
+    const int64_t* indices, int idx_off,
     float* output, int out_off,
     int N, int D, int out_features, int expert_idx, int top_k)
 {
@@ -572,7 +624,7 @@ __global__ void moe_expert_forward_kernel(
     if (i >= N) return;
 
     for (int k = 0; k < top_k; ++k) {
-        int exp_idx = static_cast<int>(indices[idx_off + i * top_k + k]);
+        int64_t exp_idx = indices[idx_off + i * top_k + k];
         if (exp_idx == expert_idx) {
             float p = probs[p_off + i * top_k + k];
             for (int o = 0; o < out_features; ++o) {
@@ -593,7 +645,7 @@ __global__ void moe_expert_backward_kernel(
     const float* expert_weight, int ew_off,
     const float* expert_bias, int eb_off,
     const float* probs, int p_off,
-    const float* indices, int idx_off,
+    const int64_t* indices, int idx_off,
     float* grad_input, int gin_off,
     float* grad_expert, int ge_off,
     float* grad_bias, int gb_off,
@@ -604,7 +656,7 @@ __global__ void moe_expert_backward_kernel(
     if (i >= N) return;
 
     for (int k = 0; k < top_k; ++k) {
-        int exp_idx = static_cast<int>(indices[idx_off + i * top_k + k]);
+        int64_t exp_idx = indices[idx_off + i * top_k + k];
         if (exp_idx == expert_idx) {
             float p = probs[p_off + i * top_k + k];
             for (int o = 0; o < out_features; ++o) {
@@ -636,9 +688,9 @@ extern "C" void gpu_moe_gate(void* logits, int l_off, void* probs, int p_off, vo
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_gate_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
+    moe_gate_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)logits, l_off, (float*)probs, p_off, (int64_t*)indices, idx_off, N, E, top_k);
 #else
-    hipLaunchKernelGGL(moe_gate_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)logits, l_off, (float*)probs, p_off, (float*)indices, idx_off, N, E, top_k);
+    hipLaunchKernelGGL(moe_gate_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)logits, l_off, (float*)probs, p_off, (int64_t*)indices, idx_off, N, E, top_k);
 #endif
 }
 
@@ -648,9 +700,9 @@ extern "C" void gpu_moe_gate_backward(void* grad_output, int gout_off, void* inp
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_gate_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
+    moe_gate_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
 #else
-    hipLaunchKernelGGL(moe_gate_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
+    hipLaunchKernelGGL(moe_gate_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)gate_weight, gw_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_gate_weight, ggw_off, N, D, E, top_k);
 #endif
 }
 
@@ -660,9 +712,9 @@ extern "C" void gpu_moe_expert_forward(void* input, int in_off, void* expert_wei
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_expert_forward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
+    moe_expert_forward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
 #else
-    hipLaunchKernelGGL(moe_expert_forward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
+    hipLaunchKernelGGL(moe_expert_forward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)output, out_off, N, D, out_features, expert_idx, top_k);
 #endif
 }
 
@@ -672,8 +724,8 @@ extern "C" void gpu_moe_expert_backward(void* grad_output, int gout_off, void* i
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
 #ifndef __HIP_PLATFORM_AMD__
-    moe_expert_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
+    moe_expert_backward_kernel<<<blocks, threads, 0, dev_stream(current_device())>>>((const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
 #else
-    hipLaunchKernelGGL(moe_expert_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const float*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
+    hipLaunchKernelGGL(moe_expert_backward_kernel, dim3(blocks), dim3(threads), 0, dev_stream(current_device()), (const float*)grad_output, gout_off, (const float*)input, in_off, (const float*)expert_weight, ew_off, (const float*)expert_bias, eb_off, (const float*)probs, p_off, (const int64_t*)indices, idx_off, (float*)grad_input, gin_off, (float*)grad_expert, ge_off, (float*)grad_bias, gb_off, (float*)grad_probs, gp_off, N, D, out_features, expert_idx, top_k);
 #endif
 }

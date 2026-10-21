@@ -4,12 +4,15 @@
 #include "litetorch/cl_backend.h"
 #include "litetorch/backend.h"
 #include "litetorch/backend_route.h"
+#include "litetorch/amp.h"
+#include "autocast_policy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
@@ -20,19 +23,7 @@ inline void* cached_kernel() {
     static void* k = rt_gpu_get_kernel_by_id(ID);
     return k;
 }
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+
 inline uint16_t act_float_to_half(float f) {
     uint32_t x = *reinterpret_cast<uint32_t*>(&f);
     uint32_t sign = (x >> 16) & 0x8000;
@@ -86,14 +77,14 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = input_c->gpu_data();
-                int in_off = input_c->offset;
+                int64_t in_off = input_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
-                int gout_off = gout_c->offset;
+                int64_t gout_off = gout_c->offset;
                 cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
+                int64_t gin_off = grad_input->offset;
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         }
         if (!run_gpu) {
@@ -134,8 +125,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sigmoid backward: saved output tensor missing");
+        auto out = saved_tensors[0];
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
@@ -152,14 +143,14 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
-                int out_off = out_c->offset;
+                int64_t out_off = out_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
-                int gout_off = gout_c->offset;
+                int64_t gout_off = gout_c->offset;
                 cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
+                int64_t gin_off = grad_input->offset;
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&out_mem, &out_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         }
         if (!run_gpu) {
@@ -201,8 +192,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Tanh backward: saved output tensor missing");
+        auto out = saved_tensors[0];
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
@@ -219,14 +210,14 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem out_mem = out_c->gpu_data();
-                int out_off = out_c->offset;
+                int64_t out_off = out_c->offset;
                 cl_mem gout_mem = gout_c->gpu_data();
-                int gout_off = gout_c->offset;
+                int64_t gout_off = gout_c->offset;
                 cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
+                int64_t gin_off = grad_input->offset;
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&out_mem, &out_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &size},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
             }
         }
         if (!run_gpu) {
@@ -281,15 +272,15 @@ public:
             if (kernel) {
                 run_gpu = true;
                 cl_mem in_mem = input_c->gpu_data();
-                int in_off = input_c->offset;
+                int64_t in_off = input_c->offset;
                 cl_mem gout_mem = grad_output->is_contiguous() ? grad_output->gpu_data() : gout_c->gpu_data();
-                int gout_off = grad_output->is_contiguous() ? grad_output->offset : gout_c->offset;
+                int64_t gout_off = grad_output->is_contiguous() ? grad_output->offset : gout_c->offset;
                 cl_mem gin_mem = grad_input->gpu_data();
-                int gin_off = grad_input->offset;
+                int64_t gin_off = grad_input->offset;
                 float ns = negative_slope;
                 rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
                     {&in_mem, &in_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &size, &ns},
-                    {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(float)});
+                    {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t), sizeof(float)});
             }
         }
         if (!run_gpu) {
@@ -315,8 +306,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = output.lock();
-        if (!out) return { nullptr };
+        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Softmax backward: saved output tensor missing");
+        auto out = saved_tensors[0];
         auto out_c = out->is_contiguous() ? out : out->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
@@ -460,12 +451,12 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
         auto kernel = cached_kernel<KernelID::ReLU>();
         if (kernel) {
             run_gpu = true;
-            int size = out->numel();
+            int64_t size = out->numel();
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
-            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -488,6 +479,7 @@ std::shared_ptr<Tensor> relu(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -513,12 +505,12 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
         auto kernel = cached_kernel<KernelID::Sigmoid>();
         if (kernel) {
             run_gpu = true;
-            int size = out->numel();
+            int64_t size = out->numel();
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
-            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -541,6 +533,7 @@ std::shared_ptr<Tensor> sigmoid(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {out};
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -566,12 +559,12 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
         auto kernel = cached_kernel<KernelID::Tanh>();
         if (kernel) {
             run_gpu = true;
-            int size = out->numel();
+            int64_t size = out->numel();
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
-            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -594,6 +587,7 @@ std::shared_ptr<Tensor> tanh(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {out};
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -616,12 +610,12 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
         auto kernel = cached_kernel<KernelID::LeakyReluForward>();
         if (kernel) {
             run_gpu = true;
-            int size = out->numel();
+            int64_t size = out->numel();
             cl_mem a_mem = a_c->gpu_data();
             cl_mem b_mem = out->gpu_data();
-            int a_off = a_c->offset;
-            int b_off = out->offset;
-            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &negative_slope, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int), sizeof(float), sizeof(cl_mem), sizeof(int), sizeof(int)});
+            int64_t a_off = a_c->offset;
+            int64_t b_off = out->offset;
+            rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {}, {&a_mem, &a_off, &negative_slope, &b_mem, &b_off, &size}, {sizeof(cl_mem), sizeof(int64_t), sizeof(float), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
         }
     }
     if (!run_gpu) {
@@ -644,6 +638,7 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -652,6 +647,11 @@ std::shared_ptr<Tensor> leaky_relu(std::shared_ptr<Tensor> a, float negative_slo
 }
 
 std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
+    if (amp::autocast_fp32_only("softmax") && a->dtype != DataType::FP32) {
+        auto target = amp::AutocastGuard::get_dtype();
+        auto out_fp32 = softmax(cast(a, DataType::FP32), dim);
+        return cast(out_fp32, target);
+    }
     if (a->dtype != DataType::FP32) {
         auto a_fp32 = cast(a, DataType::FP32);
         auto out_fp32 = softmax(a_fp32, dim);
@@ -742,6 +742,7 @@ std::shared_ptr<Tensor> softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = {out};
+        node->saved_versions = {(out ? out->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -807,6 +808,7 @@ std::shared_ptr<Tensor> gelu(std::shared_ptr<Tensor> a) {
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
         node->saved_tensors = { a, save_tanh };
+        node->saved_versions = {(a ? a->_version() : 0), (save_tanh ? save_tanh->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

@@ -38,6 +38,12 @@ void bind_cuda(py::module_& m) {
         cuda_mod.def("memory_allocated", []() -> size_t {
             return litetorch::MemoryManager::get().get_gpu_used();
         });
+        cuda_mod.def("synchronize", []() {
+            auto backend = litetorch::BackendDispatcher::get().get_backend();
+            if (backend && backend->is_available()) {
+                backend->finish();
+            }
+        });
         // === W1-T2 tensor-api ===
         cuda_mod.def("is_available", &litetorch::cuda::is_available);
         cuda_mod.def("device_count", &litetorch::cuda::device_count);

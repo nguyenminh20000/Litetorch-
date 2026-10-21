@@ -262,7 +262,7 @@ class BuildExt(build_ext):
                             sys.stdout.write("[litetorch] cuDNN not found (runtime dynamic-load will fall back)\n")
                         sys.stdout.flush()
                         cmd = [
-                            nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                            nvcc_bin, "-O3", "--shared", "--extended-lambda", "-Xcompiler", "-fPIC",
                             f"-arch={cuda_arch}",
                             f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                             cu_src, "-o", out_so,
@@ -272,7 +272,7 @@ class BuildExt(build_ext):
                             res = subprocess.run(cmd, capture_output=True, text=True)
                             if res.returncode != 0:
                                 cmd_fallback = [
-                                    nvcc_bin, "-O3", "--shared", "-Xcompiler", "-fPIC",
+                                    nvcc_bin, "-O3", "--shared", "--extended-lambda", "-Xcompiler", "-fPIC",
                                     f"-I{inc1}", f"-I{inc2}", f"-I{inc3}",
                                     cu_src, "-o", out_so,
                                     "-lcublas", "-lcublasLt"

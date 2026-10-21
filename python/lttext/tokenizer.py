@@ -4,6 +4,7 @@ import unicodedata
 
 def _basic_english_normalize(text):
     text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     text = text.lower()
     return text
 

@@ -25,6 +25,14 @@ def _colsum(x):
     return lt.Ops.matmul(x, ones).reshape([b])
 
 
+def _index_tensor(bag):
+    data = [float(i) for i in bag]
+    dt = getattr(lt.DataType, "INT64", None)
+    if dt is not None:
+        return lt.Tensor.from_vector(data, [len(bag)], lt.Device("cpu"), False, dt)
+    return lt.Tensor.from_vector(data, [len(bag)])
+
+
 class EmbeddingBag(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, mode="sum"):
         super().__init__()
@@ -62,7 +70,7 @@ class EmbeddingBag(nn.Module):
             if len(bag) == 0:
                 outs.append(lt.Tensor.zeros([self.embedding_dim]))
                 continue
-            t = lt.Tensor.from_vector([float(i) for i in bag], [len(bag)])
+            t = _index_tensor(bag)
             outs.append(self._pool(self.emb.forward(t)))
         return lt.Ops.cat([o.reshape([1, self.embedding_dim]) for o in outs], 0)
 
@@ -128,6 +136,7 @@ class DLRM(nn.Module):
                  bottom_dims=(), top_dims=()):
         super().__init__()
         self.embedding_dim = embedding_dim
+        self.dense_dim = dense_dim
         self.embs = [nn.Embedding(n, embedding_dim) for n in num_embeddings_list]
         bottom = [dense_dim] + list(bottom_dims) + [embedding_dim]
         self.bottom_mlp = MLP(bottom) if len(bottom) > 1 else None
@@ -145,7 +154,14 @@ class DLRM(nn.Module):
 
     def forward(self, dense_x, sparse_inputs):
         feats = []
-        d = self.bottom_mlp.forward(dense_x) if self.bottom_mlp is not None else dense_x
+        if self.bottom_mlp is not None:
+            d = self.bottom_mlp.forward(dense_x)
+        else:
+            if dense_x.shape[1] != self.embedding_dim:
+                raise ValueError(
+                    "DLRM: bottom_mlp is None so dense_x dim (%d) must equal embedding_dim (%d)"
+                    % (dense_x.shape[1], self.embedding_dim))
+            d = dense_x
         feats.append(d)
         for emb, inp in zip(self.embs, sparse_inputs):
             feats.append(emb.forward(inp))

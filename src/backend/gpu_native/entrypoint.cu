@@ -1,4 +1,5 @@
 #include "common/gpu_common.h"
+#include "litetorch/memory_manager.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -9,8 +10,29 @@
 #include <map>
 #include <unordered_map>
 #include <vector>
+extern "C" void gpu_lt_release_workspaces();
 static std::mutex g_dev_stream_mutex;
 static std::vector<GPU_API(Stream_t)> g_dev_streams;
+static std::vector<GPU_API(Stream_t)> g_comm_streams;
+static std::vector<GPU_API(Stream_t)> g_h2d_streams;
+static std::vector<GPU_API(Stream_t)> g_d2h_streams;
+
+static bool create_nonblocking_stream(GPU_API(Stream_t)* out) {
+#ifndef __HIP_PLATFORM_AMD__
+    cudaError_t err = cudaStreamCreateWithFlags(out, cudaStreamNonBlocking);
+    if (err != cudaSuccess) {
+        *out = nullptr;
+        return false;
+    }
+#else
+    hipError_t err = hipStreamCreateWithFlags(out, hipStreamNonBlocking);
+    if (err != hipSuccess) {
+        *out = nullptr;
+        return false;
+    }
+#endif
+    return true;
+}
 
 static GPU_API(Stream_t) dev_stream(int dev) {
     if (dev < 0) dev = 0;
@@ -20,11 +42,41 @@ static GPU_API(Stream_t) dev_stream(int dev) {
         int cur = 0;
         GPU_API(GetDevice)(&cur);
         GPU_API(SetDevice)(dev);
-        GPU_API(StreamCreate)(&g_dev_streams[dev]);
+        auto err = GPU_API(StreamCreate)(&g_dev_streams[dev]);
+#ifndef __HIP_PLATFORM_AMD__
+        if (err != cudaSuccess) {
+#else
+        if (err != hipSuccess) {
+#endif
+            g_dev_streams[dev] = nullptr;
+            GPU_API(SetDevice)(cur);
+            return nullptr;
+        }
         GPU_API(SetDevice)(cur);
     }
     return g_dev_streams[dev];
 }
+
+static GPU_API(Stream_t) dev_stream_pool(int dev, std::vector<GPU_API(Stream_t)>* pool) {
+    if (dev < 0) dev = 0;
+    std::lock_guard<std::mutex> lock(g_dev_stream_mutex);
+    if ((int)pool->size() <= dev) pool->resize(dev + 1, nullptr);
+    if (!(*pool)[dev]) {
+        int cur = 0;
+        GPU_API(GetDevice)(&cur);
+        GPU_API(SetDevice)(dev);
+        if (!create_nonblocking_stream(&(*pool)[dev])) {
+            (*pool)[dev] = nullptr;
+        }
+        GPU_API(SetDevice)(cur);
+    }
+    return (*pool)[dev];
+}
+
+static inline GPU_API(Stream_t) dev_stream_compute(int dev) { return dev_stream(dev); }
+static inline GPU_API(Stream_t) dev_stream_comm(int dev) { return dev_stream_pool(dev, &g_comm_streams); }
+static inline GPU_API(Stream_t) dev_stream_h2d(int dev) { return dev_stream_pool(dev, &g_h2d_streams); }
+static inline GPU_API(Stream_t) dev_stream_d2h(int dev) { return dev_stream_pool(dev, &g_d2h_streams); }
 
 static inline int current_device() {
     int dev = 0;
@@ -91,7 +143,7 @@ GPU_API(Stream_t) g_h2d_stream = nullptr;
 GPU_API(Stream_t) g_d2h_stream = nullptr;
 
 #ifndef __HIP_PLATFORM_AMD__
-static bool g_tf32_enabled = true;
+static bool g_tf32_enabled = false;
 static bool g_fp16_math_enabled = false;
 
 static cublasMath_t current_math_mode() {
@@ -200,13 +252,24 @@ static void* g_fa3_handle = nullptr;
 fa3_fwd_t g_fa3_fwd_fn = nullptr;
 fa3_bwd_t g_fa3_bwd_fn = nullptr;
 
+extern "C" size_t gpu_get_device_total_memory(int device_id) {
+    int cur = 0;
+    GPU_API(GetDevice)(&cur);
+    GPU_API(SetDevice)(device_id);
+    size_t free = 0, total = 0;
+    GPU_API(Error_t) err = GPU_API(MemGetInfo)(&free, &total);
+    GPU_API(SetDevice)(cur);
+    if (err != GPU_API(Success) || total == 0) return 0;
+    return total;
+}
+
 extern "C" bool gpu_init() {
     GPU_API(Error_t) err = GPU_API(SetDevice)(0);
     if (err != GPU_API(Success)) return false;
-    g_compute_stream = dev_stream(0);
-    g_comm_stream = dev_stream(0);
-    if (!g_h2d_stream) g_h2d_stream = dev_stream(0);
-    if (!g_d2h_stream) g_d2h_stream = dev_stream(0);
+    g_compute_stream = dev_stream_compute(0);
+    g_comm_stream = dev_stream_comm(0);
+    g_h2d_stream = dev_stream_h2d(0);
+    g_d2h_stream = dev_stream_d2h(0);
 #ifndef __HIP_PLATFORM_AMD__
     if (cudnn_dyn_init())
         printf("[litetorch] cuDNN runtime: available v%zu (dynamic load)\n", g_cudnn.GetVersion());
@@ -226,10 +289,10 @@ extern "C" bool gpu_init() {
 extern "C" bool gpu_init_device(int device_id) {
     GPU_API(Error_t) err = GPU_API(SetDevice)(device_id);
     if (err != GPU_API(Success)) return false;
-    g_compute_stream = dev_stream(device_id);
-    g_comm_stream = dev_stream(device_id);
-    if (!g_h2d_stream) g_h2d_stream = dev_stream(device_id);
-    if (!g_d2h_stream) g_d2h_stream = dev_stream(device_id);
+    g_compute_stream = dev_stream_compute(device_id);
+    g_comm_stream = dev_stream_comm(device_id);
+    g_h2d_stream = dev_stream_h2d(device_id);
+    g_d2h_stream = dev_stream_d2h(device_id);
 #ifndef __HIP_PLATFORM_AMD__
     cudnn_dyn_init();
 #endif
@@ -246,11 +309,19 @@ extern "C" bool gpu_init_device(int device_id) {
 }
 
 extern "C" void* gpu_get_comm_stream() {
-    return (void*)dev_stream(current_device());
+    return (void*)dev_stream_comm(current_device());
 }
 
 extern "C" void* gpu_get_compute_stream() {
-    return (void*)dev_stream(current_device());
+    return (void*)dev_stream_compute(current_device());
+}
+
+extern "C" void* gpu_get_h2d_stream() {
+    return (void*)dev_stream_h2d(current_device());
+}
+
+extern "C" void* gpu_get_d2h_stream() {
+    return (void*)dev_stream_d2h(current_device());
 }
 
 extern "C" void gpu_sync_stream(void* stream) {
@@ -273,7 +344,7 @@ extern "C" void gpu_record_event(void* event, void* stream) {
 
 extern "C" void gpu_stream_wait_event(void* stream, void* event) {
     if (event) {
-        GPU_API(StreamWaitEvent)(stream ? (GPU_API(Stream_t))stream : g_comm_stream, (GPU_API(Event_t))event, 0);
+        GPU_API(StreamWaitEvent)(stream ? (GPU_API(Stream_t))stream : dev_stream_comm(current_device()), (GPU_API(Event_t))event, 0);
     }
 }
 
@@ -393,6 +464,8 @@ static inline size_t gpu_pool_bucket(size_t size) {
     return b;
 }
 
+thread_local std::string g_last_alloc_error;
+
 extern "C" void* gpu_allocate(size_t size) {
     if (size == 0) return nullptr;
     int dev = current_device();
@@ -415,13 +488,32 @@ extern "C" void* gpu_allocate(size_t size) {
 #ifndef __HIP_PLATFORM_AMD__
     cudaError_t alloc_err = cudaMallocAsync(&ptr, bucket, stream);
     if (alloc_err != cudaSuccess) {
+        if (g_last_alloc_error.empty()) {
+            g_last_alloc_error = cudaGetErrorString(alloc_err);
+        }
         cudaGetLastError();
         ptr = nullptr;
     }
 #else
-    GPU_API(Malloc)(&ptr, bucket);
+    hipError_t hip_err = GPU_API(Malloc)(&ptr, bucket);
+    if (hip_err != hipSuccess) {
+        if (g_last_alloc_error.empty()) {
+            g_last_alloc_error = hipGetErrorString(hip_err);
+        }
+        ptr = nullptr;
+    }
 #endif
     if (!ptr) {
+        {
+            std::lock_guard<std::mutex> lock(g_dev_stream_mutex);
+            if (dev >= 0 && dev < (int)g_dev_streams.size()) {
+                g_dev_streams[dev] = nullptr;
+            }
+        }
+        stream = dev_stream(dev);
+        if (!stream) {
+            return nullptr;
+        }
         std::vector<std::pair<void*, int>> drain;
         {
             std::lock_guard<std::mutex> lock(pool.mutex_);
@@ -436,11 +528,20 @@ extern "C" void* gpu_allocate(size_t size) {
 #ifndef __HIP_PLATFORM_AMD__
         cudaError_t retry_err = cudaMallocAsync(&ptr, bucket, stream);
         if (retry_err != cudaSuccess) {
+            if (g_last_alloc_error.empty()) {
+                g_last_alloc_error = cudaGetErrorString(retry_err);
+            }
             cudaGetLastError();
             ptr = nullptr;
         }
 #else
-        GPU_API(Malloc)(&ptr, bucket);
+        hipError_t hip_retry_err = GPU_API(Malloc)(&ptr, bucket);
+        if (hip_retry_err != hipSuccess) {
+            if (g_last_alloc_error.empty()) {
+                g_last_alloc_error = hipGetErrorString(hip_retry_err);
+            }
+            ptr = nullptr;
+        }
 #endif
         if (!ptr) return nullptr;
     }
@@ -451,7 +552,50 @@ extern "C" void* gpu_allocate(size_t size) {
     return ptr;
 }
 
+extern "C" size_t gpu_get_pool_cached_bytes() {
+    auto& pool = gpu_mem_pool();
+    std::lock_guard<std::mutex> lock(pool.mutex_);
+    return pool.cached_bytes_;
+}
+
+extern "C" const char* gpu_last_alloc_error() {
+    return g_last_alloc_error.c_str();
+}
+
+extern "C" size_t gpu_mem_info_free() {
+    size_t free_bytes = 0, total_bytes = 0;
+    int dev = current_device();
+    int cur = 0;
+    GPU_API(GetDevice)(&cur);
+    GPU_API(SetDevice)(dev);
+#ifndef __HIP_PLATFORM_AMD__
+    cudaMemGetInfo(&free_bytes, &total_bytes);
+#else
+    hipMemGetInfo(&free_bytes, &total_bytes);
+#endif
+    GPU_API(SetDevice)(cur);
+    (void)total_bytes;
+    return free_bytes;
+}
+
+extern "C" size_t gpu_mem_info_total() {
+    size_t free_bytes = 0, total_bytes = 0;
+    int dev = current_device();
+    int cur = 0;
+    GPU_API(GetDevice)(&cur);
+    GPU_API(SetDevice)(dev);
+#ifndef __HIP_PLATFORM_AMD__
+    cudaMemGetInfo(&free_bytes, &total_bytes);
+#else
+    hipMemGetInfo(&free_bytes, &total_bytes);
+#endif
+    GPU_API(SetDevice)(cur);
+    (void)free_bytes;
+    return total_bytes;
+}
+
 extern "C" void gpu_empty_cache() {
+    gpu_lt_release_workspaces();
     auto& pool = gpu_mem_pool();
     std::vector<std::pair<void*, int>> drain;
     {
@@ -718,6 +862,21 @@ static const KernelMap& gpu_kernel_map() {
         m["relu_backward_fp16"] = (void*)&relu_backward_fp16;
         m["sigmoid_backward_fp16"] = (void*)&sigmoid_backward_fp16;
         m["tanh_backward_fp16"] = (void*)&tanh_backward_fp16;
+        m["elementwise_add_i64"] = (void*)&elementwise_add_i64;
+        m["elementwise_sub_i64"] = (void*)&elementwise_sub_i64;
+        m["elementwise_mul_i64"] = (void*)&elementwise_mul_i64;
+        m["elementwise_div_i64"] = (void*)&elementwise_div_i64;
+        m["elementwise_neg_i64"] = (void*)&elementwise_neg_i64;
+        m["elementwise_abs_i64"] = (void*)&elementwise_abs_i64;
+        m["elementwise_add_u8"] = (void*)&elementwise_add_u8;
+        m["elementwise_sub_u8"] = (void*)&elementwise_sub_u8;
+        m["elementwise_mul_u8"] = (void*)&elementwise_mul_u8;
+        m["elementwise_div_u8"] = (void*)&elementwise_div_u8;
+        m["elementwise_neg_u8"] = (void*)&elementwise_neg_u8;
+        m["elementwise_abs_u8"] = (void*)&elementwise_abs_u8;
+        m["elementwise_add_b"] = (void*)&elementwise_add_b;
+        m["elementwise_mul_b"] = (void*)&elementwise_mul_b;
+        m["elementwise_not_b"] = (void*)&elementwise_not_b;
         m["leaky_relu_forward"] = (void*)&leaky_relu_forward;
         m["leaky_relu_backward_kernel"] = (void*)&leaky_relu_backward_kernel;
         m["make_contiguous_kernel"] = (void*)&make_contiguous_kernel;

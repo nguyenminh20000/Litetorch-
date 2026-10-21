@@ -4,6 +4,7 @@
 #include "litetorch/tensor.h"
 #include "litetorch/device_mesh.h"
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace litetorch {
@@ -31,7 +32,9 @@ public:
           device_mesh(mesh), placements(p), local_tensor(local_t) {}
     
     std::shared_ptr<DTensor> redistribute(std::shared_ptr<DeviceMesh> new_mesh, const std::vector<Placement>& new_placements) {
-        return nullptr;
+        (void)new_mesh;
+        (void)new_placements;
+        throw std::runtime_error("[litetorch Error] DTensor::redistribute is not implemented");
     }
 };
 

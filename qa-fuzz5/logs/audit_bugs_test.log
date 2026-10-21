@@ -1,0 +1,15 @@
+==================================================
+       LITETORCH AUDIT BUGS VERIFICATION TEST     
+==================================================
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+
+--- 1. Testing conv3d on CPU with non-contiguous input ---
+Expected: 1 3 2 4 5 7 6 8 
+Actual output: 1 3 2 4 5 7 6 8 
+[RESULT] SUCCESS: conv3d on CPU handled non-contiguity correctly.
+
+--- 2. Testing autograd gradient accumulation storage sharing on CPU ---
+Mathematical expected gradients: dy/da = 2.0, dy/db = 1.0
+Actual gradients: dy/da = 2, dy/db = 1
+[RESULT] SUCCESS: gradients accumulated correctly on CPU.
+==================================================

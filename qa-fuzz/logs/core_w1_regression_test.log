@@ -1,0 +1,13 @@
+PASS test_slice_grad
+PASS test_slice_grad_2d
+PASS test_index_select_grad
+PASS test_masked_fill_grad
+PASS test_version_counter
+PASS test_as_strided_bounds
+PASS test_as_strided_grad_sum
+PASS test_data_ptr_guard
+PASS test_int64_dtype
+PASS test_retain_graph
+PASS test_backward_nograd_throws
+PASS test_inplace_saved_tensor_detected
+ALL CORE_W1 TESTS PASSED

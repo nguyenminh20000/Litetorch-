@@ -10,24 +10,12 @@
 #include <stdexcept>
 #include <vector>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 
 extern const std::string litetorch_kernels_src;
 
 namespace {
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
-    }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
 
 inline std::shared_ptr<Tensor> upcast_fp32(std::shared_ptr<Tensor> t) {
     return (t && t->dtype != DataType::FP32) ? t->cast(DataType::FP32) : t;
@@ -466,6 +454,7 @@ std::shared_ptr<Tensor> l1_loss(std::shared_ptr<Tensor> input, std::shared_ptr<T
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -528,6 +517,7 @@ std::shared_ptr<Tensor> bce_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -581,6 +571,7 @@ std::shared_ptr<Tensor> mse_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -729,6 +720,7 @@ std::shared_ptr<Tensor> cross_entropy_loss(std::shared_ptr<Tensor> input, std::s
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -806,6 +798,7 @@ std::shared_ptr<Tensor> nll_loss(std::shared_ptr<Tensor> input, std::shared_ptr<
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -888,6 +881,7 @@ std::shared_ptr<Tensor> bce_with_logits_loss(std::shared_ptr<Tensor> input, std:
         node->inputs = { {input, true}, {target, false} };
         node->next_nodes = { input->creator, nullptr };
         node->saved_tensors = { input, target };
+        node->saved_versions = {(input ? input->_version() : 0), (target ? target->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

@@ -1,0 +1,3 @@
+Checking GPU availability...
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+No GPU available. Skipping test.

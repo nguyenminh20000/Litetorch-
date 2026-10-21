@@ -1,0 +1,19 @@
+==================================================
+       LITETORCH TRANSFORMER DECODER TEST         
+==================================================
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+
+--- Testing TransformerDecoderLayer on CPU ---
+1. Testing Decoder-only mode (self-attention + FFN)...
+Output shape: (2, 4, 8)
+Forward self-attention success. Loss: 5.06639e-07
+Tgt gradient absolute sum: 7.23553e-07
+Self-attn Q-proj weight gradient absolute sum: 2.98701e-07
+2. Testing Encoder-Decoder mode (self-attention + cross-attention + FFN)...
+Output shape: (2, 4, 8)
+Forward cross-attention success. Loss: -3.57628e-07
+Tgt gradient absolute sum (cross): 5.11464e-07
+Memory gradient absolute sum (cross): 7.24323e-08
+Cross-attn Q-proj weight gradient absolute sum: 3.76369e-07
+[RESULT] SUCCESS: TransformerDecoderLayer passed on CPU
+==================================================

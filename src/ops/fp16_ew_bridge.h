@@ -20,14 +20,14 @@ const char* fp16_ew_kernel_source() {
 #include <cuda_fp16.h>
 #endif
 template<typename Op>
-__device__ void binary_kernel_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size, Op op) {
-    for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < size; id += blockDim.x * gridDim.x) {
+__device__ void binary_kernel_fp16(const __half* A, int64_t a_off, const __half* B, int64_t b_off, __half* C, int64_t c_off, int64_t size, Op op) {
+    for (int64_t id = (int64_t)blockIdx.x * blockDim.x + threadIdx.x; id < size; id += (int64_t)blockDim.x * gridDim.x) {
         C[c_off + id] = op(A[a_off + id], B[b_off + id]);
     }
 }
 template<typename Op>
-__device__ void unary_kernel_fp16(const __half* A, int a_off, __half* B, int b_off, int size, Op op) {
-    for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < size; id += blockDim.x * gridDim.x) {
+__device__ void unary_kernel_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size, Op op) {
+    for (int64_t id = (int64_t)blockIdx.x * blockDim.x + threadIdx.x; id < size; id += (int64_t)blockDim.x * gridDim.x) {
         B[b_off + id] = op(A[a_off + id]);
     }
 }
@@ -46,21 +46,21 @@ struct NegOpH { __device__ __half operator()(__half a) const { return __hneg(a);
 struct ReluBackOpH { __device__ __half operator()(__half a, __half g) const { return __hgt(a, __half(0.0f)) ? g : __half(0.0f); } };
 struct SigmoidBackOpH { __device__ __half operator()(__half o, __half g) const { float of = __half2float(o); return __float2half(__half2float(g) * of * (1.0f - of)); } };
 struct TanhBackOpH { __device__ __half operator()(__half o, __half g) const { float of = __half2float(o); return __float2half(__half2float(g) * (1.0f - of * of)); } };
-extern "C" __global__ void elementwise_add_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, AddOpH()); }
-extern "C" __global__ void elementwise_sub_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, SubOpH()); }
-extern "C" __global__ void elementwise_mul_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, MulOpH()); }
-extern "C" __global__ void elementwise_div_fp16(const __half* A, int a_off, const __half* B, int b_off, __half* C, int c_off, int size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, DivOpH()); }
-extern "C" __global__ void relu_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, ReluOpH()); }
-extern "C" __global__ void sigmoid_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, SigmoidOpH()); }
-extern "C" __global__ void tanh_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, TanhOpH()); }
-extern "C" __global__ void sqrt_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, SqrtOpH()); }
-extern "C" __global__ void exp_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, ExpOpH()); }
-extern "C" __global__ void log_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, LogOpH()); }
-extern "C" __global__ void abs_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, AbsOpH()); }
-extern "C" __global__ void neg_forward_fp16(const __half* A, int a_off, __half* B, int b_off, int size) { unary_kernel_fp16(A, a_off, B, b_off, size, NegOpH()); }
-extern "C" __global__ void relu_backward_fp16(const __half* A, int a_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(A, a_off, G, g_off, GI, gi_off, size, ReluBackOpH()); }
-extern "C" __global__ void sigmoid_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, SigmoidBackOpH()); }
-extern "C" __global__ void tanh_backward_fp16(const __half* O, int o_off, const __half* G, int g_off, __half* GI, int gi_off, int size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, TanhBackOpH()); }
+extern "C" __global__ void elementwise_add_fp16(const __half* A, int64_t a_off, const __half* B, int64_t b_off, __half* C, int64_t c_off, int64_t size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, AddOpH()); }
+extern "C" __global__ void elementwise_sub_fp16(const __half* A, int64_t a_off, const __half* B, int64_t b_off, __half* C, int64_t c_off, int64_t size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, SubOpH()); }
+extern "C" __global__ void elementwise_mul_fp16(const __half* A, int64_t a_off, const __half* B, int64_t b_off, __half* C, int64_t c_off, int64_t size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, MulOpH()); }
+extern "C" __global__ void elementwise_div_fp16(const __half* A, int64_t a_off, const __half* B, int64_t b_off, __half* C, int64_t c_off, int64_t size) { binary_kernel_fp16(A, a_off, B, b_off, C, c_off, size, DivOpH()); }
+extern "C" __global__ void relu_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, ReluOpH()); }
+extern "C" __global__ void sigmoid_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, SigmoidOpH()); }
+extern "C" __global__ void tanh_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, TanhOpH()); }
+extern "C" __global__ void sqrt_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, SqrtOpH()); }
+extern "C" __global__ void exp_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, ExpOpH()); }
+extern "C" __global__ void log_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, LogOpH()); }
+extern "C" __global__ void abs_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, AbsOpH()); }
+extern "C" __global__ void neg_forward_fp16(const __half* A, int64_t a_off, __half* B, int64_t b_off, int64_t size) { unary_kernel_fp16(A, a_off, B, b_off, size, NegOpH()); }
+extern "C" __global__ void relu_backward_fp16(const __half* A, int a_off, const __half* G, int64_t g_off, __half* GI, int64_t gi_off, int64_t size) { binary_kernel_fp16(A, a_off, G, g_off, GI, gi_off, size, ReluBackOpH()); }
+extern "C" __global__ void sigmoid_backward_fp16(const __half* O, int o_off, const __half* G, int64_t g_off, __half* GI, int64_t gi_off, int64_t size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, SigmoidBackOpH()); }
+extern "C" __global__ void tanh_backward_fp16(const __half* O, int o_off, const __half* G, int64_t g_off, __half* GI, int64_t gi_off, int64_t size) { binary_kernel_fp16(O, o_off, G, g_off, GI, gi_off, size, TanhBackOpH()); }
 )CUDA_SRC";
     return src;
 }
@@ -124,18 +124,18 @@ std::shared_ptr<Tensor> try_binary_fp16(std::shared_ptr<Tensor> a, std::shared_p
     cl_mem a_mem = a->gpu_data();
     cl_mem b_mem = b->gpu_data();
     cl_mem c_mem = out->gpu_data();
-    int a_off = a->offset;
-    int b_off = b->offset;
-    int c_off = out->offset;
-    int size = static_cast<int>(out->numel());
+    int64_t a_off = a->offset;
+    int64_t b_off = b->offset;
+    int64_t c_off = out->offset;
+    int64_t size = out->numel();
     rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
         {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
-        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
     if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
         auto node = make_node();
         node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
         node->next_nodes = { a->creator, b->creator };
-        if (save_inputs) node->saved_tensors = {a, b};
+        if (save_inputs) { node->saved_tensors = {a, b}; node->saved_versions = {(a ? a->_version() : 0), (b ? b->_version() : 0)}; }
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -155,18 +155,20 @@ std::shared_ptr<Tensor> try_unary_fp16(std::shared_ptr<Tensor> a, const char* kn
     Fp16UseGuard guard({a_c->storage, out->storage});
     cl_mem a_mem = a_c->gpu_data();
     cl_mem b_mem = out->gpu_data();
-    int a_off = a_c->offset;
-    int b_off = out->offset;
-    int size = static_cast<int>(out->numel());
+    int64_t a_off = a_c->offset;
+    int64_t b_off = out->offset;
+    int64_t size = out->numel();
     rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
         {&a_mem, &a_off, &b_mem, &b_off, &size},
-        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
     if (Autograd::is_grad_enabled() && a->requires_grad) {
         auto node = make_node();
         node->inputs = { {a_c, a_c->requires_grad} };
         node->next_nodes = { a_c->creator };
         node->saved_tensors = save_output ? std::vector<std::shared_ptr<Tensor>>{out}
                                           : std::vector<std::shared_ptr<Tensor>>{a_c};
+        node->saved_versions = save_output ? std::vector<uint64_t>{(out ? out->_version() : 0)}
+                                           : std::vector<uint64_t>{(a_c ? a_c->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

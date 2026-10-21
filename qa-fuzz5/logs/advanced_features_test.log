@@ -1,0 +1,18 @@
+[litetorch Warning] GPU acceleration (OpenCL) is not available. Falling back to CPU.
+--- Testing Meta Device ---
+Meta Device test passed!
+--- Testing CosineAnnealingLR Schedulers ---
+CosineAnnealingLR test passed!
+--- Testing Tensor Backward Hooks on cpu:0 ---
+Tensor Backward Hooks test passed!
+--- Testing Module Hooks on cpu:0 ---
+Module Hooks test passed!
+--- Testing AdamW Optimizer on cpu:0 ---
+AdamW Standard step passed!
+--- Testing Gradient Clipping on cpu:0 ---
+Gradient Clipping test passed!
+--- Testing RoPE on cpu:0 ---
+RoPE test passed!
+--- Testing GQA on cpu:0 ---
+GQA test passed!
+ALL ADVANCED FEATURES TESTS PASSED SUCCESSFULY!

@@ -18,8 +18,9 @@ public:
         if (!backward_func) {
             throw std::runtime_error("[litetorch Error] Custom operator " + op_name + " backward was called but no backward function was registered");
         }
-        auto inps = saved_tensors;
-        auto out = output.lock();
+        if (saved_tensors.empty() || !saved_tensors.back()) throw std::runtime_error("[litetorch Error] CustomOp " + op_name + " backward: saved output tensor missing");
+        auto out = saved_tensors.back();
+        std::vector<std::shared_ptr<Tensor>> inps(saved_tensors.begin(), saved_tensors.end() - 1);
         return backward_func(grad_output, inps, out);
     }
 };
@@ -64,7 +65,10 @@ std::shared_ptr<Tensor> Registry::call(const std::string& name, const std::vecto
             node->inputs.push_back({a, a->requires_grad});
             node->next_nodes.push_back(a->creator);
             node->saved_tensors.push_back(a);
+            node->saved_versions.push_back(a->_version());
         }
+        node->saved_tensors.push_back(out);
+        node->saved_versions.push_back(out->_version());
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

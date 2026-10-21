@@ -6,8 +6,10 @@
 #include "litetorch/thread_pool.h"
 #include <random>
 #include <algorithm>
+#include <climits>
 #include <cstring>
 
+#include "litetorch/storage_guard.h"
 namespace litetorch {
 extern const std::string litetorch_kernels_src;
 extern std::mt19937& get_generator();
@@ -40,19 +42,15 @@ inline float emb_half_to_float(uint16_t h) {
 namespace nn {
 
 namespace {
-struct StorageUseGuard {
-    std::vector<std::shared_ptr<StorageImpl>> storages;
-    StorageUseGuard(const std::vector<std::shared_ptr<StorageImpl>>& list) : storages(list) {
-        for (auto& s : storages) {
-            if (s) s->in_use = true;
-        }
+
+inline int emb_index_at(const std::shared_ptr<Tensor>& t, size_t i) {
+    if (t->dtype == DataType::INT64) {
+        int64_t v = reinterpret_cast<const int64_t*>(t->raw_data_ptr())[i];
+        if (v < 0) return -1;
+        return v > static_cast<int64_t>(INT_MAX) ? INT_MAX : static_cast<int>(v);
     }
-    ~StorageUseGuard() {
-        for (auto& s : storages) {
-            if (s) s->in_use = false;
-        }
-    }
-};
+    return static_cast<int>(t->data_ptr()[i]);
+}
 
 class EmbeddingNode : public litetorch::Node {
 public:
@@ -70,6 +68,9 @@ public:
         auto weight = saved_tensors[1];
         auto input_c = input->is_contiguous() ? input : input->contiguous();
         auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
+        if (input_c->device.type == DeviceType::GPU && input_c->dtype == DataType::INT64) {
+            input_c = input_c->cast(DataType::FP32);
+        }
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
         auto grad_weight = Tensor::create(weight_c->shape, weight_c->device, false, weight_c->dtype);
@@ -78,7 +79,13 @@ public:
         size_t wesz = weight_c->storage->element_size();
 
         if (input_c->device.type == DeviceType::GPU && wdt == DataType::FP32) {
-            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_backward");
+            const char* bwd_name = "embedding_backward";
+            if (input_c->dtype == DataType::INT64) {
+                bwd_name = "embedding_backward_i64";
+            } else if (input_c->dtype != DataType::FP32) {
+                throw std::runtime_error("[litetorch Error] Embedding: GPU index dtype must be FP32 or INT64");
+            }
+            auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, bwd_name);
             cl_mem in_mem = input_c->gpu_data();
             int in_off = input_c->offset;
             cl_mem gout_mem = gout_c->gpu_data();
@@ -108,13 +115,12 @@ public:
             auto cpu_gw = Tensor::create(weight_c->shape, Device(DeviceType::CPU, 0), false, wdt);
             size_t gw_n = cpu_gw->numel();
             std::memset(cpu_gw->storage->get_cpu_ptr(), 0, gw_n * wesz);
-            float* in_ptr = cpu_input->data_ptr();
             size_t num_indices = cpu_input->numel();
             if (wdt == DataType::FP32) {
                 float* gout_ptr = cpu_gout->data_ptr();
                 float* gw_ptr = reinterpret_cast<float*>(cpu_gw->storage->get_cpu_ptr());
                 for (size_t i = 0; i < num_indices; ++i) {
-                    int idx = static_cast<int>(in_ptr[i]);
+                    int idx = emb_index_at(cpu_input, i);
                     if (idx >= 0 && idx < num_embeddings) {
                         float* gw_row = gw_ptr + idx * embedding_dim;
                         float* gout_row = gout_ptr + i * embedding_dim;
@@ -131,7 +137,7 @@ public:
                 uint16_t* gout_ptr = reinterpret_cast<uint16_t*>(cpu_gout->data_ptr());
                 uint16_t* gw_ptr = reinterpret_cast<uint16_t*>(cpu_gw->storage->get_cpu_ptr());
                 for (size_t i = 0; i < num_indices; ++i) {
-                    int idx = static_cast<int>(in_ptr[i]);
+                    int idx = emb_index_at(cpu_input, i);
                     if (idx >= 0 && idx < num_embeddings) {
                         uint16_t* gw_row = gw_ptr + idx * embedding_dim;
                         uint16_t* gout_row = gout_ptr + i * embedding_dim;
@@ -149,7 +155,7 @@ public:
                 float* gw_ptr = reinterpret_cast<float*>(tmp_gw->storage->get_cpu_ptr());
                 std::fill(gw_ptr, gw_ptr + tmp_gw->numel(), 0.0f);
                 for (size_t i = 0; i < num_indices; ++i) {
-                    int idx = static_cast<int>(in_ptr[i]);
+                    int idx = emb_index_at(cpu_input, i);
                     if (idx >= 0 && idx < num_embeddings) {
                         float* gw_row = gw_ptr + idx * embedding_dim;
                         float* gout_row = gout_ptr + i * embedding_dim;
@@ -185,6 +191,9 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
     }
     auto input_c = input->is_contiguous() ? input : input->contiguous();
     auto weight_c = weight->is_contiguous() ? weight : weight->contiguous();
+    if (input_c->device.type == DeviceType::GPU && input_c->dtype == DataType::INT64) {
+        input_c = input_c->cast(DataType::FP32);
+    }
 
     std::shared_ptr<Tensor> w_compute = weight_c;
     if (weight_c->dtype != DataType::FP32) {
@@ -198,7 +207,15 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
     StorageUseGuard guard({input_c->storage, w_compute_c->storage, out_fp32->storage});
 
     if (input_c->device.type == DeviceType::GPU) {
-        auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_forward");
+        const char* fwd_name = "embedding_forward";
+        const char* zp_name = "embedding_zero_padding_rows";
+        if (input_c->dtype == DataType::INT64) {
+            fwd_name = "embedding_forward_i64";
+            zp_name = "embedding_zero_padding_rows_i64";
+        } else if (input_c->dtype != DataType::FP32) {
+            throw std::runtime_error("[litetorch Error] Embedding: GPU index dtype must be FP32 or INT64");
+        }
+        auto kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, fwd_name);
         cl_mem in_mem = input_c->gpu_data();
         int in_off = input_c->offset;
         cl_mem w_mem = w_compute_c->gpu_data();
@@ -214,7 +231,7 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
             {&in_mem, &in_off, &w_mem, &w_off, &out_mem, &out_off, &num_indices, &num_embeddings_val, &embedding_dim_val},
             {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         if (padding_idx >= 0 && padding_idx < num_embeddings) {
-            auto zkernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, "embedding_zero_padding_rows");
+            auto zkernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, zp_name);
             int num_indices_val = num_indices;
             int padding_idx_val = static_cast<int>(padding_idx);
             rt_gpu_launch(zkernel, {static_cast<size_t>(num_indices_val)}, {},
@@ -222,12 +239,11 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int)});
         }
     } else {
-        float* in_ptr = input_c->data_ptr();
         float* w_ptr = w_compute_c->data_ptr();
         float* out_ptr = out_fp32->data_ptr();
         size_t num_indices = input_c->numel();
         litetorch::ThreadPool::get().parallel_for(0, num_indices, [&](int64_t i) {
-            int idx = static_cast<int>(in_ptr[i]);
+            int idx = emb_index_at(input_c, static_cast<size_t>(i));
             if (idx < 0 || idx >= num_embeddings) {
                 return;
             }
@@ -235,7 +251,7 @@ std::shared_ptr<Tensor> Embedding::forward(std::shared_ptr<Tensor> input) {
         });
         if (padding_idx >= 0 && padding_idx < num_embeddings) {
             for (size_t i = 0; i < num_indices; ++i) {
-                if (static_cast<int>(in_ptr[i]) == padding_idx) {
+                if (emb_index_at(input_c, i) == padding_idx) {
                     std::fill(out_ptr + i * embedding_dim, out_ptr + (i + 1) * embedding_dim, 0.0f);
                 }
             }

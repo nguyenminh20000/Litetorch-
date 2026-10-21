@@ -1200,7 +1200,7 @@ extern "C" void gpu_flash_attention_half(void *Q, int64_t q_off, void *K, int64_
     }
 
     launch_fa_fwd<__half>((const __half*)Q + q_off, (const __half*)K + k_off, (const __half*)V + v_off,
-                          (__half*)O + o_off, (__half*)nullptr,
+                          (__half*)O + o_off, (float*)nullptr,
                           B, H, H_kv, Tq, Tk, D, scale, causal);
 }
 

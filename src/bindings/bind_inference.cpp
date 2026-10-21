@@ -24,6 +24,8 @@ void bind_inference(py::module_& m) {
     inf.def("fold_conv_bn", &litetorch::inference::fold_conv_bn,
             py::arg("conv"), py::arg("bn"));
     inf.def("fuse_conv_bn", &litetorch::inference::fuse_conv_bn, py::arg("seq"));
+    inf.def("detect_layernorm_candidates", &litetorch::inference::detect_layernorm_candidates,
+            py::arg("root"));
     inf.def("detect_layernorm_fusion", &litetorch::inference::detect_layernorm_fusion,
             py::arg("root"));
     inf.def("verify_linear_bias_fusion", &litetorch::inference::verify_linear_bias_fusion);
