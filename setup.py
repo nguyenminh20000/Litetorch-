@@ -153,6 +153,19 @@ inc_dirs = [
 ] + [x[0] for x in os.walk(os.path.join(SCRIPT_DIR, "src"))]
 
 class BuildExt(build_ext):
+    user_options = build_ext.user_options + [
+        ("install-system-lib", None, "copy the native GPU lib to system locations (/tmp, /usr/local/lib, /opt/rocm/lib)"),
+    ]
+
+    def initialize_options(self):
+        super().initialize_options()
+        self.install_system_lib = 0
+
+    def _install_system_lib_opt_in(self):
+        if os.environ.get("LITETORCH_INSTALL_SYSTEM_LIB") == "1":
+            return True
+        return bool(getattr(self, "install_system_lib", 0))
+
     def run(self):
         status_file = os.environ.get("LITETORCH_BUILD_STATUS_FILE", "").strip()
         try:
@@ -309,17 +322,22 @@ class BuildExt(build_ext):
                     temp_dir = tempfile.gettempdir()
                     if temp_dir and os.path.exists(temp_dir):
                         extra_dests.append(os.path.join(temp_dir, lib_name))
-                    if not sys.platform.startswith("win"):
-                        extra_dests.extend([
+                    system_dests = []
+                    if self._install_system_lib_opt_in() and not sys.platform.startswith("win"):
+                        system_dests = [
                             "/tmp/liblitetorch_gpu.so",
                             "/usr/local/lib/liblitetorch_gpu.so",
                             "/opt/rocm/lib/liblitetorch_gpu.so"
-                        ])
+                        ]
+                    extra_dests.extend(system_dests)
                     for extra_dest in extra_dests:
                         try:
                             shutil.copyfile(out_so, extra_dest)
                         except Exception:
                             pass
+                    if system_dests:
+                        sys.stdout.write("[litetorch] installing native GPU lib to system locations: %s\n" % ", ".join(system_dests))
+                        sys.stdout.flush()
         except Exception as e:
             sys.stderr.write("\n" + "=" * 70 + "\n")
             sys.stderr.write("LITETORCH BUILD ERROR:\n")
