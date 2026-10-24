@@ -1,0 +1,81 @@
+--- a/src/autograd/autograd_engine.cpp
++++ b/src/autograd/autograd_engine.cpp
+@@ -7,6 +7,7 @@
+ #include <mutex>
+ #include <atomic>
+ #include <cmath>
++#include <cstdio>
+ #include <functional>
+ #include <string>
+ #include <sstream>
+@@ -174,7 +175,16 @@
+         }
+         check_saved_versions_w2(node);
+ 
++        fprintf(stderr, "[litetorch DIAG-STAGE-BEFORE] node=%s grad_shape=[", node->name.c_str());
++        for (size_t d = 0; d < grad_output->shape.size(); ++d) {
++            if (d) fprintf(stderr, ",");
++            fprintf(stderr, "%lld", (long long)grad_output->shape[d]);
++        }
++        fprintf(stderr, "]\n");
++        fflush(stderr);
+         std::vector<std::shared_ptr<Tensor>> input_grads = node->backward(grad_output);
++        fprintf(stderr, "[litetorch DIAG-STAGE-AFTER] node=%s\n", node->name.c_str());
++        fflush(stderr);
+         const std::vector<NodeInput>& inputs = node->inputs;
+         const std::vector<std::shared_ptr<Node>>& next_nodes = node->next_nodes;
+ 
+--- a/src/backend/gpu_native/entrypoint.cu
++++ b/src/backend/gpu_native/entrypoint.cu
+@@ -784,9 +784,21 @@
+ 
+ extern "C" void gpu_finish() {
+     std::lock_guard<std::mutex> lock(g_dev_stream_mutex);
++    int diag_idx = 0;
+     for (auto s : g_dev_streams) {
+-        if (s) GPU_API(StreamSynchronize)(s);
++        if (s) {
++            GPU_API(Error_t) diag_stream_err = GPU_API(StreamSynchronize)(s);
++            if (diag_stream_err != GPU_API(Success)) {
++                fprintf(stderr, "[litetorch DIAG-STAGE0-STREAM] stream=%d err=%d %s\n", diag_idx, (int)diag_stream_err, GPU_API(GetErrorString)(diag_stream_err));
++                fflush(stderr);
++            }
++        }
++        ++diag_idx;
+     }
++    GPU_API(Error_t) diag_dev_err = GPU_API(DeviceSynchronize)();
++    GPU_API(Error_t) diag_last_err = GPU_API(GetLastError)();
++    fprintf(stderr, "[litetorch DIAG-STAGE0] device_err=%d %s last_err=%d %s\n", (int)diag_dev_err, GPU_API(GetErrorString)(diag_dev_err), (int)diag_last_err, GPU_API(GetErrorString)(diag_last_err));
++    fflush(stderr);
+ }
+ 
+ extern "C" void gpu_launch(void* kernel, int global_x, int global_y, int global_z, void** args, int arg_count) {
+@@ -799,11 +811,28 @@
+         block = dim3(16, 16, 1);
+     }
+     dim3 grid((global_x + block.x - 1) / block.x, (global_y + block.y - 1) / block.y, global_z);
++    GPU_API(Error_t) diag_pre = GPU_API(GetLastError)();
++    if (diag_pre != GPU_API(Success)) {
++        fprintf(stderr, "[litetorch DIAG-LAUNCH-STALE] kernel=%p grid=(%u,%u,%u) err=%d %s\n", kernel, grid.x, grid.y, grid.z, (int)diag_pre, GPU_API(GetErrorString)(diag_pre));
++        fflush(stderr);
++    }
+ #ifndef __HIP_PLATFORM_AMD__
+     LT_CUDA_CHECK(cudaLaunchKernel(kernel, grid, block, args, 0, stream));
+ #else
+     hipLaunchKernel(kernel, grid, block, args, 0, stream);
+ #endif
++    GPU_API(Error_t) diag_sync = GPU_API(DeviceSynchronize)();
++    if (diag_sync != GPU_API(Success)) {
++        fprintf(stderr, "[litetorch DIAG-LAUNCH-ERR] kernel=%p grid=(%u,%u,%u) err=%d %s\n", kernel, grid.x, grid.y, grid.z, (int)diag_sync, GPU_API(GetErrorString)(diag_sync));
++        fflush(stderr);
++        throw std::runtime_error(std::string("[litetorch DIAG-LAUNCH-ERR] ") + GPU_API(GetErrorString)(diag_sync));
++    }
++    GPU_API(Error_t) diag_last = GPU_API(GetLastError)();
++    if (diag_last != GPU_API(Success)) {
++        fprintf(stderr, "[litetorch DIAG-LAUNCH-ERR] kernel=%p grid=(%u,%u,%u) err=%d %s\n", kernel, grid.x, grid.y, grid.z, (int)diag_last, GPU_API(GetErrorString)(diag_last));
++        fflush(stderr);
++        throw std::runtime_error(std::string("[litetorch DIAG-LAUNCH-ERR] ") + GPU_API(GetErrorString)(diag_last));
++    }
+ }
+ 
+ struct KernelNameHash {
