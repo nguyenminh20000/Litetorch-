@@ -12,8 +12,12 @@ Branch discipline (commander order 2026-10-24, standing):
 
 Fetch procedure on Kaggle (product + inputs):
 1. git clone -b agent-v1 --depth 1 https://github.com/nguyenminh20000/Litetorch- lt
-2. cd lt && git fetch origin kaggle-run-inputs --depth 1
-3. git show origin/kaggle-run-inputs:run-inputs/<file> > /tmp/<file>
+2. cd lt && git fetch origin +refs/heads/kaggle-run-inputs:refs/remotes/origin/kaggle-run-inputs --depth 1
+   (NOTE 2026-10-24, proven by the fillzero run: the bare
+   `git fetch origin kaggle-run-inputs` form does NOT create
+   origin/kaggle-run-inputs in a shallow clone — fatal: invalid object
+   name. The explicit refspec above is REQUIRED.)
+3. git show origin/kaggle-run-inputs:run-inputs/<run>/<file> > /tmp/<file>
    (or raw fetch from the branch; never an upload dialog, never a
    pre-existing Kaggle dataset copy)
 4. Verify size AND sha256 against the QA verdict BEFORE applying.
