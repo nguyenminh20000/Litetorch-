@@ -1,0 +1,71 @@
+--- a/include/litetorch/allocator.h
++++ b/include/litetorch/allocator.h
+@@ -2,6 +2,7 @@
+ #define LITETORCH_ALLOCATOR_H
+ 
+ #include <cstddef>
++#include <cstdint>
+ #include <mutex>
+ #include <map>
+ #include <vector>
+@@ -26,6 +27,7 @@
+     void set_max_gpu_cache_size(size_t bytes);
+     size_t get_cached_cpu_bytes() const;
+     size_t get_cached_gpu_bytes() const;
++    std::vector<std::pair<uintptr_t, size_t>> get_allocated_gpu_blocks() const;
+ 
+ private:
+     CachingAllocator();
+--- a/src/memory_manager/allocator.cpp
++++ b/src/memory_manager/allocator.cpp
+@@ -117,6 +117,16 @@
+     return cached_gpu_bytes_;
+ }
+ 
++std::vector<std::pair<uintptr_t, size_t>> CachingAllocator::get_allocated_gpu_blocks() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    std::vector<std::pair<uintptr_t, size_t>> out;
++    out.reserve(allocated_gpu_blocks_.size());
++    for (const auto& kv : allocated_gpu_blocks_) {
++        out.emplace_back(reinterpret_cast<uintptr_t>(kv.first), kv.second.first);
++    }
++    return out;
++}
++
+ void* CachingAllocator::allocate_cpu(size_t size) {
+     if (size == 0) size = 1;
+     std::lock_guard<std::mutex> lock(mutex_);
+--- a/src/bindings/bind_cuda.cpp
++++ b/src/bindings/bind_cuda.cpp
+@@ -77,4 +77,18 @@
+         m.def("_diag_has_cpu_mirror", [](const std::shared_ptr<Tensor>& t) -> bool {
+             return t && t->storage && t->storage->cpu_data != nullptr;
+         }, py::arg("tensor"));
++        m.def("_diag_live_gpu_allocs", []() -> std::vector<std::pair<uint64_t, uint64_t>> {
++            std::vector<std::pair<uint64_t, uint64_t>> out;
++            for (const auto& kv : litetorch::CachingAllocator::get().get_allocated_gpu_blocks()) {
++                out.emplace_back(static_cast<uint64_t>(kv.first), static_cast<uint64_t>(kv.second));
++            }
++            return out;
++        });
++        m.def("_diag_gpu_range", [](const std::shared_ptr<Tensor>& t) -> std::pair<uint64_t, uint64_t> {
++            if (!t || !t->storage || !t->storage->gpu_data) return {0, 0};
++            uint64_t base = reinterpret_cast<uint64_t>(t->storage->gpu_data);
++            uint64_t start = base + static_cast<uint64_t>(t->offset) * static_cast<uint64_t>(t->storage->element_size());
++            uint64_t bytes = static_cast<uint64_t>(t->numel()) * static_cast<uint64_t>(t->storage->element_size());
++            return {start, bytes};
++        }, py::arg("tensor"));
+ }
+--- a/src/bindings/bind_optim.cpp
++++ b/src/bindings/bind_optim.cpp
+@@ -31,7 +31,9 @@
+             .def_readwrite("beta1", &optim::Adam::beta1)
+             .def_readwrite("beta2", &optim::Adam::beta2)
+             .def_readwrite("eps", &optim::Adam::eps)
+-            .def_readwrite("weight_decay", &optim::Adam::weight_decay);
++            .def_readwrite("weight_decay", &optim::Adam::weight_decay)
++            .def_readwrite("m", &optim::Adam::m)
++            .def_readwrite("v", &optim::Adam::v);
+ 
+         py::class_<optim::AdamW, optim::Optimizer, std::shared_ptr<optim::AdamW>>(optim_mod, "AdamW")
+             .def(py::init<const std::vector<std::shared_ptr<Tensor>>&, double, float, float, float, float, bool>(), py::arg("params"), py::arg("lr") = 0.001, py::arg("beta1") = 0.9f, py::arg("beta2") = 0.999f, py::arg("eps") = 1e-8f, py::arg("weight_decay") = 0.01f, py::arg("offload_to_cpu") = false)
