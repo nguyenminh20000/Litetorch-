@@ -1,0 +1,128 @@
+--- a/src/optim/adam.cpp
++++ b/src/optim/adam.cpp
+@@ -5,6 +5,9 @@
+ #include "litetorch/backend_route.h"
+ #include "optim_utils.h"
+ #include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <string>
+ 
+ namespace litetorch {
+ namespace optim {
+@@ -17,11 +20,48 @@
+     }
+ }
+ 
++static std::string diag_shape_str(const std::vector<int64_t>& shape) {
++    std::string s = "[";
++    for (size_t i = 0; i < shape.size(); ++i) {
++        if (i != 0) s += ",";
++        s += std::to_string(shape[i]);
++    }
++    s += "]";
++    return s;
++}
++
++static void diag_mv_stats(const char* tag, size_t idx, const std::shared_ptr<Tensor>& t) {
++    std::shared_ptr<Tensor> cpu = t->to(Device(DeviceType::CPU, 0));
++    float* d = cpu->data_ptr();
++    size_t n = cpu->numel();
++    double ss = 0.0;
++    float mn = 0.0f, mx = 0.0f;
++    bool any = false, nan = false, neg = false;
++    for (size_t j = 0; j < n; ++j) {
++        float v = d[j];
++        if (std::isnan(v)) { nan = true; continue; }
++        if (v < 0.0f) neg = true;
++        ss += (double)v * (double)v;
++        if (!any) { mn = v; mx = v; any = true; }
++        else { if (v < mn) mn = v; if (v > mx) mx = v; }
++    }
++    std::printf("DIAG-MV step=1 %s[%zu] shape=%s numel=%zu norm=%.6g min=%.6g max=%.6g nan=%d neg=%d\n",
++                tag, idx, diag_shape_str(t->shape).c_str(), n, std::sqrt(ss),
++                any ? (double)mn : 0.0, any ? (double)mx : 0.0, nan ? 1 : 0, neg ? 1 : 0);
++    std::fflush(stdout);
++}
++
+ void Adam::step() {
+     step_count++;
+     float bias_correction1 = 1.0f - std::pow(beta1, step_count);
+     float bias_correction2 = 1.0f - std::pow(beta2, step_count);
+ 
++    bool force_per_param = false;
++    {
++        const char* e = std::getenv("LITETORCH_ADAM_FORCE_PER_PARAM");
++        force_per_param = (e != nullptr && e[0] != '\0' && e[0] != '0');
++    }
++
+     auto native = BackendDispatcher::get().get_backend();
+     bool use_foreach = false;
+     typedef void (*AdamForeachFn)(void**, int*, void**, int*, void**, int*, void**, int*, int*, int,
+@@ -29,7 +69,65 @@
+     AdamForeachFn foreach_fn = nullptr;
+     if (native && native->is_available()) {
+         foreach_fn = reinterpret_cast<AdamForeachFn>(native->get_kernel("", "", "adam_foreach"));
+-        use_foreach = (foreach_fn != nullptr);
++        use_foreach = (foreach_fn != nullptr) && !force_per_param;
++    }
++
++    if (step_count == 1) {
++        std::printf("DIAG-ADAM step=1 force_per_param=%d use_foreach=%d n_params=%zu\n",
++                    force_per_param ? 1 : 0, use_foreach ? 1 : 0, params.size());
++        std::fflush(stdout);
++        for (size_t i = 0; i < params.size(); ++i) {
++            diag_mv_stats("M", i, m[i]);
++            diag_mv_stats("V", i, v[i]);
++        }
++        struct DiagRange {
++            const char* kind;
++            size_t idx;
++            const void* base;
++            size_t bytes;
++            const void* storage_id;
++        };
++        std::vector<DiagRange> ranges;
++        for (size_t i = 0; i < params.size(); ++i) {
++            auto p = params[i];
++            if (!p) continue;
++            auto add_range = [&](const char* kind, const std::shared_ptr<Tensor>& t) {
++                if (!t) return;
++                const void* base = nullptr;
++                if (t->device.type == DeviceType::GPU) {
++                    base = (const void*)((const char*)t->gpu_data() + (size_t)t->offset * sizeof(float));
++                } else {
++                    base = (const void*)t->data_ptr();
++                }
++                ranges.push_back({kind, i, base, t->numel() * sizeof(float), (const void*)t->storage.get()});
++                std::printf("DIAG-PTR step=1 %s[%zu] shape=%s base=%p bytes=%zu storage=%p\n",
++                            kind, i, diag_shape_str(t->shape).c_str(), base,
++                            t->numel() * sizeof(float), (const void*)t->storage.get());
++            };
++            add_range("P", p);
++            add_range("G", p->grad);
++            add_range("M", m[i]);
++            add_range("V", v[i]);
++        }
++        std::fflush(stdout);
++        int overlaps = 0;
++        for (size_t a = 0; a < ranges.size(); ++a) {
++            for (size_t b = a + 1; b < ranges.size(); ++b) {
++                if (ranges[a].storage_id == ranges[b].storage_id) continue;
++                const char* ab = (const char*)ranges[a].base;
++                const char* bb = (const char*)ranges[b].base;
++                if (ab && bb && ab < bb + ranges[b].bytes && bb < ab + ranges[a].bytes) {
++                    std::printf("DIAG-OVERLAP %s[%zu] [%p,%p) vs %s[%zu] [%p,%p)\n",
++                                ranges[a].kind, ranges[a].idx, (const void*)ab, (const void*)(ab + ranges[a].bytes),
++                                ranges[b].kind, ranges[b].idx, (const void*)bb, (const void*)(bb + ranges[b].bytes));
++                    overlaps++;
++                }
++            }
++        }
++        if (overlaps == 0) {
++            std::printf("DIAG-NO-OVERLAP step=1 ranges=%zu\n", ranges.size());
++        }
++        std::fflush(stdout);
+     }
+     std::vector<void*> P_list, G_list, M_list, V_list;
+     std::vector<int> p_offs, g_offs, m_offs, v_offs, sizes;
