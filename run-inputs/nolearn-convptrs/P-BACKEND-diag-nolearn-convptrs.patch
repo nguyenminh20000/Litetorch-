@@ -1,0 +1,57 @@
+--- a/src/autograd/autograd_engine.cpp
++++ b/src/autograd/autograd_engine.cpp
+@@ -4,6 +4,8 @@
+ #include "litetorch/backend_route.h"
+ #include <algorithm>
+ #include <cstdio>
++#include <cstdint>
++#include <cstring>
+ #include <limits>
+ #include <vector>
+ #include <unordered_set>
+@@ -158,7 +160,12 @@
+         }
+         diag_sq += static_cast<double>(v) * static_cast<double>(v);
+     }
+-    std::fprintf(stderr, "DIAG-GRAD-WATCH after=%s grad_norm=%.6g grad_min=%.6g grad_max=%.6g grad_nan=%d\n", node_name, std::sqrt(diag_sq), diag_min, diag_max, diag_nan);
++    const void* diag_grad_ptr = reinterpret_cast<const void*>(reinterpret_cast<uintptr_t>(t->storage->gpu_data) + static_cast<size_t>(t->offset) * t->storage->element_size());
++    if (node_name && std::strcmp(node_name, "CrossEntropyLoss") == 0) {
++        std::fprintf(stderr, "DIAG-GRAD-WATCH after=%s grad_norm=%.6g grad_min=%.6g grad_max=%.6g grad_nan=%d grad_ptr=%p\n", node_name, std::sqrt(diag_sq), diag_min, diag_max, diag_nan, diag_grad_ptr);
++    } else {
++        std::fprintf(stderr, "DIAG-GRAD-WATCH after=%s grad_norm=%.6g grad_min=%.6g grad_max=%.6g grad_nan=%d\n", node_name, std::sqrt(diag_sq), diag_min, diag_max, diag_nan);
++    }
+     std::fflush(stderr);
+ }
+ 
+--- a/src/backend/gpu_native/nn/conv_kernels.cu
++++ b/src/backend/gpu_native/nn/conv_kernels.cu
+@@ -136,6 +136,11 @@
+     }
+ }
+ 
++static void diag_conv_ptrs(const char* fn, int call, int N, int C_in, int H_in, int W_in, int C_out, int H_out, int W_out, int kh, int kw, int stride, int padding, const void* gout_ptr, const char* out_name, const void* out_ptr, size_t out_bytes, void* ws, size_t ws_bytes) {
++    std::fprintf(stderr, "DIAG-CONV-PTRS fn=%s call=%d N=%d Cin=%d Hin=%d Win=%d Cout=%d Hout=%d Wout=%d k=%dx%d s=%d p=%d gout=%p %s=%p %s_bytes=%zu ws=%p ws_bytes=%zu\n", fn, call, N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding, gout_ptr, out_name, out_ptr, out_name, out_bytes, ws, ws_bytes);
++    std::fflush(stderr);
++}
++
+ static std::unordered_map<CudnnConvKey, int, CudnnConvKeyHash> cudnn_fwd_algo_cache;
+ static std::mutex cudnn_fwd_algo_cache_mutex;
+ 
+@@ -284,6 +289,8 @@
+         ws = cudnn_workspace(ws_bytes);
+     }
+     diag_ws_ptr("bwd-data", ws, ws_bytes);
++    static thread_local int diag_bwd_data_calls = 0;
++    diag_conv_ptrs("bwd-data", ++diag_bwd_data_calls, N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding, static_cast<const void*>(gout + gout_off), "gdx", static_cast<const void*>(gdx + gdx_off), static_cast<size_t>(N) * static_cast<size_t>(C_in) * static_cast<size_t>(H_in) * static_cast<size_t>(W_in) * sizeof(float), ws, ws_bytes);
+     if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-data: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
+     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
+ }
+@@ -309,6 +316,8 @@
+         ws = cudnn_workspace(ws_bytes);
+     }
+     diag_ws_ptr("bwd-filter", ws, ws_bytes);
++    static thread_local int diag_bwd_filter_calls = 0;
++    diag_conv_ptrs("bwd-filter", ++diag_bwd_filter_calls, N, C_in, H_in, W_in, C_out, H_out, W_out, kh, kw, stride, padding, static_cast<const void*>(gout + gout_off), "gw", static_cast<const void*>(gw + gw_off), static_cast<size_t>(C_out) * static_cast<size_t>(C_in) * static_cast<size_t>(kh) * static_cast<size_t>(kw) * sizeof(float), ws, ws_bytes);
+     if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-filter: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
+     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
+ }

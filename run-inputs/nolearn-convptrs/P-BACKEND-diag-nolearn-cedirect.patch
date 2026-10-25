@@ -1,0 +1,64 @@
+--- a/src/ops/loss.cpp
++++ b/src/ops/loss.cpp
+@@ -6,7 +6,9 @@
+ #include "litetorch/backend_route.h"
+ #include <algorithm>
+ #include <cmath>
++#include <cstdio>
+ #include <cstdint>
++#include <limits>
+ #include <stdexcept>
+ #include <vector>
+ 
+@@ -155,6 +157,51 @@
+                  &gout_mem, &gout_off, &gin_mem, &gin_off, &N, &C, &ignore_idx, &norm_inv, &per_sample_val},
+                 {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int),
+                  sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int), sizeof(int), sizeof(int), sizeof(float), sizeof(int)});
++            {
++                static int diag_ce_direct_call = 0;
++                int diag_call = diag_ce_direct_call++;
++                auto diag_backend = BackendDispatcher::get().get_backend();
++                if (diag_backend && diag_backend->is_available()) diag_backend->finish();
++                size_t diag_n = static_cast<size_t>(N) * static_cast<size_t>(C);
++                std::vector<float> diag_grad(diag_n);
++                std::vector<float> diag_logits(diag_n);
++                std::vector<float> diag_go(1);
++                rt_gpu_read(grad_w->storage->gpu_data, diag_n * sizeof(float), diag_grad.data(), static_cast<size_t>(grad_w->offset) * sizeof(float));
++                rt_gpu_read(input_w->storage->gpu_data, diag_n * sizeof(float), diag_logits.data(), static_cast<size_t>(input_w->offset) * sizeof(float));
++                rt_gpu_read(gout_w->storage->gpu_data, sizeof(float), diag_go.data(), static_cast<size_t>(gout_w->offset) * sizeof(float));
++                double diag_gn = 0.0;
++                double diag_ln = 0.0;
++                float diag_gmin = std::numeric_limits<float>::max();
++                float diag_gmax = std::numeric_limits<float>::lowest();
++                float diag_lmin = std::numeric_limits<float>::max();
++                float diag_lmax = std::numeric_limits<float>::lowest();
++                int diag_gnan = 0;
++                int diag_lnan = 0;
++                for (size_t i = 0; i < diag_n; ++i) {
++                    float gv = diag_grad[i];
++                    float lv = diag_logits[i];
++                    if (gv == gv) {
++                        if (gv < diag_gmin) diag_gmin = gv;
++                        if (gv > diag_gmax) diag_gmax = gv;
++                    } else {
++                        ++diag_gnan;
++                    }
++                    if (lv == lv) {
++                        if (lv < diag_lmin) diag_lmin = lv;
++                        if (lv > diag_lmax) diag_lmax = lv;
++                    } else {
++                        ++diag_lnan;
++                    }
++                    diag_gn += static_cast<double>(gv) * static_cast<double>(gv);
++                    diag_ln += static_cast<double>(lv) * static_cast<double>(lv);
++                }
++                std::fprintf(stderr, "DIAG-CE-DIRECT call=%d N=%d C=%d grad_norm=%.6g grad_min=%.6g grad_max=%.6g grad_nan=%d logits_norm=%.6g logits_min=%.6g logits_max=%.6g logits_nan=%d go=%.6g t_idx=[", diag_call, N, C, std::sqrt(diag_gn), diag_gmin, diag_gmax, diag_gnan, std::sqrt(diag_ln), diag_lmin, diag_lmax, diag_lnan, diag_go[0]);
++                for (size_t i = 0; i < t_idx.size() && i < 10; ++i) {
++                    std::fprintf(stderr, "%s%d", i ? "," : "", t_idx[i]);
++                }
++                std::fprintf(stderr, "]\n");
++                std::fflush(stderr);
++            }
+         } else {
+             float* in_ptr = input_w->data_ptr();
+             float* gin_ptr = grad_w->data_ptr();
