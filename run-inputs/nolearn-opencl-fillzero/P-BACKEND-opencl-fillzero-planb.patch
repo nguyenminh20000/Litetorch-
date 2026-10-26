@@ -1,0 +1,29 @@
+--- a/src/ops/kernels.cpp
++++ b/src/ops/kernels.cpp
+@@ -1322,8 +1322,8 @@
+ 
+     C[c_off + gid] = A[a_idx] / B[b_idx];
+ }
+-__kernel void fill_zero(__global float* data, long data_off, long size) {
+-    long id = get_global_id(0);
++__kernel void fill_zero(__global float* data, int data_off, int size) {
++    int id = get_global_id(0);
+     if (id < size) {
+         data[data_off + id] = 0.0f;
+     }
+--- a/src/tensor/tensor_core.cpp
++++ b/src/tensor/tensor_core.cpp
+@@ -452,10 +452,10 @@
+         if (!kernel) {
+             throw std::runtime_error("[litetorch Error] zeros(): fill_zero kernel not available");
+         }
+-        int64_t size_val = tensor->numel();
+-        int64_t off_val = tensor->offset;
++        int size_val = static_cast<int>(tensor->numel());
++        int off_val = static_cast<int>(tensor->offset);
+         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
+-        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
++        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
+     } else if (tensor->device.type == DeviceType::TPU) {
+         auto tpu = BackendDispatcher::get().get_tpu_backend();
+         if (tpu && tensor->gpu_data()) {
