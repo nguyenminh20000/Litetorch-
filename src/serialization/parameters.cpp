@@ -1,4 +1,5 @@
 #include "litetorch/serialization.h"
+#include "litetorch/autograd.h"
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -158,6 +159,7 @@ void load_parameters(const std::vector<std::shared_ptr<Tensor>>& params, const s
         throw std::runtime_error("[litetorch Error] Model weights file is corrupted (CRC32 checksum mismatch)");
     }
 
+    NoGradGuard guard;
     for (size_t i = 0; i < params.size(); ++i) {
         auto temp_tensor = Tensor::from_vector(loaded_tensors_data[i], params[i]->shape, Device(DeviceType::CPU, 0));
         params[i]->copy_(temp_tensor);

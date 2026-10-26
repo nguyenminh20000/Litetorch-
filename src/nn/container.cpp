@@ -1,4 +1,5 @@
 #include "litetorch/nn.h"
+#include "litetorch/autograd.h"
 #include "litetorch/backend.h"
 #include "litetorch/llm_serving.h"
 #include "litetorch/quantization.h"
@@ -516,6 +517,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> Module::load_state
     const std::vector<std::pair<std::string, std::shared_ptr<Tensor>>>& state, bool strict) {
     std::unordered_map<std::string, std::shared_ptr<Tensor>> own;
     std::vector<std::string> order;
+    NoGradGuard guard;
     for (auto& kv : state_dict()) {
         if (!own.count(kv.first)) order.push_back(kv.first);
         own[kv.first] = kv.second;

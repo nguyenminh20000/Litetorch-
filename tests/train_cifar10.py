@@ -109,9 +109,10 @@ def build_lt():
 
 def copy_init_from_torch(torch_model, lt_model, dev):
     cpu = lt.Device("cpu")
-    for tp, lp in zip(torch_model.parameters(), lt_model.parameters()):
-        arr = tp.detach().cpu().numpy().astype(np.float32)
-        lp.copy_(lt.Tensor.from_vector(arr.reshape(-1).tolist(), list(lp.shape), cpu).to(dev))
+    with lt.no_grad():
+        for tp, lp in zip(torch_model.parameters(), lt_model.parameters()):
+            arr = tp.detach().cpu().numpy().astype(np.float32)
+            lp.copy_(lt.Tensor.from_vector(arr.reshape(-1).tolist(), list(lp.shape), cpu).to(dev))
 
 
 def sync():
