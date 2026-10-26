@@ -1,0 +1,301 @@
+--- a/src/ops/activation.cpp
++++ b/src/ops/activation.cpp
+@@ -125,8 +125,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sigmoid backward: saved output tensor missing");
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Sigmoid backward: saved output tensor missing");
+         auto out_c = out->is_contiguous() ? out : out->contiguous();
+         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
+@@ -192,8 +192,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Tanh backward: saved output tensor missing");
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Tanh backward: saved output tensor missing");
+         auto out_c = out->is_contiguous() ? out : out->contiguous();
+         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
+@@ -306,8 +306,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Softmax backward: saved output tensor missing");
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Softmax backward: saved output tensor missing");
+         auto out_c = out->is_contiguous() ? out : out->contiguous();
+         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+         auto grad_input = Tensor::create(out_c->shape, out_c->device, false, out_c->dtype);
+@@ -532,8 +532,8 @@
+         auto node = std::make_shared<SigmoidNode>();
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = {out};
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -586,8 +586,8 @@
+         auto node = std::make_shared<TanhNode>();
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = {out};
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -741,8 +741,8 @@
+         auto node = std::make_shared<SoftmaxNode>(dim);
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = {out};
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+--- a/src/ops/attention.cpp
++++ b/src/ops/attention.cpp
+@@ -40,8 +40,8 @@
+ 
+         float scale = 1.0f / std::sqrt(static_cast<float>(D));
+ 
+-        if (saved_tensors.size() <= 3 || !saved_tensors[3]) throw std::runtime_error("[litetorch Error] FlashAttention backward: saved output tensor missing");
+-        auto out_shared = saved_tensors[3];
++        auto out_shared = output.lock();
++        if (!out_shared) throw std::runtime_error("[litetorch Error] FlashAttention backward: saved output tensor missing");
+         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
+         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+ 
+@@ -59,8 +59,8 @@
+             storages.push_back(grad_k->storage);
+             storages.push_back(grad_v->storage);
+             std::shared_ptr<Tensor> saved_lse;
+-            if (saved_tensors.size() > 4 && saved_tensors[4]) {
+-                saved_lse = saved_tensors[4]->is_contiguous() ? saved_tensors[4] : saved_tensors[4]->contiguous();
++            if (saved_tensors.size() > 3 && saved_tensors[3]) {
++                saved_lse = saved_tensors[3]->is_contiguous() ? saved_tensors[3] : saved_tensors[3]->contiguous();
+                 storages.push_back(saved_lse->storage);
+             }
+             StorageUseGuard guard(storages);
+@@ -412,8 +412,8 @@
+         auto node = std::make_shared<FlashAttentionNode>(causal);
+         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
+         node->next_nodes = { q->creator, k->creator, v->creator };
+-        node->saved_tensors = { q_c, k_c, v_c, out };
+-        node->saved_versions = {(q_c ? q_c->_version() : 0), (k_c ? k_c->_version() : 0), (v_c ? v_c->_version() : 0), (out ? out->_version() : 0)};
++        node->saved_tensors = { q_c, k_c, v_c };
++        node->saved_versions = {(q_c ? q_c->_version() : 0), (k_c ? k_c->_version() : 0), (v_c ? v_c->_version() : 0)};
+         if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
+         node->output = out;
+         out->creator = node;
+@@ -724,7 +724,7 @@
+         auto q = saved_tensors[1];
+         auto k = saved_tensors[2];
+         auto v = saved_tensors[3];
+-        std::shared_ptr<Tensor> saved_lse = saved_tensors.size() > 5 ? saved_tensors[5] : nullptr;
++        std::shared_ptr<Tensor> saved_lse = saved_tensors.size() > 4 ? saved_tensors[4] : nullptr;
+         int64_t B = q->shape[0];
+         int64_t H = q->shape[1];
+         int64_t T = q->shape[2];
+@@ -732,8 +732,8 @@
+         int64_t H_kv = k->shape[1];
+         int64_t Tk = k->shape[2];
+         float scale = 1.0f / std::sqrt(static_cast<float>(D));
+-        if (saved_tensors.size() <= 4 || !saved_tensors[4]) throw std::runtime_error("[litetorch Error] FlashAttentionQKV backward: saved output tensor missing");
+-        auto out_shared = saved_tensors[4];
++        auto out_shared = output.lock();
++        if (!out_shared) throw std::runtime_error("[litetorch Error] FlashAttentionQKV backward: saved output tensor missing");
+         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
+         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
+         auto grad_q = Tensor::create(q->shape, q->device, false, q->dtype);
+@@ -842,8 +842,8 @@
+         auto node = std::make_shared<FlashAttentionQKVNode>(num_heads, causal);
+         node->inputs = { {qkv, true} };
+         node->next_nodes = { qkv->creator };
+-        node->saved_tensors = { qkv_c, q, k, v, out };
+-        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0), (q ? q->_version() : 0), (k ? k->_version() : 0), (v ? v->_version() : 0), (out ? out->_version() : 0)};
++        node->saved_tensors = { qkv_c, q, k, v };
++        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0), (q ? q->_version() : 0), (k ? k->_version() : 0), (v ? v->_version() : 0)};
+         if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
+         node->output = out;
+         out->creator = node;
+--- a/src/ops/convolution.cpp
++++ b/src/ops/convolution.cpp
+@@ -88,7 +88,7 @@
+         auto input = saved_tensors[0];
+         auto weight = saved_tensors[1];
+         size_t n_saved = saved_tensors.size();
+-        size_t n_params = apply_relu ? n_saved - 1 : n_saved;
++        size_t n_params = n_saved;
+         auto bias = n_params > 2 ? saved_tensors[2] : nullptr;
+ 
+         std::shared_ptr<Tensor> gout = grad_output;
+@@ -96,7 +96,7 @@
+         std::shared_ptr<Tensor> relu_gout_c;
+         std::shared_ptr<Tensor> relu_masked;
+         if (apply_relu) {
+-            auto out = saved_tensors.back();
++            auto out = output.lock();
+             relu_out_c = out->is_contiguous() ? out : out->contiguous();
+             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
+             DataType rdt = relu_gout_c->dtype;
+@@ -1011,10 +1011,6 @@
+             node->saved_tensors.push_back(bias);
+             node->saved_versions.push_back(bias->_version());
+         }
+-        if (apply_relu) {
+-            node->saved_tensors.push_back(out);
+-            node->saved_versions.push_back(out->_version());
+-        }
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+--- a/src/ops/elementwise.cpp
++++ b/src/ops/elementwise.cpp
+@@ -1208,8 +1208,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sqrt backward: saved output tensor missing");
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Sqrt backward: saved output tensor missing");
+         auto two_t = Tensor::from_vector({2.0f}, {1}, out->device, false, out->dtype);
+         auto grad_input = div(grad_output, mul(two_t, out));
+         return { grad_input };
+@@ -1262,8 +1262,8 @@
+         auto node = std::make_shared<SqrtNode>();
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = {out};
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -1277,8 +1277,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Exp backward: saved output tensor missing");
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Exp backward: saved output tensor missing");
+         auto grad_input = mul(grad_output, out);
+         return { grad_input };
+     }
+@@ -1330,8 +1330,8 @@
+         auto node = std::make_shared<ExpNode>();
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = {out};
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -2679,8 +2679,8 @@
+         auto node = make_node();
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = { a, out };
+-        node->saved_versions = {(a ? a->_version() : 0), (out ? out->_version() : 0)};
++        node->saved_tensors = { a };
++        node->saved_versions = {(a ? a->_version() : 0)};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -2748,8 +2748,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Rsqrt backward: saved output tensor missing");
+-        auto out = saved_tensors[1];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Rsqrt backward: saved output tensor missing");
+         auto y3 = mul(mul(out, out), out);
+         return { mul(grad_output, mul(scalar_tensor(-0.5f, out->device), y3)) };
+     }
+@@ -2761,8 +2761,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Tan backward: saved output tensor missing");
+-        auto out = saved_tensors[1];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Tan backward: saved output tensor missing");
+         auto sec2 = add(scalar_tensor(1.0f, out->device), mul(out, out));
+         return { mul(grad_output, sec2) };
+     }
+@@ -2774,8 +2774,8 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Reciprocal backward: saved output tensor missing");
+-        auto out = saved_tensors[1];
++        auto out = output.lock();
++        if (!out) throw std::runtime_error("[litetorch Error] Reciprocal backward: saved output tensor missing");
+         return { mul(grad_output, neg(mul(out, out))) };
+     }
+ };
+--- a/src/ops/pooling.cpp
++++ b/src/ops/pooling.cpp
+@@ -359,8 +359,8 @@
+         auto node = std::make_shared<MaxPool2dNode>(kernel_size, stride, padding);
+         node->inputs = { {input, true} };
+         node->next_nodes = { input->creator };
+-        node->saved_tensors = { input, save_indices, out };
+-        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
++        node->saved_tensors = { input, save_indices };
++        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0)};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+@@ -462,8 +462,8 @@
+         auto node = std::make_shared<MaxPool3dNode>(kernel_size, stride, padding);
+         node->inputs = { {input, true} };
+         node->next_nodes = { input->creator };
+-        node->saved_tensors = { input, save_indices, out };
+-        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
++        node->saved_tensors = { input, save_indices };
++        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0)};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;
+--- a/src/ops/shape_ops.cpp
++++ b/src/ops/shape_ops.cpp
+@@ -583,7 +583,7 @@
+     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+         std::unique_ptr<NoGradGuard> ng;
+         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+-        auto out = saved_tensors[0];
++        auto out = output.lock();
+         auto s = sum(grad_output, dim, true);
+         return { sub(grad_output, mul(exp(out), s)) };
+     }
+@@ -630,8 +630,8 @@
+         auto node = std::make_shared<LogSoftmaxNode>(d);
+         node->inputs = { {a, true} };
+         node->next_nodes = { a->creator };
+-        node->saved_tensors = { out };
+-        node->saved_versions = {(out ? out->_version() : 0)};
++        node->saved_tensors = {};
++        node->saved_versions = {};
+         node->output = out;
+         out->creator = node;
+         out->requires_grad = true;

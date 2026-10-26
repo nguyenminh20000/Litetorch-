@@ -1,0 +1,39 @@
+--- a/include/litetorch/memory_manager.h
++++ b/include/litetorch/memory_manager.h
+@@ -26,6 +26,8 @@
+     size_t get_active_gpu_storages() const;
+     size_t get_last_evicted_bytes() const { return last_evicted_bytes_; }
+     size_t get_last_eviction_required() const { return last_eviction_required_; }
++    size_t get_set_gpu_limit_calls() const { return set_gpu_limit_calls_; }
++    size_t get_last_set_gpu_limit() const { return last_set_gpu_limit_; }
+     std::string gpu_oom_diagnostics(size_t requested_bytes) const;
+     std::string cpu_oom_diagnostics(size_t requested_bytes) const;
+ 
+--- a/src/bindings/bind_cuda.cpp
++++ b/src/bindings/bind_cuda.cpp
+@@ -56,4 +56,25 @@
+         m.def("get_gpu_memory_used", []() -> size_t {
+             return litetorch::MemoryManager::get().get_gpu_used();
+         });
++        m.def("get_gpu_limit", []() -> size_t {
++            return litetorch::MemoryManager::get().get_gpu_limit();
++        });
++        m.def("get_last_evicted_bytes", []() -> size_t {
++            return litetorch::MemoryManager::get().get_last_evicted_bytes();
++        });
++        m.def("get_last_eviction_required", []() -> size_t {
++            return litetorch::MemoryManager::get().get_last_eviction_required();
++        });
++        m.def("get_gpu_limit_calls", []() -> size_t {
++            return litetorch::MemoryManager::get().get_set_gpu_limit_calls();
++        });
++        m.def("get_last_set_gpu_limit", []() -> size_t {
++            return litetorch::MemoryManager::get().get_last_set_gpu_limit();
++        });
++        m.def("get_cached_gpu_bytes", []() -> size_t {
++            return litetorch::CachingAllocator::get().get_cached_gpu_bytes();
++        });
++        m.def("_diag_has_cpu_mirror", [](const std::shared_ptr<Tensor>& t) -> bool {
++            return t && t->storage && t->storage->cpu_data != nullptr;
++        }, py::arg("tensor"));
+ }

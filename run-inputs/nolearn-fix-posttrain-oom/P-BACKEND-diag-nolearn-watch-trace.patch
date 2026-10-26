@@ -1,0 +1,129 @@
+--- a/src/autograd/autograd_engine.cpp
++++ b/src/autograd/autograd_engine.cpp
+@@ -1,7 +1,11 @@
+ #include "litetorch/autograd.h"
+ #include "litetorch/tensor.h"
+ #include "litetorch/ops.h"
++#include "litetorch/backend_route.h"
+ #include <algorithm>
++#include <cstdio>
++#include <limits>
++#include <vector>
+ #include <unordered_set>
+ #include <unordered_map>
+ #include <mutex>
+@@ -131,6 +135,33 @@
+ 
+ }
+ 
++static void diag_grad_watch_print(const std::shared_ptr<Tensor>& t, const char* node_name) {
++    if (!t || !t->storage || !t->storage->gpu_data) return;
++    if (t->dtype != DataType::FP32) return;
++    if (t->device.type != DeviceType::GPU) return;
++    auto diag_backend = BackendDispatcher::get().get_backend();
++    if (diag_backend && diag_backend->is_available()) diag_backend->finish();
++    size_t diag_n = static_cast<size_t>(t->numel());
++    std::vector<float> diag_buf(diag_n);
++    rt_gpu_read(t->storage->gpu_data, diag_n * sizeof(float), diag_buf.data(), static_cast<size_t>(t->offset) * sizeof(float));
++    double diag_sq = 0.0;
++    float diag_min = std::numeric_limits<float>::max();
++    float diag_max = std::numeric_limits<float>::lowest();
++    int diag_nan = 0;
++    for (size_t i = 0; i < diag_n; ++i) {
++        float v = diag_buf[i];
++        if (v == v) {
++            if (v < diag_min) diag_min = v;
++            if (v > diag_max) diag_max = v;
++        } else {
++            ++diag_nan;
++        }
++        diag_sq += static_cast<double>(v) * static_cast<double>(v);
++    }
++    std::fprintf(stderr, "DIAG-GRAD-WATCH after=%s grad_norm=%.6g grad_min=%.6g grad_max=%.6g grad_nan=%d\n", node_name, std::sqrt(diag_sq), diag_min, diag_max, diag_nan);
++    std::fflush(stderr);
++}
++
+ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, bool retain_graph) {
+     if (!root_tensor || !root_tensor->creator) return;
+     if (!root_tensor->grad) {
+@@ -162,6 +193,8 @@
+     }
+     grads[root_node] = root_tensor->grad;
+ 
++    std::shared_ptr<Tensor> diag_watch_grad;
++
+     for (auto it = order.rbegin(); it != order.rend(); ++it) {
+         Node* node = *it;
+         auto git = grads.find(node);
+@@ -201,6 +234,7 @@
+                     } else {
+                         input_t->grad->add_(grad);
+                     }
++                    if (node->name == "CrossEntropyLoss" && !diag_watch_grad) diag_watch_grad = input_t->grad;
+                 }
+             }
+ 
+@@ -218,6 +252,7 @@
+                 }
+             }
+         }
++        if (diag_watch_grad) diag_grad_watch_print(diag_watch_grad, node->name.c_str());
+         if (!create_graph && !retain_graph) {
+             node->had_saved_data = !node->saved_tensors.empty();
+             node->saved_tensors.clear();
+--- a/src/bindings/bind_cuda.cpp
++++ b/src/bindings/bind_cuda.cpp
+@@ -1,4 +1,5 @@
+ #include "bindings_common.h"
++#include "litetorch/backend_route.h"
+ 
+ void bind_cuda(py::module_& m) {
+         auto cuda_mod = m.def_submodule("cuda");
+@@ -91,4 +92,13 @@
+             uint64_t bytes = static_cast<uint64_t>(t->numel()) * static_cast<uint64_t>(t->storage->element_size());
+             return {start, bytes};
+         }, py::arg("tensor"));
++        m.def("_diag_raw_values", [](const std::shared_ptr<Tensor>& t) -> std::vector<float> {
++            std::vector<float> out;
++            if (!t || !t->storage || !t->storage->gpu_data) return out;
++            if (t->dtype != DataType::FP32) return out;
++            size_t n = static_cast<size_t>(t->numel());
++            out.resize(n);
++            rt_gpu_read(t->storage->gpu_data, n * sizeof(float), out.data(), static_cast<size_t>(t->offset) * sizeof(float));
++            return out;
++        }, py::arg("tensor"));
+ }
+--- a/src/backend/gpu_native/nn/conv_kernels.cu
++++ b/src/backend/gpu_native/nn/conv_kernels.cu
+@@ -127,6 +127,15 @@
+     return ws.ptr;
+ }
+ 
++static void diag_ws_ptr(const char* fn, void* ws, size_t ws_bytes) {
++    static thread_local void* diag_last_ws = nullptr;
++    if (ws && ws != diag_last_ws) {
++        diag_last_ws = ws;
++        std::fprintf(stderr, "DIAG-WS-PTR fn=%s ws=%p bytes=%zu\n", fn, ws, ws_bytes);
++        std::fflush(stderr);
++    }
++}
++
+ static std::unordered_map<CudnnConvKey, int, CudnnConvKeyHash> cudnn_fwd_algo_cache;
+ static std::mutex cudnn_fwd_algo_cache_mutex;
+ 
+@@ -274,6 +283,7 @@
+         g_cudnn.GetConvolutionBackwardDataWorkspaceSize(handle, d.wDesc, d.yDesc, d.convDesc, d.xDesc, algo, &ws_bytes) == 0) {
+         ws = cudnn_workspace(ws_bytes);
+     }
++    diag_ws_ptr("bwd-data", ws, ws_bytes);
+     if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-data: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
+     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardData(handle, &alpha, d.wDesc, weight + w_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.xDesc, gdx + gdx_off));
+ }
+@@ -298,6 +308,7 @@
+         g_cudnn.GetConvolutionBackwardFilterWorkspaceSize(handle, d.xDesc, d.yDesc, d.convDesc, d.wDesc, algo, &ws_bytes) == 0) {
+         ws = cudnn_workspace(ws_bytes);
+     }
++    diag_ws_ptr("bwd-filter", ws, ws_bytes);
+     if (ws_bytes > 0 && !ws) throw std::runtime_error("[litetorch cuDNN Error] conv2d backward-filter: workspace allocation failed for " + std::to_string(ws_bytes) + " bytes");
+     LT_CUDNN_DYN_CHECK(g_cudnn.ConvolutionBackwardFilter(handle, &alpha, d.xDesc, input + in_off, d.yDesc, gout + gout_off, d.convDesc, algo, ws, ws ? ws_bytes : 0, &beta, d.wDesc, gw + gw_off));
+ }
