@@ -1,0 +1,102 @@
+--- a/src/autograd/autograd_engine.cpp
++++ b/src/autograd/autograd_engine.cpp
+@@ -169,6 +169,77 @@
+     std::fflush(stderr);
+ }
+ 
++static thread_local std::weak_ptr<Tensor> diag_gradpath_a13;
++static thread_local int diag_gradpath_calls = 0;
++
++static bool diag_gradpath_read(const std::shared_ptr<Tensor>& t, std::vector<float>& out) {
++    if (!t || !t->storage || !t->storage->gpu_data) return false;
++    if (t->dtype != DataType::FP32) return false;
++    if (t->device.type != DeviceType::GPU) return false;
++    auto diag_backend = BackendDispatcher::get().get_backend();
++    if (diag_backend && diag_backend->is_available()) diag_backend->finish();
++    size_t diag_n = static_cast<size_t>(t->numel());
++    out.assign(diag_n, 0.0f);
++    rt_gpu_read(t->storage->gpu_data, diag_n * sizeof(float), out.data(), static_cast<size_t>(t->offset) * sizeof(float));
++    return true;
++}
++
++static std::shared_ptr<Tensor> diag_gradpath_capture(const std::vector<Node*>& order) {
++    if (auto diag_held = diag_gradpath_a13.lock()) return diag_held;
++    for (Node* diag_node : order) {
++        if (!diag_node || diag_node->name != "CrossEntropyLoss") continue;
++        if (diag_node->saved_tensors.empty()) return nullptr;
++        std::shared_ptr<Tensor> diag_input = diag_node->saved_tensors[0];
++        if (!diag_input || !diag_input->storage || !diag_input->storage->gpu_data) return nullptr;
++        if (diag_input->dtype != DataType::FP32) return nullptr;
++        if (diag_input->device.type != DeviceType::GPU) return nullptr;
++        diag_gradpath_a13 = diag_input;
++        return diag_input;
++    }
++    return nullptr;
++}
++
++static void diag_gradpath_print(const std::shared_ptr<Tensor>& t, const char* node_name, int gcall, const std::vector<float>& base, bool& wipe_reported) {
++    std::vector<float> diag_buf;
++    if (!diag_gradpath_read(t, diag_buf)) return;
++    if (diag_buf.size() != base.size()) return;
++    double diag_sq = 0.0;
++    float diag_min = std::numeric_limits<float>::max();
++    float diag_max = std::numeric_limits<float>::lowest();
++    int diag_nan = 0;
++    int diag_first = -1;
++    float diag_old = 0.0f;
++    float diag_new = 0.0f;
++    for (size_t i = 0; i < diag_buf.size(); ++i) {
++        float v = diag_buf[i];
++        if (v == v) {
++            if (v < diag_min) diag_min = v;
++            if (v > diag_max) diag_max = v;
++        } else {
++            ++diag_nan;
++        }
++        diag_sq += static_cast<double>(v) * static_cast<double>(v);
++        if (diag_first < 0 && v != base[i]) {
++            diag_first = static_cast<int>(i);
++            diag_old = base[i];
++            diag_new = v;
++        }
++    }
++    const void* diag_ptr = reinterpret_cast<const void*>(reinterpret_cast<uintptr_t>(t->storage->gpu_data) + static_cast<size_t>(t->offset) * t->storage->element_size());
++    std::fprintf(stderr, "DIAG-GRADPATH gcall=%d after=%s a13_norm=%.6g a13_min=%.6g a13_max=%.6g a13_nan=%d a13_ptr=%p first_changed=%d old_value=%.6g new_value=%.6g", gcall, node_name, std::sqrt(diag_sq), diag_min, diag_max, diag_nan, diag_ptr, diag_first, diag_old, diag_new);
++    if (diag_first >= 0 && !wipe_reported) {
++        wipe_reported = true;
++        std::fprintf(stderr, " first10=[");
++        size_t diag_lim = diag_buf.size() < 10 ? diag_buf.size() : 10;
++        for (size_t i = 0; i < diag_lim; ++i) {
++            std::fprintf(stderr, "%s%.6g", i == 0 ? "" : ",", diag_buf[i]);
++        }
++        std::fprintf(stderr, "]");
++    }
++    std::fprintf(stderr, "\n");
++    std::fflush(stderr);
++}
++
+ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, bool retain_graph) {
+     if (!root_tensor || !root_tensor->creator) return;
+     if (!root_tensor->grad) {
+@@ -407,6 +478,13 @@
+         }
+ 
+         std::unordered_map<Tensor*, std::shared_ptr<Tensor>> input_grads;
++        ++diag_gradpath_calls;
++        std::shared_ptr<Tensor> diag_gp_a13 = diag_gradpath_capture(order);
++        std::vector<float> diag_gp_base;
++        bool diag_gp_wipe_reported = false;
++        if (diag_gp_a13) {
++            if (!diag_gradpath_read(diag_gp_a13, diag_gp_base)) diag_gp_a13.reset();
++        }
+         for (auto it = order.rbegin(); it != order.rend(); ++it) {
+             Node* node = *it;
+             auto git = grads.find(node);
+@@ -415,6 +493,7 @@
+                 throw std::runtime_error("[litetorch Error] autograd.grad: graph was already freed by a previous backward() call; pass retain_graph=true to differentiate multiple times");
+             }
+             std::vector<std::shared_ptr<Tensor>> in_grads = node->backward(git->second);
++            if (diag_gp_a13) diag_gradpath_print(diag_gp_a13, node->name.c_str(), diag_gradpath_calls, diag_gp_base, diag_gp_wipe_reported);
+             const std::vector<NodeInput>& node_inputs = node->inputs;
+             const std::vector<std::shared_ptr<Node>>& next_nodes = node->next_nodes;
+             for (size_t i = 0; i < node_inputs.size() && i < in_grads.size(); ++i) {

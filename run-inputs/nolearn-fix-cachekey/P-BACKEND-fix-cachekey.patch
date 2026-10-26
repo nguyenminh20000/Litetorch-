@@ -1,0 +1,24 @@
+--- a/src/ops/convolution.cpp
++++ b/src/ops/convolution.cpp
+@@ -36,10 +36,19 @@
+     }
+     return nullptr;
+ }
++inline void* get_native_kernel_by_name(const char* name) {
++    static std::unordered_map<std::string, void*> cache;
++    static std::mutex cache_mutex;
++    std::lock_guard<std::mutex> lock(cache_mutex);
++    auto it = cache.find(name);
++    if (it != cache.end()) return it->second;
++    void* k = get_native_kernel_cached(name);
++    cache.emplace(name, k);
++    return k;
++}
+ template <typename Fn>
+ inline Fn cached_native_kernel(const char* name) {
+-    static void* k = get_native_kernel_cached(name);
+-    return reinterpret_cast<Fn>(k);
++    return reinterpret_cast<Fn>(get_native_kernel_by_name(name));
+ }
+ 
+ void im2col_cpu(const float* in_data, int C, int H, int W,
