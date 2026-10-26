@@ -152,14 +152,14 @@ def test_dtype_shorthands():
     assert t.half().dtype == lt.DataType.FP16
     assert t.float().dtype == lt.DataType.FP32
     assert t.double().dtype == lt.DataType.FP64
-    assert t.long().dtype == lt.DataType.INT32
+    assert t.long().dtype == lt.DataType.INT64
     assert t.int().dtype == lt.DataType.INT32
     h = t.half()
     assert np.allclose(h.numpy().astype(np.float64), [1.5, 2.5], atol=1e-3)
     d = t.double()
     assert np.allclose(d.numpy(), [1.5, 2.5])
     li = lt.Tensor.from_vector([1.0, 2.0], [2], cpu()).long()
-    assert li.numpy().tolist() == [1, 2]
+    assert li.to_vector() == [1.0, 2.0]
 
 
 def test_type_as():

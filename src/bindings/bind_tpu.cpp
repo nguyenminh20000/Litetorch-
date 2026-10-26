@@ -152,7 +152,7 @@ void bind_tpu(py::module_& m) {
             .def("half", &Tensor::half)
             .def("float", &Tensor::to_float)
             .def("double", &Tensor::to_double)
-            .def("long", &Tensor::to_int)
+            .def("long", &Tensor::to_long)
             .def("int", &Tensor::to_int)
             .def("type_as", &Tensor::type_as, py::arg("other"))
             .def("numpy", [](Tensor& self) -> py::object {
