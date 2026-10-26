@@ -1,0 +1,213 @@
+--- a/include/litetorch/backend.h
++++ b/include/litetorch/backend.h
+@@ -18,6 +18,10 @@
+     virtual void empty_cache() {}
+     virtual size_t get_pool_cached_bytes() const { return 0; }
+     virtual std::string last_alloc_error() const { return ""; }
++    virtual size_t mem_info_free() const { return 0; }
++    virtual size_t mem_info_total() const { return 0; }
++    virtual std::string last_alloc_error_fresh() const { return ""; }
++    virtual size_t alloc_failure_count() const { return 0; }
+     virtual void read(void* ptr, size_t size, void* host_ptr, size_t offset = 0) = 0;
+     virtual void write(void* ptr, size_t size, const void* host_ptr, size_t offset = 0) = 0;
+     virtual void read_async(void* ptr, size_t size, void* host_ptr, size_t offset = 0) = 0;
+--- a/include/litetorch/allocator.h
++++ b/include/litetorch/allocator.h
+@@ -26,6 +26,8 @@
+     void set_max_gpu_cache_size(size_t bytes);
+     size_t get_cached_cpu_bytes() const;
+     size_t get_cached_gpu_bytes() const;
++    size_t get_free_gpu_block_count() const;
++    size_t get_largest_free_gpu_block() const;
+ 
+ private:
+     CachingAllocator();
+--- a/src/backend/backend.cpp
++++ b/src/backend/backend.cpp
+@@ -79,6 +79,8 @@
+ typedef bool (*gpu_is_fp16_math_enabled_t)();
+ typedef size_t (*gpu_get_pool_cached_bytes_t)();
+ typedef const char* (*gpu_last_alloc_error_t)();
++typedef const char* (*gpu_last_alloc_error_fresh_t)();
++typedef size_t (*gpu_alloc_failure_count_t)();
+ typedef size_t (*gpu_mem_info_free_t)();
+ typedef size_t (*gpu_mem_info_total_t)();
+ 
+@@ -150,6 +152,8 @@
+     gpu_is_fp16_math_enabled_t gpu_is_fp16_math_enabled_fn = nullptr;
+     gpu_get_pool_cached_bytes_t gpu_get_pool_cached_bytes_fn = nullptr;
+     gpu_last_alloc_error_t gpu_last_alloc_error_fn = nullptr;
++    gpu_last_alloc_error_fresh_t gpu_last_alloc_error_fresh_fn = nullptr;
++    gpu_alloc_failure_count_t gpu_alloc_failure_count_fn = nullptr;
+     gpu_mem_info_free_t gpu_mem_info_free_fn = nullptr;
+     gpu_mem_info_total_t gpu_mem_info_total_fn = nullptr;
+     std::unordered_set<void*> dynamic_kernels;
+@@ -274,6 +278,8 @@
+         gpu_is_fp16_math_enabled_fn = (gpu_is_fp16_math_enabled_t)dlsym(handle, "gpu_is_fp16_math_enabled");
+         gpu_get_pool_cached_bytes_fn = (gpu_get_pool_cached_bytes_t)dlsym(handle, "gpu_get_pool_cached_bytes");
+         gpu_last_alloc_error_fn = (gpu_last_alloc_error_t)dlsym(handle, "gpu_last_alloc_error");
++        gpu_last_alloc_error_fresh_fn = (gpu_last_alloc_error_fresh_t)dlsym(handle, "gpu_last_alloc_error_fresh");
++        gpu_alloc_failure_count_fn = (gpu_alloc_failure_count_t)dlsym(handle, "gpu_alloc_failure_count");
+         gpu_mem_info_free_fn = (gpu_mem_info_free_t)dlsym(handle, "gpu_mem_info_free");
+         gpu_mem_info_total_fn = (gpu_mem_info_total_t)dlsym(handle, "gpu_mem_info_total");
+ 
+@@ -299,6 +305,13 @@
+         const char* e = gpu_last_alloc_error_fn ? gpu_last_alloc_error_fn() : nullptr;
+         return e ? std::string(e) : std::string();
+     }
++    size_t mem_info_free() const override { return gpu_mem_info_free_fn ? gpu_mem_info_free_fn() : 0; }
++    size_t mem_info_total() const override { return gpu_mem_info_total_fn ? gpu_mem_info_total_fn() : 0; }
++    std::string last_alloc_error_fresh() const override {
++        const char* e = gpu_last_alloc_error_fresh_fn ? gpu_last_alloc_error_fresh_fn() : nullptr;
++        return e ? std::string(e) : std::string();
++    }
++    size_t alloc_failure_count() const override { return gpu_alloc_failure_count_fn ? gpu_alloc_failure_count_fn() : 0; }
+     void* allocate(size_t size) override { return gpu_allocate_fn(size); }
+     void free(void* ptr) override { gpu_free_fn(ptr); }
+     void empty_cache() override { if (gpu_empty_cache_fn) gpu_empty_cache_fn(); }
+--- a/src/memory_manager/allocator.cpp
++++ b/src/memory_manager/allocator.cpp
+@@ -117,6 +117,22 @@
+     return cached_gpu_bytes_;
+ }
+ 
++size_t CachingAllocator::get_free_gpu_block_count() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    size_t n = 0;
++    for (auto& pair : free_gpu_blocks_) n += pair.second.size();
++    return n;
++}
++
++size_t CachingAllocator::get_largest_free_gpu_block() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    size_t largest = 0;
++    for (auto& pair : free_gpu_blocks_) {
++        if (!pair.second.empty() && pair.first.second > largest) largest = pair.first.second;
++    }
++    return largest;
++}
++
+ void* CachingAllocator::allocate_cpu(size_t size) {
+     if (size == 0) size = 1;
+     std::lock_guard<std::mutex> lock(mutex_);
+--- a/src/memory_manager/memory_manager.cpp
++++ b/src/memory_manager/memory_manager.cpp
+@@ -3,6 +3,9 @@
+ #include "litetorch/allocator.h"
+ #include "litetorch/backend.h"
+ #include <algorithm>
++#include <cstdio>
++#include <execinfo.h>
++#include <unistd.h>
+ 
+ namespace litetorch {
+ 
+@@ -128,12 +131,28 @@
+ 
+ std::string MemoryManager::gpu_oom_diagnostics(size_t requested_bytes) const {
+     std::lock_guard<std::recursive_mutex> lock(mutex_);
++    std::fprintf(stderr, "DIAG-MNIST-OOM requested=%zuB\n", requested_bytes);
++    {
++        void* frames[24];
++        int nframes = backtrace(frames, 24);
++        std::fprintf(stderr, "DIAG-MNIST-OOM-BT frames=%d\n", nframes);
++        backtrace_symbols_fd(frames, nframes, STDERR_FILENO);
++        std::fflush(stderr);
++    }
+     size_t pool_cached = 0;
+     std::string backend_err;
++    std::string backend_err_fresh;
++    size_t driver_free = 0;
++    size_t driver_total = 0;
++    size_t alloc_failures = 0;
+     auto backend = BackendDispatcher::get().get_backend();
+     if (backend) {
+         pool_cached = backend->get_pool_cached_bytes();
+         backend_err = backend->last_alloc_error();
++        backend_err_fresh = backend->last_alloc_error_fresh();
++        driver_free = backend->mem_info_free();
++        driver_total = backend->mem_info_total();
++        alloc_failures = backend->alloc_failure_count();
+     }
+     std::string s = "requested=" + std::to_string(requested_bytes) + "B"
+         + " gpu_used=" + std::to_string(gpu_used_.load()) + "B"
+@@ -145,9 +164,16 @@
+         + " lru_storages=" + std::to_string(lru_list_.size())
+         + " active_storages=" + std::to_string(active_gpu_storages_.size())
+         + " last_eviction_freed=" + std::to_string(last_evicted_bytes_.load()) + "B"
+-        + " last_eviction_required=" + std::to_string(last_eviction_required_.load()) + "B";
++        + " last_eviction_required=" + std::to_string(last_eviction_required_.load()) + "B"
++        + " driver_free=" + std::to_string(driver_free) + "B"
++        + " driver_total=" + std::to_string(driver_total) + "B"
++        + " alloc_failures=" + std::to_string(alloc_failures)
++        + " free_gpu_blocks=" + std::to_string(CachingAllocator::get().get_free_gpu_block_count())
++        + " largest_free_gpu_block=" + std::to_string(CachingAllocator::get().get_largest_free_gpu_block()) + "B";
+     if (!backend_err.empty()) s += " backend_error=" + backend_err;
+     else s += " backend_error=<not reported by backend>";
++    if (!backend_err_fresh.empty()) s += " backend_error_fresh=" + backend_err_fresh;
++    else s += " backend_error_fresh=<none>";
+     return s;
+ }
+ 
+--- a/src/backend/gpu_native/entrypoint.cu
++++ b/src/backend/gpu_native/entrypoint.cu
+@@ -465,6 +465,8 @@
+ }
+ 
+ thread_local std::string g_last_alloc_error;
++thread_local std::string g_last_alloc_error_fresh;
++thread_local size_t g_alloc_failure_count = 0;
+ 
+ extern "C" void* gpu_allocate(size_t size) {
+     if (size == 0) return nullptr;
+@@ -491,6 +493,8 @@
+         if (g_last_alloc_error.empty()) {
+             g_last_alloc_error = cudaGetErrorString(alloc_err);
+         }
++        g_last_alloc_error_fresh = cudaGetErrorString(alloc_err);
++        ++g_alloc_failure_count;
+         cudaGetLastError();
+         ptr = nullptr;
+     }
+@@ -500,6 +504,8 @@
+         if (g_last_alloc_error.empty()) {
+             g_last_alloc_error = hipGetErrorString(hip_err);
+         }
++        g_last_alloc_error_fresh = hipGetErrorString(hip_err);
++        ++g_alloc_failure_count;
+         ptr = nullptr;
+     }
+ #endif
+@@ -531,6 +537,8 @@
+             if (g_last_alloc_error.empty()) {
+                 g_last_alloc_error = cudaGetErrorString(retry_err);
+             }
++            g_last_alloc_error_fresh = cudaGetErrorString(retry_err);
++            ++g_alloc_failure_count;
+             cudaGetLastError();
+             ptr = nullptr;
+         }
+@@ -540,6 +548,8 @@
+             if (g_last_alloc_error.empty()) {
+                 g_last_alloc_error = hipGetErrorString(hip_retry_err);
+             }
++            g_last_alloc_error_fresh = hipGetErrorString(hip_retry_err);
++            ++g_alloc_failure_count;
+             ptr = nullptr;
+         }
+ #endif
+@@ -562,6 +572,14 @@
+     return g_last_alloc_error.c_str();
+ }
+ 
++extern "C" const char* gpu_last_alloc_error_fresh() {
++    return g_last_alloc_error_fresh.c_str();
++}
++
++extern "C" size_t gpu_alloc_failure_count() {
++    return g_alloc_failure_count;
++}
++
+ extern "C" size_t gpu_mem_info_free() {
+     size_t free_bytes = 0, total_bytes = 0;
+     int dev = current_device();
