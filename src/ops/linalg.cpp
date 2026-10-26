@@ -23,24 +23,224 @@ std::vector<double> to_doubles(const std::shared_ptr<Tensor>& t, const char* op)
     return c->flat_doubles();
 }
 
+uint16_t float_to_half_bits(float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, sizeof(u));
+    uint32_t sign = (u >> 16) & 0x8000u;
+    uint32_t exp = (u >> 23) & 0xffu;
+    uint32_t mant = u & 0x7fffffu;
+    if (exp == 0xffu) return (uint16_t)(sign | 0x7c00u | (mant ? 0x0200u : 0));
+    int32_t e = (int32_t)exp - 112;
+    if (e >= 31) return (uint16_t)(sign | 0x7c00u);
+    if (e <= 0) {
+        if (e < -10) return (uint16_t)sign;
+        mant |= 0x800000u;
+        uint32_t shift = (uint32_t)(14 - e);
+        uint32_t half = mant >> shift;
+        uint32_t rest = mant & ((1u << shift) - 1u);
+        uint32_t halfway = 1u << (shift - 1);
+        if (rest > halfway || (rest == halfway && (half & 1u))) half += 1u;
+        return (uint16_t)(sign | half);
+    }
+    uint32_t half = ((uint32_t)e << 10) | (mant >> 13);
+    uint32_t rest = mant & 0x1fffu;
+    if (rest > 0x1000u || (rest == 0x1000u && (half & 1u))) half += 1u;
+    return (uint16_t)(sign | half);
+}
+
+uint16_t float_to_bf16_bits(float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, sizeof(u));
+    if ((u & 0x7fffffffu) > 0x7f800000u) return (uint16_t)((u >> 16) | 0x0040u);
+    uint32_t lsb = (u >> 16) & 1u;
+    u += 0x7fffu + lsb;
+    return (uint16_t)(u >> 16);
+}
+
+int64_t double_to_int64(double d) {
+    if (!(d < 9223372036854775808.0)) return std::numeric_limits<int64_t>::max();
+    if (d <= -9223372036854775808.0) return std::numeric_limits<int64_t>::min();
+    return (int64_t)std::llround(d);
+}
+
 std::shared_ptr<Tensor> from_doubles(const std::vector<double>& d,
                                      const std::vector<int64_t>& shape, DataType dtype) {
     Device dev(DeviceType::CPU, 0);
     auto out = Tensor::create(shape, dev, false, dtype);
     char* base = reinterpret_cast<char*>(out->storage->get_cpu_ptr());
-    if (dtype == DataType::FP64) {
-        double* p = reinterpret_cast<double*>(base);
-        for (size_t i = 0; i < d.size(); ++i) p[i] = d[i];
-    } else {
-        float* p = reinterpret_cast<float*>(base);
-        for (size_t i = 0; i < d.size(); ++i) p[i] = static_cast<float>(d[i]);
+    switch (dtype) {
+        case DataType::FP64: {
+            double* p = reinterpret_cast<double*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = d[i];
+            break;
+        }
+        case DataType::FP32: {
+            float* p = reinterpret_cast<float*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = static_cast<float>(d[i]);
+            break;
+        }
+        case DataType::FP16: {
+            uint16_t* p = reinterpret_cast<uint16_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = float_to_half_bits(static_cast<float>(d[i]));
+            break;
+        }
+        case DataType::BF16: {
+            uint16_t* p = reinterpret_cast<uint16_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = float_to_bf16_bits(static_cast<float>(d[i]));
+            break;
+        }
+        case DataType::INT64: {
+            int64_t* p = reinterpret_cast<int64_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = double_to_int64(d[i]);
+            break;
+        }
+        case DataType::INT32: {
+            int32_t* p = reinterpret_cast<int32_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = (int32_t)double_to_int64(d[i]);
+            break;
+        }
+        case DataType::INT16: {
+            int16_t* p = reinterpret_cast<int16_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = (int16_t)double_to_int64(d[i]);
+            break;
+        }
+        case DataType::INT8: {
+            int8_t* p = reinterpret_cast<int8_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = (int8_t)double_to_int64(d[i]);
+            break;
+        }
+        case DataType::UINT8: {
+            uint8_t* p = reinterpret_cast<uint8_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = (uint8_t)double_to_int64(d[i]);
+            break;
+        }
+        case DataType::BOOL: {
+            uint8_t* p = reinterpret_cast<uint8_t*>(base);
+            for (size_t i = 0; i < d.size(); ++i) p[i] = d[i] != 0.0 ? 1 : 0;
+            break;
+        }
+        default:
+            throw std::runtime_error("[litetorch Error] linalg: from_doubles: unsupported dtype");
     }
     return out;
 }
 
+int64_t mul_wrap(int64_t a, int64_t b) {
+    return (int64_t)((uint64_t)a * (uint64_t)b);
+}
+
+int64_t sub_wrap(int64_t a, int64_t b) {
+    return (int64_t)((uint64_t)a - (uint64_t)b);
+}
+
 DataType promote_dtype(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) {
-    if (a->dtype == DataType::FP64 || (b && b->dtype == DataType::FP64)) return DataType::FP64;
-    return DataType::FP32;
+    return promote_types(a->dtype, b->dtype);
+}
+
+DataType same_dtype(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b, const char* op) {
+    if (a->dtype != b->dtype)
+        throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                 ": inputs must have the same dtype");
+    if (a->dtype == DataType::BOOL)
+        throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                 ": bool inputs not supported");
+    return a->dtype;
+}
+
+DataType float_dtype(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b, const char* op,
+                     bool allow_half) {
+    if (a->dtype != b->dtype)
+        throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                 ": inputs must have the same dtype");
+    if (!is_float_dtype(a->dtype))
+        throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                 ": expected a floating point tensor as input");
+    if (!allow_half && a->dtype != DataType::FP32 && a->dtype != DataType::FP64)
+        throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                 ": expected float32 or float64 tensor as input");
+    return a->dtype;
+}
+
+std::vector<int64_t> to_int64s(const std::shared_ptr<Tensor>& t, const char* op) {
+    require_cpu(*t, op);
+    auto c = t->is_contiguous() ? t : t->contiguous();
+    const char* base = reinterpret_cast<const char*>(c->storage->get_cpu_ptr()) +
+                       c->offset * (int64_t)c->storage->element_size();
+    std::vector<int64_t> out(c->numel());
+    switch (c->dtype) {
+        case DataType::INT64: {
+            const int64_t* p = reinterpret_cast<const int64_t*>(base);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = p[i];
+            break;
+        }
+        case DataType::INT32: {
+            const int32_t* p = reinterpret_cast<const int32_t*>(base);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = p[i];
+            break;
+        }
+        case DataType::INT16: {
+            const int16_t* p = reinterpret_cast<const int16_t*>(base);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = p[i];
+            break;
+        }
+        case DataType::INT8: {
+            const int8_t* p = reinterpret_cast<const int8_t*>(base);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = p[i];
+            break;
+        }
+        case DataType::UINT8:
+        case DataType::BOOL: {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(base);
+            for (size_t i = 0; i < out.size(); ++i) out[i] = p[i];
+            break;
+        }
+        default:
+            throw std::runtime_error(std::string("[litetorch Error] linalg::") + op +
+                                     ": integer read of unsupported dtype");
+    }
+    return out;
+}
+
+std::shared_ptr<Tensor> from_int64s(const std::vector<int64_t>& v,
+                                    const std::vector<int64_t>& shape, DataType dtype) {
+    Device dev(DeviceType::CPU, 0);
+    auto out = Tensor::create(shape, dev, false, dtype);
+    char* base = reinterpret_cast<char*>(out->storage->get_cpu_ptr());
+    switch (dtype) {
+        case DataType::INT64: {
+            int64_t* p = reinterpret_cast<int64_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = v[i];
+            break;
+        }
+        case DataType::INT32: {
+            int32_t* p = reinterpret_cast<int32_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = (int32_t)v[i];
+            break;
+        }
+        case DataType::INT16: {
+            int16_t* p = reinterpret_cast<int16_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = (int16_t)v[i];
+            break;
+        }
+        case DataType::INT8: {
+            int8_t* p = reinterpret_cast<int8_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = (int8_t)v[i];
+            break;
+        }
+        case DataType::UINT8: {
+            uint8_t* p = reinterpret_cast<uint8_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = (uint8_t)v[i];
+            break;
+        }
+        case DataType::BOOL: {
+            uint8_t* p = reinterpret_cast<uint8_t*>(base);
+            for (size_t i = 0; i < v.size(); ++i) p[i] = v[i] ? 1 : 0;
+            break;
+        }
+        default:
+            throw std::runtime_error("[litetorch Error] linalg: from_int64s: unsupported dtype");
+    }
+    return out;
 }
 
 std::vector<int64_t> bcast_batch(const std::vector<int64_t>& s1,
@@ -377,6 +577,7 @@ std::shared_ptr<Tensor> solve(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
             throw std::runtime_error("[litetorch Error] linalg::solve: B rows must match A");
         nrhs = b->shape.back();
     }
+    DataType dt = float_dtype(a, b, "solve", false);
     auto bs = bcast_batch(a->shape, bvec ? b->shape : b->shape);
     auto ad = to_doubles(a, "solve");
     auto bd = to_doubles(b, "solve");
@@ -409,7 +610,7 @@ std::shared_ptr<Tensor> solve(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
         os.push_back(n);
         os.push_back(nrhs);
     }
-    return from_doubles(bbuf, os, promote_dtype(a, b));
+    return from_doubles(bbuf, os, dt);
 }
 
 std::shared_ptr<Tensor> cholesky(std::shared_ptr<Tensor> a, bool upper) {
@@ -834,6 +1035,7 @@ lstsq(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, double rcond) {
             throw std::runtime_error("[litetorch Error] linalg::lstsq: B rows must match A rows");
         nrhs = b->shape.back();
     }
+    DataType dt = float_dtype(a, b, "lstsq", false);
     auto bs = bcast_batch(a->shape, b->shape);
     auto ad = to_doubles(a, "lstsq");
     auto bd = to_doubles(b, "lstsq");
@@ -904,8 +1106,9 @@ lstsq(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, double rcond) {
     if (bvec) rs = bs;
     ks = bs;
     svs.push_back(k);
-    DataType dt = promote_dtype(a, b);
-    return {from_doubles(X, xs, dt), from_doubles(Rv, rs, dt), from_doubles(Rkv, ks, dt),
+    std::vector<int64_t> rk(Rkv.size());
+    for (size_t i = 0; i < rk.size(); ++i) rk[i] = (int64_t)Rkv[i];
+    return {from_doubles(X, xs, dt), from_doubles(Rv, rs, dt), from_int64s(rk, ks, DataType::INT64),
             from_doubles(Sv, svs, dt)};
 }
 
@@ -992,6 +1195,28 @@ std::shared_ptr<Tensor> cross(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
     if (d < 0 || d >= ndim) throw std::runtime_error("[litetorch Error] linalg::cross: bad dim");
     if (a->shape[(size_t)d] != 3)
         throw std::runtime_error("[litetorch Error] linalg::cross: dim must have size 3");
+    DataType dt = same_dtype(a, b, "cross");
+    if (is_integer_dtype(dt)) {
+        auto ai = to_int64s(a, "cross");
+        auto bi = to_int64s(b, "cross");
+        int64_t n = (int64_t)ai.size();
+        int64_t stride = 1;
+        for (int64_t i = d + 1; i < ndim; ++i) stride *= a->shape[(size_t)i];
+        int64_t outer = n / (3 * stride);
+        std::vector<int64_t> out((size_t)n);
+        for (int64_t o = 0; o < outer; ++o)
+            for (int64_t s = 0; s < stride; ++s) {
+                int64_t base = (o * 3 * stride) + s;
+                int64_t a0 = ai[(size_t)base], a1 = ai[(size_t)(base + stride)],
+                        a2 = ai[(size_t)(base + 2 * stride)];
+                int64_t b0 = bi[(size_t)base], b1 = bi[(size_t)(base + stride)],
+                        b2 = bi[(size_t)(base + 2 * stride)];
+                out[(size_t)base] = sub_wrap(mul_wrap(a1, b2), mul_wrap(a2, b1));
+                out[(size_t)(base + stride)] = sub_wrap(mul_wrap(a2, b0), mul_wrap(a0, b2));
+                out[(size_t)(base + 2 * stride)] = sub_wrap(mul_wrap(a0, b1), mul_wrap(a1, b0));
+            }
+        return from_int64s(out, a->shape, dt);
+    }
     auto ad = to_doubles(a, "cross");
     auto bd = to_doubles(b, "cross");
     int64_t n = (int64_t)ad.size();
@@ -1010,7 +1235,7 @@ std::shared_ptr<Tensor> cross(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
             out[(size_t)(base + stride)] = a2 * b0 - a0 * b2;
             out[(size_t)(base + 2 * stride)] = a0 * b1 - a1 * b0;
         }
-    return from_doubles(out, a->shape, promote_dtype(a, b));
+    return from_doubles(out, a->shape, dt);
 }
 
 std::shared_ptr<Tensor> vecdot(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor> y, int64_t dim) {
@@ -1019,6 +1244,7 @@ std::shared_ptr<Tensor> vecdot(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor
     int64_t ndim = (int64_t)x->shape.size();
     if (ndim == 0) throw std::runtime_error("[litetorch Error] linalg::vecdot: expected >=1D");
     int64_t d = dim < 0 ? dim + ndim : dim;
+    DataType dt = float_dtype(x, y, "vecdot", true);
     auto xd = to_doubles(x, "vecdot");
     auto yd = to_doubles(y, "vecdot");
     int64_t n = (int64_t)xd.size();
@@ -1038,7 +1264,7 @@ std::shared_ptr<Tensor> vecdot(std::shared_ptr<Tensor> x, std::shared_ptr<Tensor
                 acc += xd[(size_t)(base + i * stride)] * yd[(size_t)(base + i * stride)];
             out[(size_t)(o * stride + s)] = acc;
         }
-    return from_doubles(out, os, promote_dtype(x, y));
+    return from_doubles(out, os, dt);
 }
 
 std::shared_ptr<Tensor> multi_dot(const std::vector<std::shared_ptr<Tensor>>& mats) {
@@ -1244,16 +1470,56 @@ std::shared_ptr<Tensor> cond(std::shared_ptr<Tensor> a, const std::string& p) {
 std::shared_ptr<Tensor> outer(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
     if (a->shape.size() != 1 || b->shape.size() != 1)
         throw std::runtime_error("[litetorch Error] linalg::outer: expected 1D inputs");
+    DataType dt = promote_dtype(a, b);
+    if (is_integer_dtype(dt)) {
+        auto ai = to_int64s(a, "outer");
+        auto bi = to_int64s(b, "outer");
+        int64_t m = a->shape[0], n = b->shape[0];
+        std::vector<int64_t> out((size_t)(m * n));
+        for (int64_t i = 0; i < m; ++i)
+            for (int64_t j = 0; j < n; ++j) out[(size_t)(i * n + j)] = mul_wrap(ai[(size_t)i], bi[(size_t)j]);
+        return from_int64s(out, {m, n}, dt);
+    }
     auto ad = to_doubles(a, "outer");
     auto bd = to_doubles(b, "outer");
     int64_t m = a->shape[0], n = b->shape[0];
     std::vector<double> out((size_t)(m * n));
     for (int64_t i = 0; i < m; ++i)
         for (int64_t j = 0; j < n; ++j) out[(size_t)(i * n + j)] = ad[(size_t)i] * bd[(size_t)j];
-    return from_doubles(out, {m, n}, promote_dtype(a, b));
+    return from_doubles(out, {m, n}, dt);
 }
 
 std::shared_ptr<Tensor> inner(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    DataType dt = same_dtype(a, b, "inner");
+    if (is_integer_dtype(dt)) {
+        auto ai = to_int64s(a, "inner");
+        auto bi = to_int64s(b, "inner");
+        if (a->shape.size() == 1 && b->shape.size() == 1) {
+            if (a->shape[0] != b->shape[0])
+                throw std::runtime_error("[litetorch Error] linalg::inner: size mismatch");
+            uint64_t acc = 0;
+            for (size_t i = 0; i < ai.size(); ++i) acc += (uint64_t)ai[i] * (uint64_t)bi[i];
+            return from_int64s({(int64_t)acc}, {}, dt);
+        }
+        if (a->shape.empty() || b->shape.empty())
+            throw std::runtime_error("[litetorch Error] linalg::inner: bad shapes");
+        int64_t na = a->shape.back(), nb = b->shape.back();
+        if (na != nb) throw std::runtime_error("[litetorch Error] linalg::inner: last dim mismatch");
+        std::vector<int64_t> sa(a->shape.begin(), a->shape.end() - 1);
+        std::vector<int64_t> sb(b->shape.begin(), b->shape.end() - 1);
+        std::vector<int64_t> os = sa;
+        os.insert(os.end(), sb.begin(), sb.end());
+        int64_t ra = std::max<int64_t>(1, shape_prod(sa)), rb = std::max<int64_t>(1, shape_prod(sb));
+        std::vector<int64_t> out((size_t)(ra * rb), 0);
+        for (int64_t i = 0; i < ra; ++i)
+            for (int64_t j = 0; j < rb; ++j) {
+                uint64_t acc = 0;
+                for (int64_t k = 0; k < na; ++k)
+                    acc += (uint64_t)ai[(size_t)(i * na + k)] * (uint64_t)bi[(size_t)(j * na + k)];
+                out[(size_t)(i * rb + j)] = (int64_t)acc;
+            }
+        return from_int64s(out, os, dt);
+    }
     auto ad = to_doubles(a, "inner");
     auto bd = to_doubles(b, "inner");
     if (a->shape.size() == 1 && b->shape.size() == 1) {
@@ -1261,7 +1527,7 @@ std::shared_ptr<Tensor> inner(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
             throw std::runtime_error("[litetorch Error] linalg::inner: size mismatch");
         double s = 0.0;
         for (size_t i = 0; i < ad.size(); ++i) s += ad[i] * bd[i];
-        return from_doubles({s}, {}, promote_dtype(a, b));
+        return from_doubles({s}, {}, dt);
     }
     if (a->shape.empty() || b->shape.empty())
         throw std::runtime_error("[litetorch Error] linalg::inner: bad shapes");
@@ -1280,10 +1546,39 @@ std::shared_ptr<Tensor> inner(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor>
                 s += ad[(size_t)(i * na + k)] * bd[(size_t)(j * na + k)];
             out[(size_t)(i * rb + j)] = s;
         }
-    return from_doubles(out, os, promote_dtype(a, b));
+    return from_doubles(out, os, dt);
 }
 
 std::shared_ptr<Tensor> kron(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    DataType dt = promote_dtype(a, b);
+    if (is_integer_dtype(dt)) {
+        auto ai = to_int64s(a, "kron");
+        auto bi = to_int64s(b, "kron");
+        std::vector<int64_t> os;
+        size_t nd = std::max(a->shape.size(), b->shape.size());
+        std::vector<int64_t> pa(nd, 1), pb(nd, 1);
+        for (size_t i = 0; i < a->shape.size(); ++i) pa[nd - a->shape.size() + i] = a->shape[i];
+        for (size_t i = 0; i < b->shape.size(); ++i) pb[nd - b->shape.size() + i] = b->shape[i];
+        for (size_t i = 0; i < nd; ++i) os.push_back(pa[i] * pb[i]);
+        int64_t total = shape_prod(os);
+        std::vector<int64_t> out((size_t)total);
+        std::vector<int64_t> idx(nd, 0);
+        for (int64_t t = 0; t < total; ++t) {
+            int64_t tmp = t;
+            for (size_t i = nd; i-- > 0;) {
+                idx[i] = tmp % os[i];
+                tmp /= os[i];
+            }
+            int64_t ia = 0, ib = 0;
+            for (size_t i = 0; i < nd; ++i) {
+                int64_t qa = idx[i] / pb[i], qb = idx[i] % pb[i];
+                ia = ia * pa[i] + qa;
+                ib = ib * pb[i] + qb;
+            }
+            out[(size_t)t] = mul_wrap(ai[(size_t)ia], bi[(size_t)ib]);
+        }
+        return from_int64s(out, os, dt);
+    }
     auto ad = to_doubles(a, "kron");
     auto bd = to_doubles(b, "kron");
     std::vector<int64_t> os;
@@ -1312,17 +1607,27 @@ std::shared_ptr<Tensor> kron(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> 
     }
     (void)na;
     (void)nb;
-    return from_doubles(out, os, promote_dtype(a, b));
+    return from_doubles(out, os, dt);
 }
 
 std::shared_ptr<Tensor> vdot(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b) {
+    DataType dt = same_dtype(a, b, "vdot");
+    if (is_integer_dtype(dt)) {
+        auto ai = to_int64s(a, "vdot");
+        auto bi = to_int64s(b, "vdot");
+        if (ai.size() != bi.size())
+            throw std::runtime_error("[litetorch Error] linalg::vdot: size mismatch");
+        uint64_t acc = 0;
+        for (size_t i = 0; i < ai.size(); ++i) acc += (uint64_t)ai[i] * (uint64_t)bi[i];
+        return from_int64s({(int64_t)acc}, {}, dt);
+    }
     auto ad = to_doubles(a, "vdot");
     auto bd = to_doubles(b, "vdot");
     if (ad.size() != bd.size())
         throw std::runtime_error("[litetorch Error] linalg::vdot: size mismatch");
     double s = 0.0;
     for (size_t i = 0; i < ad.size(); ++i) s += ad[i] * bd[i];
-    return from_doubles({s}, {}, promote_dtype(a, b));
+    return from_doubles({s}, {}, dt);
 }
 
 }
