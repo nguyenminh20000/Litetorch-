@@ -45,25 +45,22 @@ def ref_adagrad_step(p, g, s, step, lr, lr_decay, wd, eps):
     return out_p, out_s
 
 
-def ref_nadam_step(p, g, m, v, step, lr, b1, b2, eps, wd, md):
-    bc1 = 1.0 - b1 ** step
+def ref_nadam_step(p, g, m, v, mu_prod, step, lr, b1, b2, eps, wd, md):
     bc2 = 1.0 - b2 ** step
-    bc2s = math.sqrt(bc2)
     mu = b1 * (1.0 - 0.5 * 0.96 ** (step * md))
     mu_next = b1 * (1.0 - 0.5 * 0.96 ** ((step + 1) * md))
-    mu_prod = mu_next / mu
-    step_size = lr / bc1
+    mu_prod = mu_prod * mu
     op, om, ov = [], [], []
     for pj, gj, mj, vj in zip(p, g, m, v):
         gv = gj + wd * pj
         mj2 = b1 * mj + (1.0 - b1) * gv
         vj2 = b2 * vj + (1.0 - b2) * gv * gv
-        numer = mj2 * mu_prod + (1.0 - mu) * gv
-        denom = (math.sqrt(vj2) + eps) / bc2s
-        op.append(pj - step_size * numer / denom)
+        denom = math.sqrt(vj2 / bc2) + eps
+        op.append(pj - lr * (1.0 - mu) / (1.0 - mu_prod) * gv / denom
+                  - lr * mu_next / (1.0 - mu_prod * mu_next) * mj2 / denom)
         om.append(mj2)
         ov.append(vj2)
-    return op, om, ov
+    return op, om, ov, mu_prod
 
 
 def test_adagrad_formula():
@@ -149,12 +146,13 @@ def test_nadam_formula():
     opt = lt.optim.NAdam([p], lr=0.002, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0, momentum_decay=0.004)
     m = [0.0] * 3
     v = [0.0] * 3
+    mu_prod = 1.0
     pp = p0[:]
     ok = True
     for step in (1, 2, 3):
         setgrad(p, g0)
         opt.step()
-        pp, m, v = ref_nadam_step(pp, g0, m, v, step, 0.002, 0.9, 0.999, 1e-8, 0.0, 0.004)
+        pp, m, v, mu_prod = ref_nadam_step(pp, g0, m, v, mu_prod, step, 0.002, 0.9, 0.999, 1e-8, 0.0, 0.004)
         got = vec(p)
         ok = ok and all(close(a, b, tol=1e-4) for a, b in zip(got, pp))
     check("nadam_matches_formula", ok)
