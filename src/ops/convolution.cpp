@@ -101,7 +101,7 @@ public:
             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
             DataType rdt = relu_gout_c->dtype;
             relu_masked = Tensor::create(relu_gout_c->shape, relu_gout_c->device, false, rdt);
-            int rsize = static_cast<int>(relu_out_c->numel());
+            int64_t rsize = static_cast<int64_t>(relu_out_c->numel());
             size_t resz = relu_masked->storage->element_size();
             bool run_gpu = false;
             if (relu_out_c->device.type == DeviceType::GPU && rdt == DataType::FP32) {
@@ -109,14 +109,14 @@ public:
                 if (relu_bwd_k) {
                     run_gpu = true;
                     cl_mem in_mem = relu_out_c->gpu_data();
-                    int in_off = relu_out_c->offset;
+                    int64_t in_off = relu_out_c->offset;
                     cl_mem gout_mem = relu_gout_c->gpu_data();
-                    int gout_off = relu_gout_c->offset;
+                    int64_t gout_off = relu_gout_c->offset;
                     cl_mem gin_mem = relu_masked->gpu_data();
-                    int gin_off = relu_masked->offset;
+                    int64_t gin_off = relu_masked->offset;
                     rt_gpu_launch(relu_bwd_k, {static_cast<size_t>(rsize)}, {},
                         {&in_mem, &in_off, &gout_mem, &gout_off, &gin_mem, &gin_off, &rsize},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
                 }
             }
             if (!run_gpu) {
@@ -868,12 +868,12 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
             if (apply_relu) {
                 auto relu_k = cached_kernel<KernelID::ReLU>();
                 if (relu_k) {
-                    int rsize = N * C_out * H_out * W_out;
+                    int64_t rsize = (int64_t)N * C_out * H_out * W_out;
                     cl_mem rm_mem = out->gpu_data();
-                    int rm_off = out->offset;
+                    int64_t rm_off = out->offset;
                     rt_gpu_launch(relu_k, {static_cast<size_t>(rsize)}, {},
                         {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
                 }
             }
             done = true;
@@ -951,12 +951,12 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
             if (apply_relu) {
                 auto relu_k = cached_kernel<KernelID::ReLU>();
                 if (relu_k) {
-                    int rsize = N * C_out * H_out * W_out;
+                    int64_t rsize = (int64_t)N * C_out * H_out * W_out;
                     cl_mem rm_mem = out->gpu_data();
-                    int rm_off = out->offset;
+                    int64_t rm_off = out->offset;
                     rt_gpu_launch(relu_k, {static_cast<size_t>(rsize)}, {},
                         {&rm_mem, &rm_off, &rm_mem, &rm_off, &rsize},
-                        {sizeof(cl_mem), sizeof(int), sizeof(cl_mem), sizeof(int), sizeof(int)});
+                        {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
                 }
             }
         }
