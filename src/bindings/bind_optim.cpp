@@ -1,4 +1,5 @@
 #include "bindings_common.h"
+#include <cmath>
 
 void bind_optim(py::module_& m) {
         auto optim_mod = m.def_submodule("optim", "LiteTorch Optimizers");
@@ -290,9 +291,10 @@ void bind_optim(py::module_& m) {
                 for (auto& g : o.param_groups) {
                     for (size_t i = 0; i < g.params.size(); ++i, ++idx) {
                         py::dict s;
-                        s["step"] = o.step_count;
+                        s["step"] = o.param_steps[idx];
                         s["exp_avg"] = py::cast(o.exp_avg[idx]->clone());
                         s["exp_avg_sq"] = py::cast(o.exp_avg_sq[idx]->clone());
+                        s["mu_product"] = o.mu_products[idx];
                         states.append(s);
                     }
                 }
@@ -331,7 +333,18 @@ void bind_optim(py::module_& m) {
                     throw std::runtime_error("[litetorch Error] NAdam.load_state_dict: state size mismatch");
                 for (py::ssize_t i = 0; i < states.size(); ++i) {
                     py::dict s = states[i];
-                    o.step_count = s["step"].cast<int>();
+                    o.param_steps[i] = s["step"].cast<int>();
+                    if (o.param_steps[i] > o.step_count) o.step_count = o.param_steps[i];
+                    if (s.contains("mu_product")) {
+                        o.mu_products[i] = s["mu_product"].cast<float>();
+                    } else {
+                        float mp = 1.0f;
+                        float b1 = static_cast<float>(o.beta1);
+                        for (int t = 1; t <= o.param_steps[i]; ++t) {
+                            mp *= b1 * (1.0f - 0.5f * std::pow(0.96f, static_cast<float>(t) * o.momentum_decay));
+                        }
+                        o.mu_products[i] = mp;
+                    }
                     auto m_src = py::cast<std::shared_ptr<Tensor>>(s["exp_avg"]);
                     auto v_src = py::cast<std::shared_ptr<Tensor>>(s["exp_avg_sq"]);
                     auto m_dst = o.exp_avg[i];

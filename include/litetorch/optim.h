@@ -238,6 +238,8 @@ public:
     int step_count = 0;
     std::vector<std::shared_ptr<Tensor>> exp_avg;
     std::vector<std::shared_ptr<Tensor>> exp_avg_sq;
+    std::vector<float> mu_products;
+    std::vector<int> param_steps;
     std::vector<ParamGroup> param_groups;
 
     NAdam(const std::vector<std::shared_ptr<Tensor>>& params, double lr = 2e-3,
