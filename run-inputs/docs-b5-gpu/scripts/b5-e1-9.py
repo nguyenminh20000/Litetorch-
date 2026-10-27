@@ -12,6 +12,6 @@ print("build_commit", lt.build_commit())
 
 assert lt.is_gpu_available()
 t = lt.tensor([1.0, 2.0]).to(lt.Device("cuda"))
-assert str(t.device) == "cuda:0"
+assert str(t.device) == "gpu:0"
 print("on GPU:", t.device)
 print("B5 E1-9 PASS")

@@ -18,7 +18,7 @@ held = []
 for i in range(6):
     t = lt.randn([1024, 1024]).to(lt.Device("cuda"))
     held.append(t)
-    assert str(t.device) == "cuda:0", "silent fallback to CPU"
+    assert str(t.device) == "gpu:0", "silent fallback to CPU"
     print("after alloc", i, "memory allocated", lt.cuda.memory_allocated())
 assert lt.cuda.memory_allocated() > 0, "no GPU memory registered"
 print("survived allocations", len(held))
