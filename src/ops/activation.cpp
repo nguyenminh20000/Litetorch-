@@ -265,7 +265,7 @@ public:
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_input = Tensor::create(input_c->shape, input_c->device, false, input_c->dtype);
         StorageUseGuard guard({input_c->storage, gout_c->storage, grad_input->storage});
-        int size = input_c->numel();
+        int64_t size = input_c->numel();
         bool run_gpu = false;
         if (input_c->device.type == DeviceType::GPU) {
             auto kernel = cached_kernel<KernelID::LeakyReluBackward>();
