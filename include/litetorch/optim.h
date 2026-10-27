@@ -371,7 +371,6 @@ public:
     float final_div_factor;
     double initial_lr;
     double min_lr;
-    int step_size_up;
     int last_epoch = 0;
 
     OneCycleLR(Optimizer* optimizer, double max_lr, int total_steps = -1, int epochs = -1,

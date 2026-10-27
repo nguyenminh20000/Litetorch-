@@ -1,6 +1,7 @@
 #include "litetorch/optim.h"
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -87,8 +88,6 @@ OneCycleLR::OneCycleLR(Optimizer* optimizer, double max_lr, int total_steps, int
     }
     initial_lr = max_lr / div_factor;
     min_lr = initial_lr / final_div_factor;
-    step_size_up = (int)(this->total_steps * pct_start);
-    if (step_size_up < 1) step_size_up = 1;
     optimizer->set_lr(initial_lr);
 }
 
@@ -103,15 +102,20 @@ static double anneal_linear(double start, double end, double pct) {
 void OneCycleLR::step() {
     last_epoch++;
     int step_num = last_epoch;
-    if (step_num > total_steps) step_num = total_steps;
+    if (step_num > total_steps) {
+        throw std::runtime_error("[litetorch Error] OneCycleLR: Tried to step " + std::to_string(step_num) +
+                                 " times. The specified number of total steps is " + std::to_string(total_steps));
+    }
+    double up_end = (double)pct_start * total_steps - 1.0;
+    double down_end = (double)total_steps - 1.0;
     double new_lr;
-    if (step_num <= step_size_up) {
-        double pct = (double)step_num / step_size_up;
+    if (step_num <= up_end) {
+        double pct = up_end > 0.0 ? (double)step_num / up_end : 0.0;
         new_lr = (anneal_strategy == "cos") ? anneal_cos(initial_lr, max_lr, pct)
                                             : anneal_linear(initial_lr, max_lr, pct);
     } else {
-        int down_steps = total_steps - step_size_up;
-        double pct = down_steps > 0 ? (double)(step_num - step_size_up) / down_steps : 1.0;
+        double denom = down_end - up_end;
+        double pct = denom > 0.0 ? (double)(step_num - up_end) / denom : 1.0;
         new_lr = (anneal_strategy == "cos") ? anneal_cos(max_lr, min_lr, pct)
                                             : anneal_linear(max_lr, min_lr, pct);
     }
