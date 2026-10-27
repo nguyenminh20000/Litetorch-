@@ -1,0 +1,1274 @@
+{
+  "commit": "88a4ba1518cab098dd69c58dd9dc7135e9e6514b",
+  "examples": [
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.1-1",
+      "lang": "en",
+      "line": 11,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.2-1",
+      "lang": "en",
+      "line": 43,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.3-1",
+      "lang": "en",
+      "line": 60,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.4-1",
+      "lang": "en",
+      "line": 78,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.5-1",
+      "lang": "en",
+      "line": 114,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.6-1",
+      "lang": "en",
+      "line": 133,
+      "path": "docs/examples/en/10.quantization_and_jit/ex-10-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.1-1",
+      "lang": "en",
+      "line": 11,
+      "path": "docs/examples/en/11.data_and_io/ex-11-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.2-1",
+      "lang": "en",
+      "line": 35,
+      "path": "docs/examples/en/11.data_and_io/ex-11-2-1.py"
+    },
+    {
+      "dependent": [
+        "x",
+        "y"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.3-1",
+      "lang": "en",
+      "line": 53,
+      "path": "docs/examples/en/11.data_and_io/ex-11-3-1.py"
+    },
+    {
+      "dependent": [
+        "loader"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.3.1-1",
+      "lang": "en",
+      "line": 79,
+      "path": "docs/examples/en/11.data_and_io/ex-11-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.4.1-1",
+      "lang": "en",
+      "line": 91,
+      "path": "docs/examples/en/11.data_and_io/ex-11-4-1-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.4.2-1",
+      "lang": "en",
+      "line": 105,
+      "path": "docs/examples/en/11.data_and_io/ex-11-4-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "2.installation.md",
+      "fragment": false,
+      "header": null,
+      "id": "2.6-1",
+      "lang": "en",
+      "line": 108,
+      "path": "docs/examples/en/2.installation/ex-2-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.1-1",
+      "lang": "en",
+      "line": 9,
+      "path": "docs/examples/en/3.quickstart/ex-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.2-1",
+      "lang": "en",
+      "line": 33,
+      "path": "docs/examples/en/3.quickstart/ex-3-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.2-2",
+      "lang": "en",
+      "line": 62,
+      "path": "docs/examples/en/3.quickstart/ex-3-2-2.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.3-1",
+      "lang": "en",
+      "line": 83,
+      "path": "docs/examples/en/3.quickstart/ex-3-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.4-1",
+      "lang": "en",
+      "line": 102,
+      "path": "docs/examples/en/3.quickstart/ex-3-4-1.py"
+    },
+    {
+      "dependent": [
+        "model",
+        "optimizer"
+      ],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.5-1",
+      "lang": "en",
+      "line": 161,
+      "path": "docs/examples/en/3.quickstart/ex-3-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.2-1",
+      "lang": "en",
+      "line": 42,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.3-1",
+      "lang": "en",
+      "line": 62,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.3.1-1",
+      "lang": "en",
+      "line": 86,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.4-1",
+      "lang": "en",
+      "line": 101,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.2-1",
+      "lang": "en",
+      "line": 133,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-5-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.3-1",
+      "lang": "en",
+      "line": 153,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-5-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.4-1",
+      "lang": "en",
+      "line": 167,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-5-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.6-1",
+      "lang": "en",
+      "line": 196,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.7-1",
+      "lang": "en",
+      "line": 221,
+      "path": "docs/examples/en/4.tensor_and_autograd/ex-4-7-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "5.operators.md",
+      "fragment": false,
+      "header": null,
+      "id": "5.1-1",
+      "lang": "en",
+      "line": 18,
+      "path": "docs/examples/en/5.operators/ex-5-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "5.operators.md",
+      "fragment": false,
+      "header": null,
+      "id": "5.10-1",
+      "lang": "en",
+      "line": 134,
+      "path": "docs/examples/en/5.operators/ex-5-10-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.1-1",
+      "lang": "en",
+      "line": 11,
+      "path": "docs/examples/en/6.neural_networks/ex-6-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.1-1",
+      "lang": "en",
+      "line": 50,
+      "path": "docs/examples/en/6.neural_networks/ex-6-2-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.2-1",
+      "lang": "en",
+      "line": 56,
+      "path": "docs/examples/en/6.neural_networks/ex-6-2-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.3-1",
+      "lang": "en",
+      "line": 62,
+      "path": "docs/examples/en/6.neural_networks/ex-6-2-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.4-1",
+      "lang": "en",
+      "line": 68,
+      "path": "docs/examples/en/6.neural_networks/ex-6-2-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.4-1",
+      "lang": "en",
+      "line": 90,
+      "path": "docs/examples/en/6.neural_networks/ex-6-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.5.1-1",
+      "lang": "en",
+      "line": 111,
+      "path": "docs/examples/en/6.neural_networks/ex-6-5-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.5.2-1",
+      "lang": "en",
+      "line": 117,
+      "path": "docs/examples/en/6.neural_networks/ex-6-5-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.6-1",
+      "lang": "en",
+      "line": 125,
+      "path": "docs/examples/en/6.neural_networks/ex-6-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.7-1",
+      "lang": "en",
+      "line": 144,
+      "path": "docs/examples/en/6.neural_networks/ex-6-7-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.1-1",
+      "lang": "en",
+      "line": 19,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-2-1-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.2-1",
+      "lang": "en",
+      "line": 24,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-2-2-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.3-1",
+      "lang": "en",
+      "line": 30,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-2-3-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.3-1",
+      "lang": "en",
+      "line": 44,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-3-1.py"
+    },
+    {
+      "dependent": [
+        "optimizer"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.1-1",
+      "lang": "en",
+      "line": 58,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-4-1-1.py"
+    },
+    {
+      "dependent": [
+        "optimizer"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.2-1",
+      "lang": "en",
+      "line": 64,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-4-2-1.py"
+    },
+    {
+      "dependent": [
+        "scheduler"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.2-2",
+      "lang": "en",
+      "line": 69,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-4-2-2.py"
+    },
+    {
+      "dependent": [],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.5-1",
+      "lang": "en",
+      "line": 81,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4-1",
+      "lang": "en",
+      "line": 121,
+      "path": "docs/examples/en/7.optimizers_and_amp/ex-7-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.2-1",
+      "lang": "en",
+      "line": 23,
+      "path": "docs/examples/en/8.distributed_training/ex-8-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.3-1",
+      "lang": "en",
+      "line": 48,
+      "path": "docs/examples/en/8.distributed_training/ex-8-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.4-1",
+      "lang": "en",
+      "line": 72,
+      "path": "docs/examples/en/8.distributed_training/ex-8-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.5-1",
+      "lang": "en",
+      "line": 97,
+      "path": "docs/examples/en/8.distributed_training/ex-8-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.6-1",
+      "lang": "en",
+      "line": 123,
+      "path": "docs/examples/en/8.distributed_training/ex-8-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.7-1",
+      "lang": "en",
+      "line": 140,
+      "path": "docs/examples/en/8.distributed_training/ex-8-7-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.1-1",
+      "lang": "en",
+      "line": 11,
+      "path": "docs/examples/en/9.llm_serving/ex-9-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.2-1",
+      "lang": "en",
+      "line": 32,
+      "path": "docs/examples/en/9.llm_serving/ex-9-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.3-1",
+      "lang": "en",
+      "line": 59,
+      "path": "docs/examples/en/9.llm_serving/ex-9-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.4-1",
+      "lang": "en",
+      "line": 78,
+      "path": "docs/examples/en/9.llm_serving/ex-9-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.5-1",
+      "lang": "en",
+      "line": 107,
+      "path": "docs/examples/en/9.llm_serving/ex-9-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.6-1",
+      "lang": "en",
+      "line": 134,
+      "path": "docs/examples/en/9.llm_serving/ex-9-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.1-1",
+      "lang": "vi",
+      "line": 11,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.2-1",
+      "lang": "vi",
+      "line": 43,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.3-1",
+      "lang": "vi",
+      "line": 60,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.4-1",
+      "lang": "vi",
+      "line": 78,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.5-1",
+      "lang": "vi",
+      "line": 114,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "10.quantization_and_jit.md",
+      "fragment": false,
+      "header": null,
+      "id": "10.6-1",
+      "lang": "vi",
+      "line": 133,
+      "path": "docs/examples/vi/10.quantization_and_jit/ex-10-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.1-1",
+      "lang": "vi",
+      "line": 11,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.2-1",
+      "lang": "vi",
+      "line": 35,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-2-1.py"
+    },
+    {
+      "dependent": [
+        "x",
+        "y"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.3-1",
+      "lang": "vi",
+      "line": 53,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-3-1.py"
+    },
+    {
+      "dependent": [
+        "loader"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.3.1-1",
+      "lang": "vi",
+      "line": 79,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.4.1-1",
+      "lang": "vi",
+      "line": 91,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-4-1-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "11.data_and_io.md",
+      "fragment": false,
+      "header": null,
+      "id": "11.4.2-1",
+      "lang": "vi",
+      "line": 105,
+      "path": "docs/examples/vi/11.data_and_io/ex-11-4-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "2.installation.md",
+      "fragment": false,
+      "header": null,
+      "id": "2.6-1",
+      "lang": "vi",
+      "line": 110,
+      "path": "docs/examples/vi/2.installation/ex-2-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.1-1",
+      "lang": "vi",
+      "line": 9,
+      "path": "docs/examples/vi/3.quickstart/ex-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.2-1",
+      "lang": "vi",
+      "line": 33,
+      "path": "docs/examples/vi/3.quickstart/ex-3-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.2-2",
+      "lang": "vi",
+      "line": 62,
+      "path": "docs/examples/vi/3.quickstart/ex-3-2-2.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.3-1",
+      "lang": "vi",
+      "line": 83,
+      "path": "docs/examples/vi/3.quickstart/ex-3-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.4-1",
+      "lang": "vi",
+      "line": 102,
+      "path": "docs/examples/vi/3.quickstart/ex-3-4-1.py"
+    },
+    {
+      "dependent": [
+        "model",
+        "optimizer"
+      ],
+      "file": "3.quickstart.md",
+      "fragment": false,
+      "header": null,
+      "id": "3.5-1",
+      "lang": "vi",
+      "line": 161,
+      "path": "docs/examples/vi/3.quickstart/ex-3-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.2-1",
+      "lang": "vi",
+      "line": 42,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.3-1",
+      "lang": "vi",
+      "line": 62,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.3.1-1",
+      "lang": "vi",
+      "line": 86,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-3-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.4-1",
+      "lang": "vi",
+      "line": 101,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.2-1",
+      "lang": "vi",
+      "line": 133,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-5-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.3-1",
+      "lang": "vi",
+      "line": 153,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-5-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.5.4-1",
+      "lang": "vi",
+      "line": 167,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-5-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.6-1",
+      "lang": "vi",
+      "line": 196,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "4.tensor_and_autograd.md",
+      "fragment": false,
+      "header": null,
+      "id": "4.7-1",
+      "lang": "vi",
+      "line": 221,
+      "path": "docs/examples/vi/4.tensor_and_autograd/ex-4-7-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "5.operators.md",
+      "fragment": false,
+      "header": null,
+      "id": "5.1-1",
+      "lang": "vi",
+      "line": 18,
+      "path": "docs/examples/vi/5.operators/ex-5-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "5.operators.md",
+      "fragment": false,
+      "header": null,
+      "id": "5.10-1",
+      "lang": "vi",
+      "line": 134,
+      "path": "docs/examples/vi/5.operators/ex-5-10-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.1-1",
+      "lang": "vi",
+      "line": 11,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.1-1",
+      "lang": "vi",
+      "line": 50,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-2-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.2-1",
+      "lang": "vi",
+      "line": 56,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-2-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.3-1",
+      "lang": "vi",
+      "line": 62,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-2-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.2.4-1",
+      "lang": "vi",
+      "line": 68,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-2-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.4-1",
+      "lang": "vi",
+      "line": 90,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.5.1-1",
+      "lang": "vi",
+      "line": 111,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-5-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.5.2-1",
+      "lang": "vi",
+      "line": 117,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-5-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.6-1",
+      "lang": "vi",
+      "line": 125,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "6.neural_networks.md",
+      "fragment": false,
+      "header": null,
+      "id": "6.7-1",
+      "lang": "vi",
+      "line": 144,
+      "path": "docs/examples/vi/6.neural_networks/ex-6-7-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.1-1",
+      "lang": "vi",
+      "line": 19,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-2-1-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.2-1",
+      "lang": "vi",
+      "line": 24,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-2-2-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.2.3-1",
+      "lang": "vi",
+      "line": 30,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-2-3-1.py"
+    },
+    {
+      "dependent": [
+        "model"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.3-1",
+      "lang": "vi",
+      "line": 44,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-3-1.py"
+    },
+    {
+      "dependent": [
+        "optimizer"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.1-1",
+      "lang": "vi",
+      "line": 58,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-4-1-1.py"
+    },
+    {
+      "dependent": [
+        "optimizer"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.2-1",
+      "lang": "vi",
+      "line": 64,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-4-2-1.py"
+    },
+    {
+      "dependent": [
+        "scheduler"
+      ],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4.2-2",
+      "lang": "vi",
+      "line": 69,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-4-2-2.py"
+    },
+    {
+      "dependent": [],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.5-1",
+      "lang": "vi",
+      "line": 81,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "7.optimizers_and_amp.md",
+      "fragment": false,
+      "header": null,
+      "id": "7.4-1",
+      "lang": "vi",
+      "line": 121,
+      "path": "docs/examples/vi/7.optimizers_and_amp/ex-7-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.2-1",
+      "lang": "vi",
+      "line": 23,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.3-1",
+      "lang": "vi",
+      "line": 51,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.4-1",
+      "lang": "vi",
+      "line": 75,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.5-1",
+      "lang": "vi",
+      "line": 100,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.6-1",
+      "lang": "vi",
+      "line": 126,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-6-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "8.distributed_training.md",
+      "fragment": false,
+      "header": null,
+      "id": "8.7-1",
+      "lang": "vi",
+      "line": 143,
+      "path": "docs/examples/vi/8.distributed_training/ex-8-7-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.1-1",
+      "lang": "vi",
+      "line": 11,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-1-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.2-1",
+      "lang": "vi",
+      "line": 32,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-2-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.3-1",
+      "lang": "vi",
+      "line": 59,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-3-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.4-1",
+      "lang": "vi",
+      "line": 78,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-4-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.5-1",
+      "lang": "vi",
+      "line": 107,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-5-1.py"
+    },
+    {
+      "dependent": [],
+      "file": "9.llm_serving.md",
+      "fragment": false,
+      "header": null,
+      "id": "9.6-1",
+      "lang": "vi",
+      "line": 134,
+      "path": "docs/examples/vi/9.llm_serving/ex-9-6-1.py"
+    }
+  ],
+  "tree": "."
+}
