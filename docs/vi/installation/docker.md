@@ -89,7 +89,7 @@ docker run --rm litetorch:cuda nvcc --version
 Nếu thiếu `nvcc`, thư viện GPU native không bao giờ được biên dịch và framework sẽ fallback sang CPU một cách âm thầm. Kết quả kỳ vọng của lệnh chạy trên máy có GPU:
 
 ```
-CUDA cuda:0 True
+CUDA gpu:0 True
 ```
 
 (Tên backend chính xác và chỉ số thiết bị phụ thuộc vào GPU của máy chủ. Nếu kết quả hiển thị `CPU cpu:0 False`, nghĩa là backend GPU chưa được nạp — hãy kiểm tra `nvcc --version` bên trong image, biên dịch lại, và xác nhận dòng khởi tạo `Native GPU (CUDA/HIP)` xuất hiện.)

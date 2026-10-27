@@ -274,7 +274,7 @@ The rounding happens twice over: `from_vector` passes values through `float` at 
 
 ## 5. The device model
 
-A `Device` names a backend and an index: `cpu:0`, `cuda:0`, `tpu:0`, `meta:0`. LiteTorch has no string form for `.to()` (D-03): construct `lt.Device("cuda")` explicitly. Two silent behaviors follow from the device model, and both are traps.
+A `Device` names a backend and an index: `cpu:0`, `gpu:0`, `tpu:0`, `meta`. LiteTorch has no string form for `.to()` (D-03): construct `lt.Device("cuda")` explicitly. Two silent behaviors follow from the device model, and both are traps.
 
 **D-02 — silent CPU fallback.** `.to(Device("cuda"))` on a machine without a GPU backend silently returns a CPU tensor. No error, no warning, no log. `.cuda()` goes through the same path. PyTorch raises.
 
@@ -328,11 +328,11 @@ assert lt.build_commit() == "88a4ba1"
 
 assert lt.is_gpu_available()
 t = lt.tensor([1.0, 2.0]).to(lt.Device("cuda"))
-assert str(t.device) == "cuda:0"
+assert str(t.device) == "gpu:0"
 print("on GPU:", t.device)
 ```
 
-**REQUIRES-GPU — not run on CPU, never shipped as verified.** The block above is the GPU counterpart of E1-6: on a machine with a real CUDA backend the same `.to(Device("cuda"))` must land on `cuda:0`, and the device check must pass. It runs on Kaggle (QA owns the session) after the pre-flight gate asserts the `Native GPU (CUDA/HIP)` init line and `liblitetorch_gpu.so` placement.
+**REQUIRES-GPU — not run on CPU, never shipped as verified.** The block above is the GPU counterpart of E1-6: on a machine with a real CUDA backend the same `.to(Device("cuda"))` must land on `gpu:0`, and the device check must pass. It runs on Kaggle (QA owns the session) after the pre-flight gate asserts the `Native GPU (CUDA/HIP)` init line and `liblitetorch_gpu.so` placement.
 
 ## 6. Raw pointers: `data_ptr()` (D-01)
 

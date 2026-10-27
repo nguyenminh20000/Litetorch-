@@ -29,8 +29,8 @@ Không có tệp cấu hình và không có cờ ưu tiên: GPU native thắng T
 
 ```text
 auto_device():
-    GPU native kha dung (va LITETORCH_NO_NATIVE_GPU khong dat)  -> GPU:0
-    neu khong thi OpenCL kha dung                               -> GPU:0
+    GPU native kha dung (va LITETORCH_NO_NATIVE_GPU khong dat)  -> gpu:0
+    neu khong thi OpenCL kha dung                               -> gpu:0
     neu khong thi TPU kha dung                                  -> TPU:0
     neu khong                                                 -> CPU:0
 
@@ -41,7 +41,7 @@ get_backend_name():
     neu khong   -> "CPU"
 ```
 
-Lưu ý `auto_device()` trả về `GPU:0` cho cả OpenCL lẫn GPU native: `Device` không ghi lại *cách cài đặt* GPU nào đứng sau nó. Code nào cần biết phải gọi `get_backend_name()`.
+Lưu ý `auto_device()` trả về `gpu:0` cho cả OpenCL lẫn GPU native: `Device` không ghi lại *cách cài đặt* GPU nào đứng sau nó. Code nào cần biết phải gọi `get_backend_name()`.
 
 **Dispatch kernel.** Một lời gọi kernel trước tiên hỏi backend native về một kernel đã biên dịch sẵn theo tên (`gpu_get_kernel_fn`, `backend.cpp:486-497`); chỉ khi không có mới biên dịch từ mã nguồn. Bản sửa lỗi va chạm cached-kernel ngày 2026-10-26 (đã merge `agent-v1 @02cc271a`) là một phần của đường này: các kernel giờ được tra cứu theo tên, vì trước đây hai typedef backward FP32/FP16 giống hệt nhau từng chia sẻ một mục cache. Việc launch kernel cần symbol `gpu_launch` và ném lỗi nếu nó thiếu (`backend.cpp:503-504`).
 

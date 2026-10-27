@@ -114,7 +114,7 @@ Result: [7.0, 10.0, 15.0, 22.0]
 Sum: 54.0
 ```
 
-On a Kaggle GPU session the first three lines read `CUDA` / `cuda:0` / `True`; the result and sum are identical.
+On a Kaggle GPU session the first three lines read `CUDA` / `gpu:0` / `True`; the result and sum are identical.
 
 ---
 

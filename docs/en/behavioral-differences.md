@@ -4,7 +4,7 @@ LiteTorch aims for PyTorch-compatible numerics, but it is not PyTorch. This page
 
 - **Baseline:** tree HEAD `b326f29`; examples in this page run against the Core D3 extension `build_commit 88a4ba1` (`workspace/framework/core/litetorch-d3/python`); PyTorch reference torch 2.14.1+cpu in `~/torch-venv`.
 - **Status key:** `OPEN` — present in the tree, no fix merged. `FILED` — defect filed to the owning team via the comms board, fix not yet merged. `FIXED` — fixed and merged; the old behavior is recorded as history only. `DOCUMENTED` — intentional divergence, no fix planned; the doc is the contract.
-- **Numbering:** D-01–D-21 were verified in the B0 plan pass (`plan/differences.md`). D-22–D-29 were found in the B3 nn reference pass. D-30–D-46 were found in the B3 optim/linalg/data/distributed passes and are assigned in this batch (B4). D-47–D-49 (autograd) were found in the B4 explanations pass and added by the leader after the front2 worker finished.
+- **Numbering:** D-01–D-21 were verified in the B0 plan pass (`plan/differences.md`). D-22–D-29 were found in the B3 nn reference pass. D-30–D-46 were found in the B3 optim/linalg/data/distributed passes and are assigned in this batch (B4). D-47–D-49 (autograd) were found in the B4 explanations pass and added by the leader after the front2 worker finished. D-50 (device string) was found in the B5 GPU verification pass (e1-9 failure) and added as a follow-up.
 - **Rule for porters:** never assume a PyTorch idiom works in LiteTorch until this page or the API reference says so. When in doubt, run the parity check in `plan/verification.md` §3.
 
 ## Live demonstrations
@@ -426,6 +426,13 @@ print("max |lt - torch tanh|:", max(abs(a - b) for a, b in zip(g_lt, g_tanh)))
 - Impact: MEDIUM. Any ported code that re-runs backward (e.g. multi-loss, gradient accumulation through the same graph) fails; the error message misdirects the user toward a nonexistent fix.
 - Migration: rebuild the graph (re-run forward) for each backward, or use `create_graph=True` where applicable. Filed to Core (comms 20261027-012500-docs-to-core-autograd-div.md).
 
+## D-50 — `str(t.device)` is `gpu:N`, not `cuda:N` — FILED
+
+- LiteTorch (VERIFIED from source + B5 GPU run): `DeviceType` has four members — CPU, GPU, META, TPU — and no CUDA member (`include/litetorch/device.h:11-14`). `to_string()` maps GPU to `"gpu:" + index` (`device.h:35`), so a GPU tensor prints `gpu:0`. The string parser accepts `"cuda"` and `"cuda:N"` as INPUT and normalizes both to `DeviceType::GPU` (`src/bindings/bind_core.cpp:34`), so `lt.Device("cuda")` and `lt.Device("cuda:0")` construct fine — but nothing they print ever reads `cuda:0`. The B5 e1-9 check asserted `str(t.device) == "cuda:0"` and failed on the real GPU (the device printed `gpu:0`); b5-t2.4-1 passed printing `training on: gpu:0` in the same run.
+- PyTorch: `str(torch.device("cuda:0"))` is `"cuda:0"`.
+- Impact: MEDIUM. Ported code that asserts or branches on the `cuda:0` string (device placement checks, logging, checkpoint metadata keyed by device string) fails or misroutes on LiteTorch; the failure looks like a missing GPU when the GPU is actually in use.
+- Migration: compare against `"gpu:0"` (or `t.device.type == lt.DeviceType.GPU`), never the `cuda:` string; keep using `"cuda"` / `"cuda:0"` as constructor input — the parser accepts it. Whether the product should align with PyTorch (`cuda:0`) in future is a design decision, not settled; this triage does not recommend changing the product. Filed to Backend as a docs expectation error (defect record `backend/defects/B5-E1-9-DEVICE-STRING.md`, comms thread `docs-b5-gpu-20261027`).
+
 ## Verified edge cases (not numbered — API facts, not divergences)
 
 These were verified live during the B3 reference pass and are documented in the API reference; they are collected here so porters find them in one place.
@@ -476,6 +483,6 @@ These were verified live during the B3 reference pass and are documented in the 
 | Status | Entries |
 |---|---|
 | FIXED | D-06 (merged @89afd67), D-07 (merged @7b8981e) |
-| FILED | D-22–D-29 (comms 20261027-001600), D-23 also (comms 20261026-234500), D-30–D-32 + D-36 side note (comms 20261027-000400), D-33 (comms 20261027-000800), D-37 (comms 20261026-233500), D-38 (comms 20261026-234600), D-39 (with D-22–D-29), D-47–D-49 (comms 20261027-012500) |
+| FILED | D-22–D-29 (comms 20261027-001600), D-23 also (comms 20261026-234500), D-30–D-32 + D-36 side note (comms 20261027-000400), D-33 (comms 20261027-000800), D-37 (comms 20261026-233500), D-38 (comms 20261026-234600), D-39 (with D-22–D-29), D-47–D-49 (comms 20261027-012500), D-50 (comms thread docs-b5-gpu-20261027; Backend triage record backend/defects/B5-E1-9-DEVICE-STRING.md) |
 | OPEN | D-02, D-03, D-04, D-05, D-08, D-10, D-11, D-12, D-13, D-14, D-15, D-16, D-17, D-18, D-19, D-21, D-35, D-40, D-41, D-42, D-43, D-44, D-45 |
 | DOCUMENTED (no fix planned) | D-01 (C++ throw; Python unbound), D-09 (tanh GELU), D-34 (gradcheck eps), D-46 (DataLoader shuffle RNG) |

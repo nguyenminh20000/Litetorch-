@@ -29,8 +29,8 @@ There is no configuration file and no priority flag: native GPU wins over TPU by
 
 ```text
 auto_device():
-    native GPU available (and LITETORCH_NO_NATIVE_GPU unset)  -> GPU:0
-    else OpenCL available                                      -> GPU:0
+    native GPU available (and LITETORCH_NO_NATIVE_GPU unset)  -> gpu:0
+    else OpenCL available                                      -> gpu:0
     else TPU available                                         -> TPU:0
     else                                                       -> CPU:0
 
@@ -41,7 +41,7 @@ get_backend_name():
     else        -> "CPU"
 ```
 
-Note that `auto_device()` returns `GPU:0` for OpenCL as well as for native GPU: the `Device` does not record *which* GPU implementation backs it. Code that needs to know must call `get_backend_name()`.
+Note that `auto_device()` returns `gpu:0` for OpenCL as well as for native GPU: the `Device` does not record *which* GPU implementation backs it. Code that needs to know must call `get_backend_name()`.
 
 **Kernel dispatch.** A kernel call first asks the native backend for a precompiled kernel by name (`gpu_get_kernel_fn`, `backend.cpp:486-497`); only if none exists does it compile from source. The 2026-10-26 cached-kernel collision fix (merged `agent-v1 @02cc271a`) is part of this path: kernels are now looked up by name, because two byte-identical FP32/FP16 backward typedefs previously shared one cache entry. Kernel launch requires the `gpu_launch` symbol and throws if it is missing (`backend.cpp:503-504`).
 

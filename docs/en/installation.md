@@ -184,7 +184,7 @@ Loss value: 54.0
 Gradient: [7.0, 11.0, 9.0, 13.0]
 ```
 
-On a GPU machine the first three lines differ (`GPU Available: True`, a CUDA backend name, a `cuda:0` device); the loss and gradient are the same. If `Active Device` prints `cpu:0` on a machine where you expected a GPU, the GPU backend did not load — check `nvcc --version`, rebuild, and confirm the `Native GPU (CUDA/HIP)` init line appears. Do not assume the GPU is in use: `.to(device)` falls back to CPU silently when the accelerator is unavailable.
+On a GPU machine the first three lines differ (`GPU Available: True`, a CUDA backend name, a `gpu:0` device); the loss and gradient are the same. If `Active Device` prints `cpu:0` on a machine where you expected a GPU, the GPU backend did not load — check `nvcc --version`, rebuild, and confirm the `Native GPU (CUDA/HIP)` init line appears. Do not assume the GPU is in use: `.to(device)` falls back to CPU silently when the accelerator is unavailable.
 
 ---
 

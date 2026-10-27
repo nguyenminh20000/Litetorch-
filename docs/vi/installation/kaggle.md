@@ -114,7 +114,7 @@ Ket qua: [7.0, 10.0, 15.0, 22.0]
 Tong: 54.0
 ```
 
-Trên session GPU Kaggle, ba dòng đầu sẽ là `CUDA` / `cuda:0` / `True`; kết quả và tổng giữ nguyên.
+Trên session GPU Kaggle, ba dòng đầu sẽ là `CUDA` / `gpu:0` / `True`; kết quả và tổng giữ nguyên.
 
 ---
 

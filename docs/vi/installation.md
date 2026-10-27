@@ -184,7 +184,7 @@ Loss value: 54.0
 Gradient: [7.0, 11.0, 9.0, 13.0]
 ```
 
-Trên máy GPU, ba dòng đầu sẽ khác (`GPU Available: True`, tên backend CUDA, thiết bị `cuda:0`); loss và gradient giữ nguyên. Nếu `Active Device` in ra `cpu:0` trên máy mà bạn kỳ vọng có GPU, nghĩa là backend GPU chưa được nạp — hãy kiểm tra `nvcc --version`, biên dịch lại, và xác nhận dòng khởi tạo `Native GPU (CUDA/HIP)` xuất hiện. Đừng cho rằng GPU đang được dùng: `.to(device)` sẽ fallback sang CPU một cách âm thầm khi thiết bị tăng tốc không khả dụng.
+Trên máy GPU, ba dòng đầu sẽ khác (`GPU Available: True`, tên backend CUDA, thiết bị `gpu:0`); loss và gradient giữ nguyên. Nếu `Active Device` in ra `cpu:0` trên máy mà bạn kỳ vọng có GPU, nghĩa là backend GPU chưa được nạp — hãy kiểm tra `nvcc --version`, biên dịch lại, và xác nhận dòng khởi tạo `Native GPU (CUDA/HIP)` xuất hiện. Đừng cho rằng GPU đang được dùng: `.to(device)` sẽ fallback sang CPU một cách âm thầm khi thiết bị tăng tốc không khả dụng.
 
 ---
 

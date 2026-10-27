@@ -274,7 +274,7 @@ Việc làm tròn xảy ra hai lần: `from_vector` đưa giá trị qua `float`
 
 ## 5. Mô hình thiết bị
 
-Một `Device` đặt tên cho một backend và một chỉ số: `cpu:0`, `cuda:0`, `tpu:0`, `meta:0`. LiteTorch không có dạng chuỗi cho `.to()` (D-03): phải khởi tạo `lt.Device("cuda")` một cách tường minh. Hai hành vi thầm lặng nảy sinh từ mô hình thiết bị, và cả hai đều là bẫy.
+Một `Device` đặt tên cho một backend và một chỉ số: `cpu:0`, `gpu:0`, `tpu:0`, `meta`. LiteTorch không có dạng chuỗi cho `.to()` (D-03): phải khởi tạo `lt.Device("cuda")` một cách tường minh. Hai hành vi thầm lặng nảy sinh từ mô hình thiết bị, và cả hai đều là bẫy.
 
 **D-02 — fallback thầm lặng về CPU.** `.to(Device("cuda"))` trên một máy không có backend GPU thầm lặng trả về một tensor CPU. Không lỗi, không cảnh báo, không log. `.cuda()` đi qua cùng đường đó. PyTorch ném lỗi.
 
@@ -328,11 +328,11 @@ assert lt.build_commit() == "88a4ba1"
 
 assert lt.is_gpu_available()
 t = lt.tensor([1.0, 2.0]).to(lt.Device("cuda"))
-assert str(t.device) == "cuda:0"
+assert str(t.device) == "gpu:0"
 print("on GPU:", t.device)
 ```
 
-**REQUIRES-GPU — chưa chạy trên CPU, không bao giờ được phát hành như đã kiểm chứng.** Khối trên là bản đối tác GPU của E1-6: trên một máy có backend CUDA thật, cùng một `.to(Device("cuda"))` phải đặt tensor lên `cuda:0`, và phép kiểm tra thiết bị phải đạt. Nó chạy trên Kaggle (QA sở hữu session) sau khi cổng tiền kiểm (pre-flight gate) assert dòng khởi tạo `Native GPU (CUDA/HIP)` và vị trí của `liblitetorch_gpu.so`.
+**REQUIRES-GPU — chưa chạy trên CPU, không bao giờ được phát hành như đã kiểm chứng.** Khối trên là bản đối tác GPU của E1-6: trên một máy có backend CUDA thật, cùng một `.to(Device("cuda"))` phải đặt tensor lên `gpu:0`, và phép kiểm tra thiết bị phải đạt. Nó chạy trên Kaggle (QA sở hữu session) sau khi cổng tiền kiểm (pre-flight gate) assert dòng khởi tạo `Native GPU (CUDA/HIP)` và vị trí của `liblitetorch_gpu.so`.
 
 ## 6. Con trỏ thô: `data_ptr()` (D-01)
 

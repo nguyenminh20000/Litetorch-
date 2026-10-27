@@ -4,7 +4,7 @@ LiteTorch hướng tới tính tương thích số học với PyTorch, nhưng n
 
 - **Cơ sở:** cây HEAD `b326f29`; các ví dụ trong trang này chạy trên extension D3 của Core `build_commit 88a4ba1` (`workspace/framework/core/litetorch-d3/python`); PyTorch tham chiếu torch 2.14.1+cpu trong `~/torch-venv`.
 - **Khóa trạng thái:** `OPEN` — đang tồn tại trong cây, chưa có bản sửa được hợp nhất. `FILED` — khuyết điểm đã gửi cho team sở hữu qua bảng comms, bản sửa chưa hợp nhất. `FIXED` — đã sửa và hợp nhất; hành vi cũ chỉ còn được ghi lại dưới dạng lịch sử. `DOCUMENTED` — khác biệt có chủ đích, không có kế hoạch sửa; tài liệu là hợp đồng.
-- **Đánh số:** D-01–D-21 được xác minh trong đợt lập kế hoạch B0 (`plan/differences.md`). D-22–D-29 được tìm thấy trong đợt tham chiếu nn B3. D-30–D-46 được tìm thấy trong các đợt optim/linalg/data/distributed B3 và được đánh số trong đợt này (B4). D-47–D-49 (autograd) được tìm thấy trong đợt giải thích B4 và được leader bổ sung sau khi worker front2 hoàn thành.
+- **Đánh số:** D-01–D-21 được xác minh trong đợt lập kế hoạch B0 (`plan/differences.md`). D-22–D-29 được tìm thấy trong đợt tham chiếu nn B3. D-30–D-46 được tìm thấy trong các đợt optim/linalg/data/distributed B3 và được đánh số trong đợt này (B4). D-47–D-49 (autograd) được tìm thấy trong đợt giải thích B4 và được leader bổ sung sau khi worker front2 hoàn thành. D-50 (chuỗi thiết bị) được tìm thấy trong đợt kiểm chứng GPU B5 (lỗi e1-9) và được bổ sung tiếp theo.
 - **Quy tắc cho người chuyển đổi:** đừng bao giờ cho rằng một cách viết PyTorch sẽ chạy trong LiteTorch cho tới khi trang này hoặc trang tham chiếu API nói như vậy. Khi nghi ngờ, hãy chạy kiểm tra parity trong `plan/verification.md` §3.
 
 ## Minh họa trực tiếp
@@ -426,6 +426,13 @@ print("max |lt - torch tanh|:", max(abs(a - b) for a, b in zip(g_lt, g_tanh)))
 - Tác động: TRUNG BÌNH. Mã chuyển đổi nào chạy backward lại (ví dụ đa loss, tích lũy gradient qua cùng đồ thị) sẽ thất bại; thông báo lỗi hướng người dùng tới một cách sửa không tồn tại.
 - Chuyển đổi: xây lại đồ thị (chạy lại forward) cho mỗi backward, hoặc dùng `create_graph=True` khi phù hợp. Đã gửi Core (comms 20261027-012500-docs-to-core-autograd-div.md).
 
+## D-50 — `str(t.device)` là `gpu:N`, không phải `cuda:N` — FILED
+
+- LiteTorch (ĐÃ XÁC MINH từ nguồn + lần chạy GPU B5): `DeviceType` có bốn thành viên — CPU, GPU, META, TPU — và không có thành viên CUDA (`include/litetorch/device.h:11-14`). `to_string()` ánh xạ GPU thành `"gpu:" + index` (`device.h:35`), nên tensor GPU in ra `gpu:0`. Trình phân tích chuỗi chấp nhận `"cuda"` và `"cuda:N"` làm ĐẦU VÀO và chuẩn hóa cả hai thành `DeviceType::GPU` (`src/bindings/bind_core.cpp:34`), nên `lt.Device("cuda")` và `lt.Device("cuda:0")` vẫn tạo được — nhưng không có gì chúng in ra đọc là `cuda:0`. Kiểm tra e1-9 của B5 assert `str(t.device) == "cuda:0"` và thất bại trên GPU thật (thiết bị in ra `gpu:0`); b5-t2.4-1 pass với `training on: gpu:0` trong cùng lần chạy.
+- PyTorch: `str(torch.device("cuda:0"))` là `"cuda:0"`.
+- Tác động: TRUNG BÌNH. Mã chuyển đổi assert hoặc rẽ nhánh theo chuỗi `cuda:0` (kiểm tra vị trí thiết bị, logging, metadata checkpoint gắn với chuỗi thiết bị) sẽ thất bại hoặc đi sai hướng trên LiteTorch; lỗi trông như thiếu GPU trong khi GPU thực ra đang được dùng.
+- Chuyển đổi: so sánh với `"gpu:0"` (hoặc `t.device.type == lt.DeviceType.GPU`), không bao giờ dùng chuỗi `cuda:`; vẫn dùng `"cuda"` / `"cuda:0"` làm đầu vào constructor — trình phân tích chấp nhận nó. Việc sản phẩm có nên theo PyTorch (`cuda:0`) trong tương lai hay không là quyết định thiết kế, chưa chốt; lần phân loại này không khuyến nghị thay đổi sản phẩm. Đã gửi Backend dưới dạng lỗi kỳ vọng tài liệu (hồ sơ khuyết điểm `backend/defects/B5-E1-9-DEVICE-STRING.md`, thread comms `docs-b5-gpu-20261027`).
+
 ## Các trường hợp biên đã xác minh (không đánh số — sự thật API, không phải khác biệt)
 
 Các mục này đã được xác minh trực tiếp trong đợt tham chiếu B3 và được ghi trong tham chiếu API; chúng được gom ở đây để người chuyển đổi tìm thấy trong một chỗ.
@@ -476,6 +483,6 @@ Các mục này đã được xác minh trực tiếp trong đợt tham chiếu 
 | Trạng thái | Mục |
 |---|---|
 | FIXED | D-06 (hợp nhất @89afd67), D-07 (hợp nhất @7b8981e) |
-| FILED | D-22–D-29 (comms 20261027-001600), D-23 thêm (comms 20261026-234500), D-30–D-32 + ghi chú kèm D-36 (comms 20261027-000400), D-33 (comms 20261027-000800), D-37 (comms 20261026-233500), D-38 (comms 20261026-234600), D-39 (cùng D-22–D-29), D-47–D-49 (comms 20261027-012500) |
+| FILED | D-22–D-29 (comms 20261027-001600), D-23 thêm (comms 20261026-234500), D-30–D-32 + ghi chú kèm D-36 (comms 20261027-000400), D-33 (comms 20261027-000800), D-37 (comms 20261026-233500), D-38 (comms 20261026-234600), D-39 (cùng D-22–D-29), D-47–D-49 (comms 20261027-012500), D-50 (thread comms docs-b5-gpu-20261027; hồ sơ phân loại Backend backend/defects/B5-E1-9-DEVICE-STRING.md) |
 | OPEN | D-02, D-03, D-04, D-05, D-08, D-10, D-11, D-12, D-13, D-14, D-15, D-16, D-17, D-18, D-19, D-21, D-35, D-40, D-41, D-42, D-43, D-44, D-45 |
 | DOCUMENTED (không có kế hoạch sửa) | D-01 (lỗi C++; Python không bind), D-09 (GELU tanh), D-34 (eps gradcheck), D-46 (RNG shuffle của DataLoader) |
