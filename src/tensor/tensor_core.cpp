@@ -452,10 +452,10 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<int64_t>& shape, const D
         if (!kernel) {
             throw std::runtime_error("[litetorch Error] zeros(): fill_zero kernel not available");
         }
-        int64_t size_val = tensor->numel();
-        int64_t off_val = tensor->offset;
+        int size_val = static_cast<int>(tensor->numel());
+        int off_val = static_cast<int>(tensor->offset);
         cl_mem gpu_ptr = tensor->storage->get_gpu_ptr();
-        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
+        rt_gpu_launch(kernel, {tensor->numel()}, {}, {&gpu_ptr, &off_val, &size_val}, {sizeof(cl_mem), sizeof(int), sizeof(int)});
     } else if (tensor->device.type == DeviceType::TPU) {
         auto tpu = BackendDispatcher::get().get_tpu_backend();
         if (tpu && tensor->gpu_data()) {

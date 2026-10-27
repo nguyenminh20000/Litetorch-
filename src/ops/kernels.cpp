@@ -1322,8 +1322,8 @@ __kernel void elementwise_broadcast_div(
 
     C[c_off + gid] = A[a_idx] / B[b_idx];
 }
-__kernel void fill_zero(__global float* data, long data_off, long size) {
-    long id = get_global_id(0);
+__kernel void fill_zero(__global float* data, int data_off, int size) {
+    int id = get_global_id(0);
     if (id < size) {
         data[data_off + id] = 0.0f;
     }
