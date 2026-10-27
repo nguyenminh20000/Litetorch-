@@ -103,6 +103,11 @@ Two more pages sit alongside the four layers and are worth reading early:
 | :--- | :--- |
 | Mobile / ARM deployment | Cross-compile CPU backend for aarch64 + Android NDK, OpenCL dlopen, binary size |
 | Tokenizers | HuggingFace tokenizers package, feeding token IDs to models, `lt.hf.from_pretrained` |
+| Installation on a personal machine | Linux workstation + Windows server, CPU or a single GPU, pre-flight gate, first local training run |
+| Installation on AWS | EC2 GPU instances (DLAMI or plain Ubuntu), SageMaker, ECS, EKS |
+| Installation on Azure | N-series GPU VMs, Azure ML compute |
+| Installation on Google Cloud Platform | Deep Learning VM or plain-image GPU VMs, Vertex AI |
+| Installation on other clouds | Lambda, OCI, RunPod, Paperspace, CoreWeave |
 
 ---
 

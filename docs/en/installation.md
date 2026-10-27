@@ -193,4 +193,9 @@ On a GPU machine the first three lines differ (`GPU Available: True`, a CUDA bac
 - New to the framework: [Quickstart](quickstart.md) (60 minutes, runnable end to end).
 - Container install: [Installation on Docker](installation/docker.md).
 - Notebook install: [Installation on Kaggle](installation/kaggle.md).
+- Personal machine: [Installation on a Personal Machine](installation/local.md) — Linux workstation or Windows server, CPU or a single GPU, pre-flight gate, first local training run.
+- Cloud (AWS): [Installation on AWS](installation/aws.md) — EC2 GPU instances (DLAMI or plain Ubuntu), SageMaker, ECS, EKS.
+- Cloud (Azure): [Installation on Azure](installation/azure.md) — N-series GPU VMs, Azure ML compute.
+- Cloud (GCP): [Installation on Google Cloud Platform](installation/gcp.md) — Deep Learning VM or plain-image GPU VMs, Vertex AI.
+- Other clouds: [Installation on Other Clouds](installation/other-clouds.md) — Lambda, OCI, RunPod, Paperspace, CoreWeave.
 - Something failed: Troubleshooting and FAQ (in progress) — build failures, OOM, silent CPU fallback, backend detection.

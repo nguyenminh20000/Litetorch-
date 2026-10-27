@@ -103,6 +103,11 @@ Hai trang nữa nằm cạnh bốn tầng và nên đọc sớm:
 | :--- | :--- |
 | Triển khai Mobile / ARM | Cross-compile backend CPU cho aarch64 + Android NDK, OpenCL dlopen, kích thước binary |
 | Tokenizer | Package tokenizer HuggingFace, đưa token ID vào mô hình, `lt.hf.from_pretrained` |
+| Cài đặt trên máy cá nhân | Máy trạm Linux + máy chủ Windows, CPU hoặc một GPU, cổng pre-flight, lần huấn luyện đầu tiên trên máy local |
+| Cài đặt trên AWS | EC2 GPU (DLAMI hoặc Ubuntu thuần), SageMaker, ECS, EKS |
+| Cài đặt trên Azure | Máy ảo GPU dòng N, Azure ML compute |
+| Cài đặt trên Google Cloud Platform | Deep Learning VM hoặc máy ảo GPU image thuần, Vertex AI |
+| Cài đặt trên các cloud khác | Lambda, OCI, RunPod, Paperspace, CoreWeave |
 
 ---
 

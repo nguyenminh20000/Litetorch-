@@ -193,4 +193,9 @@ Trên máy GPU, ba dòng đầu sẽ khác (`GPU Available: True`, tên backend 
 - Mới với framework: [Bắt đầu nhanh](quickstart.md) (60 phút, chạy được trọn vẹn).
 - Cài đặt trong container: [Cài đặt trên Docker](installation/docker.md).
 - Cài đặt trong notebook: [Cài đặt trên Kaggle](installation/kaggle.md).
+- Máy cá nhân: [Cài đặt trên máy cá nhân](installation/local.md) — máy trạm Linux hoặc máy chủ Windows, CPU hoặc một GPU, cổng pre-flight, lần huấn luyện đầu tiên trên máy local.
+- Cloud (AWS): [Cài đặt trên AWS](installation/aws.md) — EC2 GPU (DLAMI hoặc Ubuntu thuần), SageMaker, ECS, EKS.
+- Cloud (Azure): [Cài đặt trên Azure](installation/azure.md) — máy ảo GPU dòng N, Azure ML compute.
+- Cloud (GCP): [Cài đặt trên Google Cloud Platform](installation/gcp.md) — Deep Learning VM hoặc máy ảo GPU image thuần, Vertex AI.
+- Cloud khác: [Cài đặt trên các cloud khác](installation/other-clouds.md) — Lambda, OCI, RunPod, Paperspace, CoreWeave.
 - Gặp lỗi: trang Xử lý sự cố và FAQ (đang viết) — lỗi biên dịch, OOM, fallback CPU âm thầm, nhận diện backend.
