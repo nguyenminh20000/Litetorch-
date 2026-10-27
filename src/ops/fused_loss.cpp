@@ -22,6 +22,7 @@ inline std::vector<int64_t> fused_target_indices(std::shared_ptr<Tensor> target)
             case DataType::INT32: out[i] = static_cast<int64_t>(reinterpret_cast<const int32_t*>(base)[i]); break;
             case DataType::INT16: out[i] = static_cast<int64_t>(reinterpret_cast<const int16_t*>(base)[i]); break;
             case DataType::INT8: out[i] = static_cast<int64_t>(reinterpret_cast<const int8_t*>(base)[i]); break;
+            case DataType::INT64: out[i] = reinterpret_cast<const int64_t*>(base)[i]; break;
             default: throw std::runtime_error("[litetorch Error] fused_linear_cross_entropy: target must have integer or float dtype");
         }
     }

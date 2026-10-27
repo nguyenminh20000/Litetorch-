@@ -33,6 +33,12 @@ inline std::vector<int> ce_target_indices(std::shared_ptr<Tensor> target) {
             case DataType::INT32: out[i] = static_cast<int>(reinterpret_cast<const int32_t*>(base)[i]); break;
             case DataType::INT16: out[i] = static_cast<int>(reinterpret_cast<const int16_t*>(base)[i]); break;
             case DataType::INT8: out[i] = static_cast<int>(reinterpret_cast<const int8_t*>(base)[i]); break;
+            case DataType::INT64: {
+                int64_t v = reinterpret_cast<const int64_t*>(base)[i];
+                if (v < INT32_MIN || v > INT32_MAX) throw std::runtime_error("[litetorch Error] cross_entropy_loss: target index out of bounds");
+                out[i] = static_cast<int>(v);
+                break;
+            }
             default: throw std::runtime_error("[litetorch Error] cross_entropy_loss: target must have integer or float dtype");
         }
     }
