@@ -8,5 +8,4 @@ recursive-include python *
 recursive-include include *
 recursive-include src *
 recursive-include tests *
-recursive-include docs-vie *
-recursive-include docs-en *
+recursive-include docs *
