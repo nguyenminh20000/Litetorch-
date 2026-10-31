@@ -1605,7 +1605,9 @@ void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph, bool 
 }
 
 void Tensor::zero_grad() {
-    grad = nullptr;
+    if (!grad) return;
+    NoGradGuard guard;
+    grad->copy_(Tensor::zeros(grad->shape, grad->device, false, grad->dtype));
 }
 
 float Tensor::item() const {
