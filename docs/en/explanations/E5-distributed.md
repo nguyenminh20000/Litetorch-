@@ -338,9 +338,9 @@ want to separate the backward from the synchronization, but
 `backward(loss)` already calls `loss.backward()` followed by
 `sync_grads()` internally.
 
-> **Do not train with DDP until the defect below is fixed.**
+> **FIXED (dist-w20, merged @39e53ee0; post-merge gate Track 5 PASS 2026-10-31, PIN c195f43c, 2-GPU cell-20 happy + mismatch-throw).** The defect described below is the pre-fix behavior; the E5-4 block's printed `KNOWN DEFECT` label is unchanged from the pre-fix demonstration.
 > `DistributedDataParallel.backward` doubles one slice of the flat
-> weight gradient. The defect is filed to the owning team
+> weight gradient. The defect was filed to the owning team
 > (`comms/20261027-000800-docs-to-core-ddp-grad.md`, relayed to
 > Distributed as `comms/20261027-001000-core-to-distributed-ddpgrad.md`):
 > the doubling is in the bucketed `sync_grads` / `all_reduce_bucketed`
@@ -638,6 +638,6 @@ this page.
 - `init_process_group` first, `shutdown()` last, `destroy_process_group()` does not exist.
 - Collectives are all-or-nothing: every rank calls the same ones in the same order, or the job deadlocks.
 - FSDP: `fsdp_fully_shard(module)` mutates in place, returns `None`, gather/release automatic; prefetch limit default 2; parameters and gradients are sharded, optimizer states are not; `FSDPUnit` methods are unreachable from Python.
-- DDP: do not train with it until the gradient-doubling defect is fixed (filed, §E5.4).
+- DDP: gradient-doubling defect fixed (§E5.4; dist-w20 @39e53ee0; Track 5 gate PASS 2026-10-31).
 - Rendezvous: `stop()` then `join()` the `run()` thread, then destroy the store.
 - TP is `tp_all_reduce` / `tp_all_gather` with autograd-aware backward; PP is `PipelineParallelModule` + 1F1B; CP has no Python binding at this HEAD.

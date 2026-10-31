@@ -301,13 +301,13 @@ print("max |lt - torch tanh|:", max(abs(a - b) for a, b in zip(g_lt, g_tanh)))
 - Chuyển đổi: truyền `1 - p` để có ngữ nghĩa torch.
 - Trạng thái sửa: FILED cho Core, comms `20261027-000400-docs-to-core-nadam-onecycle-negbin.md` (thread `docs-fix-requests-20261026`).
 
-## D-33 — Backward của DDP nhân đôi một lát của gradient trọng số — FILED
+## D-33 — Backward của DDP nhân đôi một lát của gradient trọng số — FIXED
 
-- LiteTorch (ĐÃ XÁC MINH): `DistributedDataParallel.backward` nhân đôi một lát của gradient trọng số phẳng: các chỉ mục `[numel/4, numel/4 + out_features)` (tương đương `[numel/4, numel/4 + bias_numel)`; đã chốt 2026-10-27 theo lần chạy lại quyết định của dist-w21 — một bản sửa cùng ngày khẳng định in_features đã bị rút lại: lần kiểm tra lại B4 chỉ chạy lại Linear(4,4) đối xứng, và các hàng bất đối xứng trong bảng shape B3 đã bị hoán đổi). Đã xác minh trên 4 shape — Linear(4,4): chỉ mục 4–7; Linear(4,8): 8–15; Linear(8,4): 8–11; Linear(2,2): 1–2 — trong cả hai chế độ giảm `AVG` (hàng nhân đôi 1.0) và `SUM` (hàng nhân đôi 2.0). Gradient bias là đúng. Backward `Linear` đơn tiến trình là đúng (tất cả 0.5). Parity so với torch: max_abs_diff 0.5 trên cả hai rank.
+- Hành vi trước khi sửa (ĐÃ XÁC MINH, nay chỉ còn ý nghĩa lịch sử): `DistributedDataParallel.backward` nhân đôi một lát của gradient trọng số phẳng: các chỉ mục `[numel/4, numel/4 + out_features)` (tương đương `[numel/4, numel/4 + bias_numel)`; đã chốt 2026-10-27 theo lần chạy lại quyết định của dist-w21 — một bản sửa cùng ngày khẳng định in_features đã bị rút lại: lần kiểm tra lại B4 chỉ chạy lại Linear(4,4) đối xứng, và các hàng bất đối xứng trong bảng shape B3 đã bị hoán đổi). Đã xác minh trên 4 shape — Linear(4,4): chỉ mục 4–7; Linear(4,8): 8–15; Linear(8,4): 8–11; Linear(2,2): 1–2 — trong cả hai chế độ giảm `AVG` (hàng nhân đôi 1.0) và `SUM` (hàng nhân đôi 2.0). Gradient bias là đúng. Backward `Linear` đơn tiến trình là đúng (tất cả 0.5). Parity so với torch: max_abs_diff 0.5 trên cả hai rank.
 - PyTorch: gradient DDP khớp gradient đơn tiến trình.
-- Tác động: CAO. Đừng huấn luyện với DDP cho tới khi sửa xong — trọng số nhận một lát gradient nhân đôi mỗi bước.
-- Chuyển đổi: không có — dùng huấn luyện đơn tiến trình, hoặc FSDP (`fsdp_fully_shard`) thay cho DDP.
-- Trạng thái sửa: FILED cho Core, comms `20261027-000800-docs-to-core-ddp-grad.md` (thread `docs-fix-requests-20261026`).
+- Tác động: ĐÃ GIẢI QUYẾT. Tác động trước khi sửa là CAO: trọng số nhận một lát gradient nhân đôi mỗi bước.
+- Chuyển đổi (hiện tại): không có — huấn luyện DDP đã được xác minh bởi Track 5 dưới đây; cách dùng huấn luyện đơn tiến trình/FSDP thay cho DDP chỉ áp dụng cho các tree trước khi sửa.
+- Trạng thái sửa: ĐÃ SỬA. Bản sửa: dist-w20 (sửa memcpy 2 dòng), MERGED agent-v1 @39e53ee0. Kiểm tra sau khi merge: Track 5 PASS 2026-10-31 (PIN c195f43c, Kaggle 2x T4, cell-20 happy + mismatch-throw, cả hai rank, NCCL pip 2.31.2). Lịch sử gửi: comms `20261027-000800-docs-to-core-ddp-grad.md` (thread `docs-fix-requests-20261026`).
 
 ## D-34 — `gradcheck` mặc định `eps=1e-6` thất bại trên FP32 — DOCUMENTED
 

@@ -169,7 +169,7 @@ Note: `gradcheck` clears `x.grad` — compute the analytic gradient with an expl
 
 **Cause:** `DistributedDataParallel.backward` doubles one slice of the flat weight grad (D-33). Bias grad is correct; single-process backward is correct.
 
-**Fix:** do not train with DDP until fixed — use single-process training or FSDP (`fsdp_fully_shard`).
+**Fix:** FIXED by dist-w20 (merged @39e53ee0); post-merge gate Track 5 PASS 2026-10-31 (PIN c195f43c). On pre-fix trees, use single-process training or FSDP (`fsdp_fully_shard`).
 
 ### `ring_attention` raises a pybind holder error
 

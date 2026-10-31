@@ -217,7 +217,7 @@ if str(t.device) != str(device):
 | `torch.distributed.init_process_group` | `lt.distributed.init_process_group` | giống hệt (phải gọi trước tiên) |
 | `torch.distributed.destroy_process_group` | vắng mặt | dùng `lt.distributed.shutdown()` |
 | `torch.distributed.barrier` / `all_reduce` / `all_gather` / `reduce_scatter` / `broadcast` / `all_to_all` | tên giống hệt | giống hệt |
-| `torch.nn.parallel.DistributedDataParallel` | `lt.distributed.DistributedDataParallel` | HỎNG — backward nhân đôi một lát gradient (D-33); đừng huấn luyện với DDP |
+| `torch.nn.parallel.DistributedDataParallel` | `lt.distributed.DistributedDataParallel` | ĐÃ SỬA (D-33) — trước khi sửa, backward nhân đôi một lát gradient; đã sửa bởi dist-w20 (@39e53ee0), Track 5 PASS 2026-10-31 |
 | `torch.distributed.fsdp.FullyShardedDataParallel` | vắng mặt dưới dạng lớp | dùng `lt.distributed.fsdp_fully_shard(module)`; FSDP shard tham số + gradient, KHÔNG phải trạng thái optimizer; phương thức `FSDPUnit` không tới được từ Python |
 | `torch.distributed.tensor` / `DeviceMesh` / `DTensor` | `lt.distributed.DeviceMesh` / `DTensor` / `Placement` | giống hệt về đại thể; xem `reference/distributed.md` |
 | Backend NCCL của `torch.distributed` | `lt.distributed.NCCLBridge` | dlopen thuần (`libnccl.so` → `librccl.so`), fail-soft; override `LITETORCH_NCCL_LIB` là patch đã kiểm chứng trên Kaggle, chưa merge (dist-w15) |

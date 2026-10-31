@@ -217,7 +217,7 @@ if str(t.device) != str(device):
 | `torch.distributed.init_process_group` | `lt.distributed.init_process_group` | identical (must be called first) |
 | `torch.distributed.destroy_process_group` | absent | use `lt.distributed.shutdown()` |
 | `torch.distributed.barrier` / `all_reduce` / `all_gather` / `reduce_scatter` / `broadcast` / `all_to_all` | identical names | identical |
-| `torch.nn.parallel.DistributedDataParallel` | `lt.distributed.DistributedDataParallel` | BROKEN — backward doubles one grad slice (D-33); do not train with DDP |
+| `torch.nn.parallel.DistributedDataParallel` | `lt.distributed.DistributedDataParallel` | FIXED (D-33) — pre-fix backward doubled one grad slice; fixed by dist-w20 (@39e53ee0), Track 5 gate PASS 2026-10-31 |
 | `torch.distributed.fsdp.FullyShardedDataParallel` | absent as a class | use `lt.distributed.fsdp_fully_shard(module)`; FSDP shards params + grads, NOT optimizer states; `FSDPUnit` methods are unreachable from Python |
 | `torch.distributed.tensor` / `DeviceMesh` / `DTensor` | `lt.distributed.DeviceMesh` / `DTensor` / `Placement` | identical in outline; see `reference/distributed.md` |
 | `torch.distributed` NCCL backend | `lt.distributed.NCCLBridge` | plain dlopen (`libnccl.so` → `librccl.so`), fail-soft; the `LITETORCH_NCCL_LIB` override is a Kaggle-verified patch, not yet merged (dist-w15) |

@@ -301,13 +301,13 @@ print("max |lt - torch tanh|:", max(abs(a - b) for a, b in zip(g_lt, g_tanh)))
 - Migration: pass `1 - p` to get torch semantics.
 - Fix status: FILED to Core, comms `20261027-000400-docs-to-core-nadam-onecycle-negbin.md` (thread `docs-fix-requests-20261026`).
 
-## D-33 — DDP backward doubles one slice of the weight grad — FILED
+## D-33 — DDP backward doubles one slice of the weight grad — FIXED
 
-- LiteTorch (VERIFIED): `DistributedDataParallel.backward` doubles one slice of the flat weight grad: indices `[numel/4, numel/4 + out_features)` (equivalently `[numel/4, numel/4 + bias_numel)`; settled 2026-10-27 by dist-w21's decisive re-run — a same-day correction claiming in_features was withdrawn: the B4 re-check had only re-run symmetric Linear(4,4), and the B3 shape table's asymmetric rows were transposed). Verified on 4 shapes — Linear(4,4): indices 4–7; Linear(4,8): 8–15; Linear(8,4): 8–11; Linear(2,2): 1–2 — in both `AVG` (doubled row 1.0) and `SUM` (doubled row 2.0) reduce modes. Bias grad is correct. Single-process `Linear.backward` is correct (all 0.5). Parity vs torch: max_abs_diff 0.5 on both ranks.
+- Pre-fix behavior (VERIFIED, now historical): `DistributedDataParallel.backward` doubles one slice of the flat weight grad: indices `[numel/4, numel/4 + out_features)` (equivalently `[numel/4, numel/4 + bias_numel)`; settled 2026-10-27 by dist-w21's decisive re-run — a same-day correction claiming in_features was withdrawn: the B4 re-check had only re-run symmetric Linear(4,4), and the B3 shape table's asymmetric rows were transposed). Verified on 4 shapes — Linear(4,4): indices 4–7; Linear(4,8): 8–15; Linear(8,4): 8–11; Linear(2,2): 1–2 — in both `AVG` (doubled row 1.0) and `SUM` (doubled row 2.0) reduce modes. Bias grad is correct. Single-process `Linear.backward` is correct (all 0.5). Parity vs torch: max_abs_diff 0.5 on both ranks.
 - PyTorch: DDP gradients match single-process gradients.
-- Impact: HIGH. Do not train with DDP until fixed — weights receive a doubled gradient slice every step.
-- Migration: none — use single-process training, or FSDP (`fsdp_fully_shard`) instead of DDP.
-- Fix status: FILED to Core, comms `20261027-000800-docs-to-core-ddp-grad.md` (thread `docs-fix-requests-20261026`).
+- Impact: RESOLVED. The pre-fix impact was HIGH: weights received a doubled gradient slice every step.
+- Migration (current): none — DDP training verified by the post-merge gate below; the single-process/FSDP workaround applies to pre-fix trees only.
+- Fix status: FIXED. Fix: dist-w20 (2-line memcpy fix), MERGED agent-v1 @39e53ee0. Post-merge gate: Track 5 PASS 2026-10-31 (PIN c195f43c, Kaggle 2x T4, cell-20 happy + mismatch-throw, both ranks, NCCL pip 2.31.2). Filed history: comms `20261027-000800-docs-to-core-ddp-grad.md` (thread `docs-fix-requests-20261026`).
 
 ## D-34 — `gradcheck` default `eps=1e-6` fails on FP32 — DOCUMENTED
 

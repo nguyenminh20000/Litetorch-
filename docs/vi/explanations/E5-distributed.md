@@ -342,7 +342,7 @@ Reduce op mặc định là `AVG`. `sync_grads()` cũng được cung cấp nế
 bạn muốn tách backward pass khỏi đồng bộ, nhưng `backward(loss)` đã
 gọi `loss.backward()` rồi `sync_grads()` bên trong.
 
-> **Đừng huấn luyện với DDP cho tới khi khuyết điểm dưới đây được sửa.**
+> **ĐÃ SỬA (dist-w20, merged @39e53ee0; Track 5 PASS 2026-10-31, PIN c195f43c, 2-GPU cell-20 happy + mismatch-throw).** Khuyết điểm mô tả dưới đây là hành vi trước khi sửa; nhãn `KNOWN DEFECT` in ra của block E5-4 không thay đổi so với bản minh họa trước khi sửa.
 > `DistributedDataParallel.backward` nhân đôi một lát cắt của gradient
 > trọng số đã làm phẳng. Khuyết điểm đã được gửi cho team sở hữu
 > (`comms/20261027-000800-docs-to-core-ddp-grad.md`, chuyển tiếp tới
@@ -649,8 +649,7 @@ của Phase 6, không phải trang này.
   gather/release tự động; giới hạn prefetch mặc định 2; tham số và
   gradient được shard, trạng thái optimizer thì không; các method của
   `FSDPUnit` không gọi được từ Python.
-- DDP: đừng huấn luyện với nó cho tới khi khuyết điểm nhân đôi
-  gradient được sửa (đã gửi, §E5.4).
+- DDP: khuyết điểm nhân đôi gradient đã được sửa (§E5.4; dist-w20 @39e53ee0; Track 5 PASS 2026-10-31).
 - Rendezvous: `stop()` rồi `join()` thread `run()`, rồi mới hủy store.
 - TP là `tp_all_reduce` / `tp_all_gather` với backward nhận biết
   autograd; PP là `PipelineParallelModule` + 1F1B; CP không có binding

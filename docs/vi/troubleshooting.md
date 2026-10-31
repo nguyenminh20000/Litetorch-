@@ -169,7 +169,7 @@ Lưu ý: `gradcheck` xóa `x.grad` — tính gradient giải tích bằng backwa
 
 **Nguyên nhân:** `DistributedDataParallel.backward` nhân đôi một lát của gradient trọng số phẳng (D-33). Gradient bias là đúng; backward đơn tiến trình là đúng.
 
-**Cách sửa:** đừng huấn luyện với DDP cho tới khi sửa xong — dùng huấn luyện đơn tiến trình hoặc FSDP (`fsdp_fully_shard`).
+**Cách sửa:** ĐÃ SỬA bởi dist-w20 (merged @39e53ee0); Track 5 PASS 2026-10-31 (PIN c195f43c). Trên các tree trước khi sửa, dùng huấn luyện đơn tiến trình hoặc FSDP (`fsdp_fully_shard`).
 
 ### `ring_attention` báo lỗi pybind holder
 
