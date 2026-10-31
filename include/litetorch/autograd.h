@@ -92,7 +92,7 @@ public:
     static bool is_grad_enabled() { return is_grad_enabled_; }
     static void set_grad_enabled(bool enabled) { is_grad_enabled_ = enabled; }
     static bool has_active_tensors();
-    static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false, bool retain_graph = false);
+    static void backward(std::shared_ptr<Tensor> root_tensor, bool create_graph = false, bool retain_graph = false, std::shared_ptr<Tensor> grad_output = nullptr);
     static std::vector<std::shared_ptr<Tensor>> grad(
         const std::vector<std::shared_ptr<Tensor>>& outputs,
         const std::vector<std::shared_ptr<Tensor>>& inputs,

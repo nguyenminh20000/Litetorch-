@@ -1591,7 +1591,7 @@ void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph, bool 
         if (!grad) {
             grad = gradient;
         } else {
-            if (create_graph) {
+            if (create_graph || grad->requires_grad) {
                 grad = Ops::add(grad, gradient);
             } else {
                 grad->add_(gradient);
@@ -1600,7 +1600,7 @@ void Tensor::backward(std::shared_ptr<Tensor> gradient, bool create_graph, bool 
     }
 
     if (creator) {
-        Autograd::backward(shared_from_this(), create_graph, retain_graph);
+        Autograd::backward(shared_from_this(), create_graph, retain_graph, gradient);
     }
 }
 

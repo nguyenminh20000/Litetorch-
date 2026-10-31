@@ -65,9 +65,9 @@ void bind_tpu(py::module_& m) {
             .def("numel", &Tensor::numel)
             .def("item", &Tensor::item)
             .def("to_vector", &Tensor::to_vector)
-            .def("backward", [](Tensor& self, std::shared_ptr<Tensor> grad, bool create_graph) {
-                self.backward(grad, create_graph);
-            }, py::arg("gradient") = nullptr, py::arg("create_graph") = false)
+            .def("backward", [](Tensor& self, std::shared_ptr<Tensor> grad, bool create_graph, bool retain_graph) {
+                self.backward(grad, create_graph, retain_graph);
+            }, py::arg("gradient") = nullptr, py::arg("create_graph") = false, py::arg("retain_graph") = false)
             .def("zero_grad", &Tensor::zero_grad)
             .def("retain_grad", [](std::shared_ptr<Tensor> self) { Autograd::retain_grad(self); })
             .def("to", py::overload_cast<const Device&>(&Tensor::to), py::arg("device"))

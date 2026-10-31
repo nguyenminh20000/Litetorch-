@@ -131,13 +131,15 @@ void check_saved_versions_w2(Node* node) {
 
 }
 
-void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, bool retain_graph) {
+void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, bool retain_graph, std::shared_ptr<Tensor> grad_output) {
     if (!root_tensor || !root_tensor->creator) return;
-    if (!root_tensor->grad) {
+    std::shared_ptr<Tensor> seed = grad_output ? grad_output : root_tensor->grad;
+    if (!seed) {
         if (root_tensor->numel() != 1) {
             throw std::runtime_error("[litetorch Error] Autograd::backward: grad must be specified for non-scalar tensors");
         }
-        root_tensor->grad = Tensor::from_vector({1.0f}, root_tensor->shape, root_tensor->device, false, root_tensor->dtype);
+        seed = Tensor::from_vector({1.0f}, root_tensor->shape, root_tensor->device, false, root_tensor->dtype);
+        root_tensor->grad = seed;
     }
     ActiveTensorsGuard guard;
 
@@ -157,10 +159,10 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, 
     std::unordered_map<Node*, std::shared_ptr<Tensor>>& grads = st.grads;
     grads.clear();
 
-    if (create_graph && root_tensor->grad) {
-        root_tensor->grad->requires_grad = true;
+    if (create_graph && seed) {
+        seed->requires_grad = true;
     }
-    grads[root_node] = root_tensor->grad;
+    grads[root_node] = seed;
 
     for (auto it = order.rbegin(); it != order.rend(); ++it) {
         Node* node = *it;
