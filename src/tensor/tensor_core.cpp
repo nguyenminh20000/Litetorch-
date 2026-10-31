@@ -836,18 +836,31 @@ std::shared_ptr<Tensor> Tensor::contiguous() {
     if (is_contiguous()) return shared_from_this();
 
     if (device.type == DeviceType::CPU && dtype != DataType::FP32) {
-        auto fp32_self = cast(DataType::FP32);
-        auto fp32_cont = fp32_self->contiguous();
-        auto res = fp32_cont->cast(dtype);
-        res->requires_grad = requires_grad;
+        auto out = create(shape, device, requires_grad, dtype);
+        size_t elem_sz = storage->element_size();
+        const char* src = static_cast<const char*>(raw_data_ptr());
+        char* dst = static_cast<char*>(out->raw_data_ptr());
+        size_t n = numel();
+        std::vector<int64_t> coords(shape.size(), 0);
+        int64_t src_offset = 0;
+        for (size_t i = 0; i < n; ++i) {
+            std::memcpy(dst + i * elem_sz, src + (size_t)src_offset * elem_sz, elem_sz);
+            for (int d = static_cast<int>(shape.size()) - 1; d >= 0; --d) {
+                coords[d]++;
+                src_offset += strides[d];
+                if (coords[d] < shape[d]) break;
+                coords[d] = 0;
+                src_offset -= shape[d] * strides[d];
+            }
+        }
         if (requires_grad) {
             auto node = std::make_shared<ContiguousNode>();
             node->inputs = { {shared_from_this(), true} };
             node->next_nodes = { creator };
-            node->output = res;
-            res->creator = node;
+            node->output = out;
+            out->creator = node;
         }
-        return res;
+        return out;
     }
 
     auto out = create(shape, device, requires_grad, dtype);

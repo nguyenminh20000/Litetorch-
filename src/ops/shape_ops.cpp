@@ -172,6 +172,8 @@ std::shared_ptr<Tensor> stack(const std::vector<std::shared_ptr<Tensor>>& tensor
     return cat(us, d);
 }
 
+std::vector<int64_t> read_index_int64(std::shared_ptr<Tensor> index);
+
 class GatherNode : public Node {
 public:
     std::vector<int64_t> input_shape;
@@ -184,7 +186,7 @@ public:
         int64_t ndim = (int64_t)input_shape.size();
         auto in_strides = default_strides(input_shape);
         std::vector<float> g = grad_output->to_vector();
-        std::vector<float> idx = index->to_vector();
+        std::vector<int64_t> idx = read_index_int64(index);
         std::vector<int64_t> out_shape = grad_output->shape;
         size_t gi_n = 1;
         for (auto s : input_shape) gi_n *= (size_t)s;
@@ -199,7 +201,7 @@ public:
                 rem /= (size_t)out_shape[(size_t)dd];
                 int64_t sc = c;
                 if (dd == dim) {
-                    int64_t ii = (int64_t)idx[i];
+                    int64_t ii = idx[i];
                     if (ii < 0) ii += dim_size;
                     sc = ii;
                 }
@@ -217,6 +219,23 @@ public:
     }
 };
 
+std::vector<int64_t> read_index_int64(std::shared_ptr<Tensor> index) {
+    auto idx_c = index->is_contiguous() ? index : index->contiguous();
+    size_t n = (size_t)idx_c->numel();
+    std::vector<int64_t> out(n);
+    if (idx_c->dtype == DataType::INT64) {
+        const int64_t* p = reinterpret_cast<const int64_t*>(idx_c->raw_data_ptr());
+        for (size_t i = 0; i < n; ++i) out[i] = p[i];
+    } else if (idx_c->dtype == DataType::INT32) {
+        const int32_t* p = reinterpret_cast<const int32_t*>(idx_c->raw_data_ptr());
+        for (size_t i = 0; i < n; ++i) out[i] = (int64_t)p[i];
+    } else {
+        std::vector<float> v = idx_c->to_vector();
+        for (size_t i = 0; i < n; ++i) out[i] = (int64_t)v[i];
+    }
+    return out;
+}
+
 std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::shared_ptr<Tensor> index) {
     int64_t ndim = (int64_t)input->shape.size();
     int64_t d = norm_dim(dim, ndim);
@@ -226,16 +245,16 @@ std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::
             throw std::runtime_error("[litetorch Error] gather: index size out of bounds");
     }
     std::vector<float> in_data = input->to_vector();
-    std::vector<float> idx_data = index->to_vector();
+    std::vector<int64_t> idx_data = read_index_int64(index);
     std::vector<int64_t> in_strides = default_strides(input->shape);
     std::vector<int64_t> out_shape = index->shape;
     size_t n = idx_data.size();
     int64_t dim_size = input->shape[(size_t)d];
     for (size_t i = 0; i < n; ++i) {
-        int64_t ii = (int64_t)idx_data[i];
+        int64_t ii = idx_data[i];
         if (ii < 0) ii += dim_size;
         if (ii < 0 || ii >= dim_size) throw std::runtime_error("[litetorch Error] gather: index out of bounds");
-        idx_data[i] = (float)ii;
+        idx_data[i] = ii;
     }
     std::vector<float> out_data(n);
     ThreadPool::get().parallel_for(0, (int64_t)n, [&](int64_t i) {
@@ -244,7 +263,7 @@ std::shared_ptr<Tensor> gather(std::shared_ptr<Tensor> input, int64_t dim, std::
         for (int64_t dd = ndim - 1; dd >= 0; --dd) {
             int64_t c = (int64_t)(rem % (size_t)out_shape[(size_t)dd]);
             rem /= (size_t)out_shape[(size_t)dd];
-            int64_t sc = (dd == d) ? (int64_t)idx_data[(size_t)i] : c;
+            int64_t sc = (dd == d) ? idx_data[(size_t)i] : c;
             pos += sc * in_strides[(size_t)dd];
         }
         out_data[(size_t)i] = in_data[(size_t)pos];

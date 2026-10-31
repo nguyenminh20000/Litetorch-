@@ -98,20 +98,37 @@ VocabParallelEmbedding::VocabParallelEmbedding(int vocab_size_, int embed_dim_, 
 }
 
 std::shared_ptr<Tensor> VocabParallelEmbedding::forward(std::shared_ptr<Tensor> input) {
+    if (input->dtype != DataType::INT64 && input->dtype != DataType::INT32)
+        throw std::runtime_error("[litetorch Error] VocabParallelEmbedding: indices must be INT64 or INT32");
     auto in_c = input->is_contiguous() ? input : input->contiguous();
-    auto vals = in_c->to_vector();
-    int64_t n = (int64_t)vals.size();
-
     Device cpu(DeviceType::CPU, 0);
+    auto in_cpu = (in_c->device.type == DeviceType::CPU) ? in_c : in_c->to(cpu);
+    int64_t n = in_cpu->numel();
+
     auto safe_ids = Tensor::create(in_c->shape, cpu, false, DataType::INT32);
     auto mask = Tensor::create(in_c->shape, cpu, false, DataType::FP32);
-    int32_t* sp = reinterpret_cast<int32_t*>(safe_ids->data_ptr());
+    int32_t* sp = reinterpret_cast<int32_t*>(safe_ids->raw_data_ptr());
     float* mp = mask->data_ptr();
-    for (int64_t i = 0; i < n; ++i) {
-        int64_t id = (int64_t)vals[i];
-        bool in_range = (id >= vocab_start && id < vocab_end);
-        sp[i] = in_range ? (id - vocab_start) : 0;
-        mp[i] = in_range ? 1.0f : 0.0f;
+    if (in_cpu->dtype == DataType::INT64) {
+        const int64_t* ip = reinterpret_cast<const int64_t*>(in_cpu->raw_data_ptr());
+        for (int64_t i = 0; i < n; ++i) {
+            int64_t id = ip[i];
+            if (id < 0 || id >= vocab_size)
+                throw std::runtime_error("[litetorch Error] VocabParallelEmbedding: index out of bounds");
+            bool in_range = (id >= vocab_start && id < vocab_end);
+            sp[i] = in_range ? (int32_t)(id - vocab_start) : 0;
+            mp[i] = in_range ? 1.0f : 0.0f;
+        }
+    } else {
+        const int32_t* ip = reinterpret_cast<const int32_t*>(in_cpu->raw_data_ptr());
+        for (int64_t i = 0; i < n; ++i) {
+            int64_t id = ip[i];
+            if (id < 0 || id >= vocab_size)
+                throw std::runtime_error("[litetorch Error] VocabParallelEmbedding: index out of bounds");
+            bool in_range = (id >= vocab_start && id < vocab_end);
+            sp[i] = in_range ? (int32_t)(id - vocab_start) : 0;
+            mp[i] = in_range ? 1.0f : 0.0f;
+        }
     }
     if (in_c->device.type != DeviceType::CPU) {
         safe_ids = safe_ids->to(in_c->device);
