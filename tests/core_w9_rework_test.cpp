@@ -35,7 +35,7 @@ int main() {
             std::printf("fp64 gradcheck threw: %s\n", e.what());
         }
         CHECK(ok);
-        std::printf("fp64_gradcheck done ok=%d err=%s\n", (int)ok, err.c_str());
+        std::printf("fp64_gradcheck done ok=%d err='%s'\n", (int)ok, err.c_str());
     }
 
     {
