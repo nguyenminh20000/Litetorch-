@@ -25,6 +25,12 @@ void bind_nn_recurrent(py::module_& m) {
             .def("forward", [](nn::LSTMCell& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx,
                                std::shared_ptr<Tensor> cx) { return self.forward(input, hx, cx); },
                  py::arg("input"), py::arg("hx"), py::arg("cx"))
+            .def("__call__", [](nn::LSTMCell& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::LSTMCell& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> hx,
+                               std::shared_ptr<Tensor> cx) { return self.forward(input, hx, cx); },
+                 py::arg("input"), py::arg("hx"), py::arg("cx"))
             .def("parameters", &nn::LSTMCell::parameters)
             .def("to", &nn::LSTMCell::to)
             .def_readwrite("weight_ih", &nn::LSTMCell::weight_ih)
@@ -111,6 +117,13 @@ void bind_nn_recurrent(py::module_& m) {
                                std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
                 return self.forward(src, mask, key_mask);
             }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
+            .def("__call__", [](nn::TransformerEncoderLayer& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::TransformerEncoderLayer& self, std::shared_ptr<Tensor> src,
+                               std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
+                return self.forward(src, mask, key_mask);
+            }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
             .def("parameters", &nn::TransformerEncoderLayer::parameters)
             .def("to", &nn::TransformerEncoderLayer::to);
 
@@ -120,6 +133,13 @@ void bind_nn_recurrent(py::module_& m) {
                  py::arg("encoder_layer"), py::arg("num_layers"), py::arg("norm") = nullptr)
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TransformerEncoder::forward))
             .def("forward", [](nn::TransformerEncoder& self, std::shared_ptr<Tensor> src,
+                               std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
+                return self.forward(src, mask, key_mask);
+            }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
+            .def("__call__", [](nn::TransformerEncoder& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::TransformerEncoder& self, std::shared_ptr<Tensor> src,
                                std::shared_ptr<Tensor> mask, std::shared_ptr<Tensor> key_mask) {
                 return self.forward(src, mask, key_mask);
             }, py::arg("src"), py::arg("mask") = nullptr, py::arg("src_key_padding_mask") = nullptr)
@@ -133,6 +153,12 @@ void bind_nn_recurrent(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(
                      &nn::EmbeddingBag::forward),
                  py::arg("input"), py::arg("offsets"))
+            .def("__call__", [](nn::EmbeddingBag& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::EmbeddingBag& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> offsets) {
+                return self.forward(input, offsets);
+            }, py::arg("input"), py::arg("offsets"))
             .def("parameters", &nn::EmbeddingBag::parameters)
             .def("to", &nn::EmbeddingBag::to)
             .def_readwrite("weight", &nn::EmbeddingBag::weight);

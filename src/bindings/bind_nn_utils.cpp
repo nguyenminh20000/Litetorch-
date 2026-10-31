@@ -153,7 +153,13 @@ void bind_nn_utils(py::module_& m) {
         py::class_<nn::Bilinear, nn::Module, std::shared_ptr<nn::Bilinear>>(nn_mod, "Bilinear")
             .def(py::init<int, int, int, bool>(), py::arg("in1_features"), py::arg("in2_features"), py::arg("out_features"), py::arg("bias") = true)
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::Bilinear::forward))
-            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::Bilinear::forward));
+            .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::Bilinear::forward))
+            .def("__call__", [](nn::Bilinear& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::Bilinear& self, std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2) {
+                return self.forward(input1, input2);
+            }, py::arg("input1"), py::arg("input2"));
         py::class_<nn::Fold, nn::Module, std::shared_ptr<nn::Fold>>(nn_mod, "Fold")
             .def(py::init<const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&, const std::vector<int64_t>&>(),
                  py::arg("output_size"), py::arg("kernel_size"), py::arg("dilation") = std::vector<int64_t>{1, 1},

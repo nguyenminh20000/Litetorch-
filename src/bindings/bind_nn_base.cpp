@@ -227,6 +227,21 @@ void bind_nn_base(py::module_& m) {
                 return self->forward(query, key, value, am, kpm, need_weights);
             }, py::arg("query"), py::arg("key"), py::arg("value"), py::arg("attn_mask") = py::none(),
                py::arg("key_padding_mask") = py::none(), py::arg("need_weights") = false)
+            .def("__call__", [](std::shared_ptr<nn::MultiHeadAttention> self, std::shared_ptr<Tensor> input) {
+                return self->forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](std::shared_ptr<nn::MultiHeadAttention> self, std::shared_ptr<Tensor> query,
+                               std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value) {
+                return self->forward(query, key, value);
+            }, py::arg("query"), py::arg("key"), py::arg("value"))
+            .def("__call__", [](std::shared_ptr<nn::MultiHeadAttention> self, std::shared_ptr<Tensor> query,
+                               std::shared_ptr<Tensor> key, std::shared_ptr<Tensor> value,
+                               py::object attn_mask, py::object key_padding_mask, bool need_weights) {
+                std::shared_ptr<Tensor> am = attn_mask.is_none() ? nullptr : attn_mask.cast<std::shared_ptr<Tensor>>();
+                std::shared_ptr<Tensor> kpm = key_padding_mask.is_none() ? nullptr : key_padding_mask.cast<std::shared_ptr<Tensor>>();
+                return self->forward(query, key, value, am, kpm, need_weights);
+            }, py::arg("query"), py::arg("key"), py::arg("value"), py::arg("attn_mask") = py::none(),
+               py::arg("key_padding_mask") = py::none(), py::arg("need_weights") = false)
             .def("parameters", &nn::MultiHeadAttention::parameters)
             .def("to", &nn::MultiHeadAttention::to)
             .def("train", &nn::MultiHeadAttention::train)
@@ -243,6 +258,12 @@ void bind_nn_base(py::module_& m) {
             .def(py::init<int, int, int>(), py::arg("embed_dim"), py::arg("num_heads"), py::arg("dim_feedforward") = 2048)
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TransformerDecoderLayer::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TransformerDecoderLayer::forward))
+            .def("__call__", [](nn::TransformerDecoderLayer& self, std::shared_ptr<Tensor> input) {
+                return self.forward(input);
+            }, py::arg("input"))
+            .def("__call__", [](nn::TransformerDecoderLayer& self, std::shared_ptr<Tensor> tgt, std::shared_ptr<Tensor> memory) {
+                return self.forward(tgt, memory);
+            }, py::arg("tgt"), py::arg("memory") = nullptr)
             .def("parameters", &nn::TransformerDecoderLayer::parameters)
             .def("to", &nn::TransformerDecoderLayer::to);
 

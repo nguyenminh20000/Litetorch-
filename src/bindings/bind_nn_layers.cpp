@@ -128,6 +128,9 @@ void bind_nn_layers(py::module_& m) {
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MSELoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MSELoss::forward))
+            .def("__call__", [](nn::MSELoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::MSELoss::reduction);
 
         // === W4-T3 (LT-ENG-028): extra losses ===
@@ -135,6 +138,9 @@ void bind_nn_layers(py::module_& m) {
             .def(py::init<float, const std::string&>(), py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::HingeEmbeddingLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::HingeEmbeddingLoss::forward))
+            .def("__call__", [](nn::HingeEmbeddingLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("margin", &nn::HingeEmbeddingLoss::margin)
             .def_readwrite("reduction", &nn::HingeEmbeddingLoss::reduction);
         py::class_<nn::CosineEmbeddingLoss, nn::Module, std::shared_ptr<nn::CosineEmbeddingLoss>>(nn_mod, "CosineEmbeddingLoss")
@@ -142,18 +148,27 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CosineEmbeddingLoss::forward))
+            .def("__call__", [](nn::CosineEmbeddingLoss& self, std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2, std::shared_ptr<Tensor> target) {
+                return self.forward(input1, input2, target);
+            }, py::arg("input1"), py::arg("input2"), py::arg("target"))
             .def_readwrite("margin", &nn::CosineEmbeddingLoss::margin)
             .def_readwrite("reduction", &nn::CosineEmbeddingLoss::reduction);
         py::class_<nn::MarginRankingLoss, nn::Module, std::shared_ptr<nn::MarginRankingLoss>>(nn_mod, "MarginRankingLoss")
             .def(py::init<float, const std::string&>(), py::arg("margin") = 0.0f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MarginRankingLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MarginRankingLoss::forward))
+            .def("__call__", [](nn::MarginRankingLoss& self, std::shared_ptr<Tensor> input1, std::shared_ptr<Tensor> input2, std::shared_ptr<Tensor> target) {
+                return self.forward(input1, input2, target);
+            }, py::arg("input1"), py::arg("input2"), py::arg("target"))
             .def_readwrite("margin", &nn::MarginRankingLoss::margin)
             .def_readwrite("reduction", &nn::MarginRankingLoss::reduction);
         py::class_<nn::MultiMarginLoss, nn::Module, std::shared_ptr<nn::MultiMarginLoss>>(nn_mod, "MultiMarginLoss")
             .def(py::init<double, float, const std::string&>(), py::arg("p") = 1, py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
+            .def("__call__", [](nn::MultiMarginLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("p", &nn::MultiMarginLoss::p)
             .def_readwrite("margin", &nn::MultiMarginLoss::margin)
             .def_readwrite("reduction", &nn::MultiMarginLoss::reduction);
@@ -161,38 +176,59 @@ void bind_nn_layers(py::module_& m) {
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiLabelMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiLabelMarginLoss::forward))
+            .def("__call__", [](nn::MultiLabelMarginLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::MultiLabelMarginLoss::reduction);
         py::class_<nn::SoftMarginLoss, nn::Module, std::shared_ptr<nn::SoftMarginLoss>>(nn_mod, "SoftMarginLoss")
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::SoftMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::SoftMarginLoss::forward))
+            .def("__call__", [](nn::SoftMarginLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::SoftMarginLoss::reduction);
         py::class_<nn::MultiLabelSoftMarginLoss, nn::Module, std::shared_ptr<nn::MultiLabelSoftMarginLoss>>(nn_mod, "MultiLabelSoftMarginLoss")
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiLabelSoftMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiLabelSoftMarginLoss::forward))
+            .def("__call__", [](nn::MultiLabelSoftMarginLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::MultiLabelSoftMarginLoss::reduction);
         py::class_<nn::TripletMarginLoss, nn::Module, std::shared_ptr<nn::TripletMarginLoss>>(nn_mod, "TripletMarginLoss")
             .def(py::init<float, int, float, bool, const std::string&>(), py::arg("margin") = 1.0f, py::arg("p") = 2, py::arg("eps") = 1e-6f, py::arg("swap") = false, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TripletMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TripletMarginLoss::forward))
+            .def("__call__", [](nn::TripletMarginLoss& self, std::shared_ptr<Tensor> anchor, std::shared_ptr<Tensor> positive, std::shared_ptr<Tensor> negative) {
+                return self.forward(anchor, positive, negative);
+            }, py::arg("anchor"), py::arg("positive"), py::arg("negative"))
             .def_readwrite("margin", &nn::TripletMarginLoss::margin)
             .def_readwrite("reduction", &nn::TripletMarginLoss::reduction);
         py::class_<nn::TripletMarginWithDistanceLoss, nn::Module, std::shared_ptr<nn::TripletMarginWithDistanceLoss>>(nn_mod, "TripletMarginWithDistanceLoss")
             .def(py::init<float, const std::string&>(), py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TripletMarginWithDistanceLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TripletMarginWithDistanceLoss::forward))
+            .def("__call__", [](nn::TripletMarginWithDistanceLoss& self, std::shared_ptr<Tensor> anchor, std::shared_ptr<Tensor> positive, std::shared_ptr<Tensor> negative) {
+                return self.forward(anchor, positive, negative);
+            }, py::arg("anchor"), py::arg("positive"), py::arg("negative"))
             .def_readwrite("margin", &nn::TripletMarginWithDistanceLoss::margin)
             .def_readwrite("reduction", &nn::TripletMarginWithDistanceLoss::reduction);
         py::class_<nn::PoissonNLLLoss, nn::Module, std::shared_ptr<nn::PoissonNLLLoss>>(nn_mod, "PoissonNLLLoss")
             .def(py::init<bool, bool, float, const std::string&>(), py::arg("log_input") = true, py::arg("full") = false, py::arg("eps") = 1e-8f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::PoissonNLLLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::PoissonNLLLoss::forward))
+            .def("__call__", [](nn::PoissonNLLLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::PoissonNLLLoss::reduction);
         py::class_<nn::GaussianNLLLoss, nn::Module, std::shared_ptr<nn::GaussianNLLLoss>>(nn_mod, "GaussianNLLLoss")
             .def(py::init<bool, float, const std::string&>(), py::arg("full") = false, py::arg("eps") = 1e-6f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::GaussianNLLLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::GaussianNLLLoss::forward))
+            .def("__call__", [](nn::GaussianNLLLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target, std::shared_ptr<Tensor> var) {
+                return self.forward(input, target, var);
+            }, py::arg("input"), py::arg("target"), py::arg("var"))
             .def_readwrite("reduction", &nn::GaussianNLLLoss::reduction);
         // === end W4-T3 losses ===
 
@@ -205,7 +241,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::CrossEntropyLoss::forward))
             .def("__call__", [](nn::CrossEntropyLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("weight", &nn::CrossEntropyLoss::weight)
             .def_readwrite("ignore_index", &nn::CrossEntropyLoss::ignore_index)
             .def_readwrite("reduction", &nn::CrossEntropyLoss::reduction)
@@ -215,12 +251,18 @@ void bind_nn_layers(py::module_& m) {
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::BCELoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::BCELoss::forward))
+            .def("__call__", [](nn::BCELoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::BCELoss::reduction);
 
         py::class_<nn::L1Loss, nn::Module, std::shared_ptr<nn::L1Loss>>(nn_mod, "L1Loss")
             .def(py::init<const std::string&>(), py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::L1Loss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::L1Loss::forward))
+            .def("__call__", [](nn::L1Loss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
+                return self.forward(input, target);
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::L1Loss::reduction);
 
         // === W1-T4 nn-layers ===
@@ -290,7 +332,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::NLLLoss::forward))
             .def("__call__", [](nn::NLLLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("weight", &nn::NLLLoss::weight)
             .def_readwrite("ignore_index", &nn::NLLLoss::ignore_index)
             .def_readwrite("reduction", &nn::NLLLoss::reduction);
@@ -305,7 +347,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::BCEWithLogitsLoss::forward))
             .def("__call__", [](nn::BCEWithLogitsLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("weight", &nn::BCEWithLogitsLoss::weight)
             .def_readwrite("reduction", &nn::BCEWithLogitsLoss::reduction)
             .def_readwrite("pos_weight", &nn::BCEWithLogitsLoss::pos_weight);
@@ -327,7 +369,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::KLDivLoss::forward))
             .def("__call__", [](nn::KLDivLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("reduction", &nn::KLDivLoss::reduction);
 
         py::class_<nn::SmoothL1Loss, nn::Module, std::shared_ptr<nn::SmoothL1Loss>>(nn_mod, "SmoothL1Loss")
@@ -336,7 +378,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::SmoothL1Loss::forward))
             .def("__call__", [](nn::SmoothL1Loss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("beta", &nn::SmoothL1Loss::beta)
             .def_readwrite("reduction", &nn::SmoothL1Loss::reduction);
 
@@ -346,7 +388,7 @@ void bind_nn_layers(py::module_& m) {
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::HuberLoss::forward))
             .def("__call__", [](nn::HuberLoss& self, std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target) {
                 return self.forward(input, target);
-            })
+            }, py::arg("input"), py::arg("target"))
             .def_readwrite("delta", &nn::HuberLoss::delta)
             .def_readwrite("reduction", &nn::HuberLoss::reduction);
 
@@ -360,7 +402,7 @@ void bind_nn_layers(py::module_& m) {
             .def("__call__", [](nn::CTCLoss& self, std::shared_ptr<Tensor> log_probs, std::shared_ptr<Tensor> targets,
                                 std::shared_ptr<Tensor> input_lengths, std::shared_ptr<Tensor> target_lengths) {
                 return self.forward(log_probs, targets, input_lengths, target_lengths);
-            })
+            }, py::arg("log_probs"), py::arg("targets"), py::arg("input_lengths"), py::arg("target_lengths"))
             .def_readwrite("blank", &nn::CTCLoss::blank)
             .def_readwrite("reduction", &nn::CTCLoss::reduction)
             .def_readwrite("zero_infinity", &nn::CTCLoss::zero_infinity);
