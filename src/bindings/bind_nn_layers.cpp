@@ -69,6 +69,7 @@ void bind_nn_layers(py::module_& m) {
 
         py::class_<nn::Parameter, Tensor, std::shared_ptr<nn::Parameter>>(nn_mod, "Parameter")
             .def(py::init([](std::shared_ptr<Tensor> data, bool requires_grad) {
+                NoGradGuard guard;
                 auto p = std::make_shared<nn::Parameter>(data->shape, data->device, data->dtype);
                 p->copy_(data);
                 p->requires_grad = requires_grad;
