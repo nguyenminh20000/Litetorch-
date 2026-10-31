@@ -141,7 +141,7 @@ hình sang GPU device của rank đó và kiểm tra device đã dính. Đừng 
 giờ cho rằng phép chuyển đã thành công — trên máy không có CUDA,
 `.to()` lặng lẽ trả về một tensor CPU (D-02).
 
-<!-- ex: id=H1.3-1 device=gpu backend=cuda runtime=~60s torch-parity=n/a status=unverified -->
+<!-- ex: id=H1.3-1 device=gpu backend=cuda runtime=~60s torch-parity=n/a status=verified-2026-10-31@120fdedc -->
 ```python
 import multiprocessing as mp
 

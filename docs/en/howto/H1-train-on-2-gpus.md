@@ -138,7 +138,7 @@ to that rank's GPU device and check the device stuck. Never assume the
 move worked — on a box without CUDA, `.to()` silently returns a CPU
 tensor (D-02).
 
-<!-- ex: id=H1.3-1 device=gpu backend=cuda runtime=~60s torch-parity=n/a status=unverified -->
+<!-- ex: id=H1.3-1 device=gpu backend=cuda runtime=~60s torch-parity=n/a status=verified-2026-10-31@120fdedc -->
 ```python
 import multiprocessing as mp
 
