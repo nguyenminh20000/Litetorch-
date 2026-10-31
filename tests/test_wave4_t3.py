@@ -134,7 +134,7 @@ def test_hinge_embedding():
     x = t([0.5, 2.0, -0.5, -2.0], [4], False)
     y = t([1.0, 1.0, -1.0, -1.0], [4], False)
     out = vec(m.forward(x, y))
-    check("hinge_embedding", approx(out, [0.5, 0.0, 0.5, 0.0]))
+    check("hinge_embedding", approx(out, [0.5, 2.0, 1.5, 3.0]))
 
 def test_cosine_embedding():
     m = nn.CosineEmbeddingLoss(0.0, "none")

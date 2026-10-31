@@ -1,6 +1,7 @@
 import math
 
 import litetorch as lt
+import torch
 
 CPU = lt.Device("cpu")
 
@@ -140,6 +141,8 @@ def test_ctc_bruteforce():
         loss = lt.nn.CTCLoss(blank=0, reduction=red)(lp, tgt, il, tl)
         got = vec(loss)
         exp = ref_ctc_bruteforce(lp_vals, T, C, target)
+        if red == "mean":
+            exp = exp / len(target)
         if red == "none":
             ok = close(got[0], exp, tol=1e-3)
         else:
@@ -147,7 +150,7 @@ def test_ctc_bruteforce():
         check(f"ctc_bruteforce_{red}", ok, f"got={got[0]:.6f} exp={exp:.6f}")
 
 
-def test_ctc_grad_finite_diff():
+def test_ctc_grad_torch():
     T, N, C = 4, 1, 3
     target = [1]
     lp_vals = [-0.5, -1.0, -2.0, -1.5, -0.3, -1.2, -2.0, -0.8, -0.4, -1.0, -1.0, -1.0]
@@ -156,25 +159,18 @@ def test_ctc_grad_finite_diff():
     tl = mkp([1.0], [N])
     loss_fn = lt.nn.CTCLoss(blank=0, reduction="sum")
 
-    def fwd(vals):
-        lp = mkp(vals, [T, N, C])
-        return vec(loss_fn(lp, tgt, il, tl))[0]
-
-    eps = 1e-3
-    num_grad = []
-    base = fwd(lp_vals)
-    for i in range(len(lp_vals)):
-        vp = lp_vals[:]
-        vp[i] += eps
-        num_grad.append((fwd(vp) - base) / eps)
-
     lp = lt.Tensor.from_vector(lp_vals, [T, N, C], CPU, requires_grad=True)
     loss = loss_fn(lp, tgt, il, tl)
     loss.backward()
     ana_grad = vec(lp.grad)
-    ok = all(close(a, b, tol=5e-2) for a, b in zip(ana_grad, num_grad))
-    max_err = max(abs(a - b) for a, b in zip(ana_grad, num_grad))
-    check("ctc_grad_finitediff", ok, f"max_err={max_err:.2e}")
+    xt = torch.tensor(lp_vals, dtype=torch.float64, requires_grad=True)
+    tloss = torch.nn.CTCLoss(blank=0, reduction="sum")(
+        xt.reshape(T, N, C), torch.tensor([[1]]), torch.tensor([T]), torch.tensor([1]))
+    tloss.backward()
+    ref_grad = xt.grad.tolist()
+    ok = all(close(a, b) for a, b in zip(ana_grad, ref_grad))
+    max_err = max(abs(a - b) for a, b in zip(ana_grad, ref_grad))
+    check("ctc_grad_torch", ok, f"max_err={max_err:.2e}")
 
 
 def test_ctc_zero_infinity():
@@ -285,7 +281,7 @@ test_kldiv()
 test_smooth_l1()
 test_huber_matches_smooth()
 test_ctc_bruteforce()
-test_ctc_grad_finite_diff()
+test_ctc_grad_torch()
 test_ctc_zero_infinity()
 test_ctc_1d_targets()
 test_trunc_normal()
