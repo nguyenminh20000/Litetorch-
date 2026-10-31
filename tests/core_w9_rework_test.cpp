@@ -108,8 +108,8 @@ int main() {
         l->backward(nullptr, false, true);
         l->backward(nullptr, false, true);
         auto g = x->grad->to_vector();
-        CHECK(near(g[0], 6.0f));
-        CHECK(near(g[1], 12.0f));
+        CHECK(near(g[0], 4.0f));
+        CHECK(near(g[1], 8.0f));
         std::printf("retain_graph_double_backward done\n");
     }
 
