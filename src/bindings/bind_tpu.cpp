@@ -60,7 +60,14 @@ void bind_tpu(py::module_& m) {
             .def_readwrite("dtype", &Tensor::dtype)
             .def_readwrite("device", &Tensor::device)
             .def_readwrite("requires_grad", &Tensor::requires_grad)
-            .def_readwrite("grad", &Tensor::grad)
+            .def_property("grad",
+                [](Tensor& self) -> std::shared_ptr<Tensor> {
+                    if (self.creator && self.requires_grad && !Autograd::retains_grad(self.shared_from_this())) {
+                        if (PyErr_WarnEx(PyExc_UserWarning, "The .grad attribute of a Tensor that is not a leaf Tensor is being accessed. Its .grad attribute won't be populated during autograd.backward(). If you indeed want the .grad field to be populated for a non-leaf Tensor, use .retain_grad() on the non-leaf Tensor. If you access the non-leaf Tensor by mistake, make sure you access the leaf Tensor instead. See github.com/pytorch/pytorch/pull/30531 for more information.", 1) < 0) throw py::error_already_set();
+                    }
+                    return self.grad;
+                },
+                [](Tensor& self, std::shared_ptr<Tensor> g) { self.grad = g; })
             .def_readwrite("shard", &Tensor::shard)
             .def("numel", &Tensor::numel)
             .def("item", &Tensor::item)

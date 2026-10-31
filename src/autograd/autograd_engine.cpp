@@ -139,7 +139,13 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, 
             throw std::runtime_error("[litetorch Error] Autograd::backward: grad must be specified for non-scalar tensors");
         }
         seed = Tensor::from_vector({1.0f}, root_tensor->shape, root_tensor->device, false, root_tensor->dtype);
-        root_tensor->grad = seed;
+    }
+    if (!root_tensor->creator || retains_grad(root_tensor)) {
+        if (!grad_output) {
+            root_tensor->grad = seed;
+        }
+    } else {
+        root_tensor->grad = nullptr;
     }
     ActiveTensorsGuard guard;
 
@@ -195,13 +201,16 @@ void Autograd::backward(std::shared_ptr<Tensor> root_tensor, bool create_graph, 
                             grad = new_grad;
                         }
                     }
-                    std::lock_guard<std::mutex> lock(input_t->grad_mutex);
-                    if (!input_t->grad) {
-                        input_t->grad = grad->clone();
-                    } else if (create_graph) {
-                        input_t->grad = Ops::add(input_t->grad, grad);
-                    } else {
-                        input_t->grad->add_(grad);
+                    bool store_grad = !input_t->creator || retains_grad(input_t);
+                    if (store_grad) {
+                        std::lock_guard<std::mutex> lock(input_t->grad_mutex);
+                        if (!input_t->grad) {
+                            input_t->grad = grad->clone();
+                        } else if (create_graph) {
+                            input_t->grad = Ops::add(input_t->grad, grad);
+                        } else {
+                            input_t->grad->add_(grad);
+                        }
                     }
                 }
             }
