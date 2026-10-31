@@ -420,6 +420,24 @@ void Module::unregister_buffer(const std::string& name) {
     throw std::runtime_error("[litetorch Error] unregister_buffer: no buffer '" + name + "'");
 }
 
+void Module::remove_parameter(const std::string& name) {
+    for (auto it = named_params_.begin(); it != named_params_.end(); ++it) {
+        if (it->first == name) {
+            named_params_.erase(it);
+            return;
+        }
+    }
+}
+
+void Module::remove_module(const std::string& name) {
+    for (auto it = named_children_.begin(); it != named_children_.end(); ++it) {
+        if (it->first == name) {
+            named_children_.erase(it);
+            return;
+        }
+    }
+}
+
 void Module::add_module(const std::string& name, std::shared_ptr<Module> module) {
     if (!module) throw std::runtime_error("[litetorch Error] add_module got null module for '" + name + "'");
     for (auto& kv : named_children_) {

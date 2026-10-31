@@ -1,5 +1,23 @@
 #include "bindings_common.h"
 
+namespace {
+
+void remove_child_module(std::shared_ptr<nn::Module> self, const std::string& name) {
+    std::shared_ptr<nn::Module> old;
+    for (auto& kv : self->named_children()) {
+        if (kv.first == name) old = kv.second;
+    }
+    self->remove_module(name);
+    if (old) {
+        if (auto* seq = dynamic_cast<nn::Sequential*>(self.get())) {
+            auto& mods = seq->modules;
+            mods.erase(std::remove(mods.begin(), mods.end(), old), mods.end());
+        }
+    }
+}
+
+}
+
 void bind_nn_base(py::module_& m) {
     auto nn_mod = m.attr("nn").cast<py::module_>();
 
@@ -14,7 +32,137 @@ void bind_nn_base(py::module_& m) {
             .def("compile", &nn::Module::compile)
             .def("save_pretrained", &nn::Module::save_pretrained, py::arg("path"), py::arg("num_shards") = 1)
             .def("load_pretrained", &nn::Module::load_pretrained, py::arg("path"))
-            .def("__call__", &nn::Module::operator());
+            .def("__call__", &nn::Module::operator())
+            .def("__setattr__", [](std::shared_ptr<nn::Module> self, const std::string& name, py::object value) {
+                py::object self_obj = py::cast(self);
+                auto default_setattr = [&]() {
+                    py::module_::import("builtins").attr("object").attr("__setattr__")(self_obj, py::str(name), value);
+                };
+                auto remove_from_dict = [&]() {
+                    py::object d = py::getattr(self_obj, "__dict__", py::none());
+                    if (!d.is_none()) {
+                        py::reinterpret_borrow<py::dict>(d).attr("pop")(py::str(name), py::none());
+                    }
+                };
+                auto write_none_to_dict = [&]() {
+                    py::object d = py::getattr(self_obj, "__dict__", py::none());
+                    if (!d.is_none()) {
+                        py::reinterpret_borrow<py::dict>(d).attr("__setitem__")(py::str(name), py::none());
+                    }
+                };
+                auto has_param = [&]() {
+                    for (auto& kv : self->named_parameters("")) {
+                        if (kv.first == name) return true;
+                    }
+                    return false;
+                };
+                auto has_child = [&]() {
+                    for (auto& kv : self->named_children()) {
+                        if (kv.first == name) return true;
+                    }
+                    return false;
+                };
+                auto has_buffer = [&]() {
+                    for (auto& kv : self->named_buffers("")) {
+                        if (kv.first == name) return true;
+                    }
+                    return false;
+                };
+                auto type_name = [&]() {
+                    return std::string(py::str(py::type::of(value).attr("__name__")));
+                };
+                py::object descr = py::getattr(py::type::of(self_obj), name.c_str(), py::none());
+                if (!descr.is_none() && PyDescr_IsData(descr.ptr())) {
+                    default_setattr();
+                    return;
+                }
+                if (py::isinstance<nn::Parameter>(value)) {
+                    if (has_child()) remove_child_module(self, name);
+                    if (has_buffer()) self->unregister_buffer(name);
+                    remove_from_dict();
+                    self->register_parameter(name, value.cast<std::shared_ptr<nn::Parameter>>());
+                    return;
+                }
+                if (has_param()) {
+                    if (value.is_none()) {
+                        self->remove_parameter(name);
+                        write_none_to_dict();
+                        return;
+                    }
+                    throw py::type_error("cannot assign '" + type_name() + "' as parameter '" + name + "' (torch.nn.Parameter or None expected)");
+                }
+                if (py::isinstance<nn::Module>(value)) {
+                    if (has_buffer()) self->unregister_buffer(name);
+                    remove_from_dict();
+                    self->add_module(name, value.cast<std::shared_ptr<nn::Module>>());
+                    return;
+                }
+                if (has_child()) {
+                    if (value.is_none()) {
+                        remove_child_module(self, name);
+                        write_none_to_dict();
+                        return;
+                    }
+                    throw py::type_error("cannot assign '" + type_name() + "' as child module '" + name + "' (torch.nn.Module or None expected)");
+                }
+                if (py::isinstance<nn::Buffer>(value) || has_buffer()) {
+                    if (value.is_none()) {
+                        self->unregister_buffer(name);
+                        write_none_to_dict();
+                        return;
+                    }
+                    if (!py::isinstance<Tensor>(value)) {
+                        throw py::type_error("cannot assign '" + type_name() + "' as buffer '" + name + "' (torch.nn.Buffer, torch.Tensor or None expected)");
+                    }
+                    remove_from_dict();
+                    self->register_buffer(name, value.cast<std::shared_ptr<Tensor>>());
+                    return;
+                }
+                default_setattr();
+            })
+            .def("__getattr__", [](std::shared_ptr<nn::Module> self, const std::string& name) -> py::object {
+                for (auto& kv : self->named_parameters("")) {
+                    if (kv.first == name) return py::cast(kv.second);
+                }
+                for (auto& kv : self->named_buffers("")) {
+                    if (kv.first == name) return py::cast(kv.second);
+                }
+                for (auto& kv : self->named_children()) {
+                    if (kv.first == name) return py::cast(kv.second);
+                }
+                throw py::attribute_error("'" + std::string(py::str(py::type::of(py::cast(self)).attr("__name__"))) + "' object has no attribute '" + name + "'");
+            })
+            .def("__delattr__", [](std::shared_ptr<nn::Module> self, const std::string& name) {
+                py::object self_obj = py::cast(self);
+                auto remove_from_dict = [&]() {
+                    py::object d = py::getattr(self_obj, "__dict__", py::none());
+                    if (!d.is_none()) {
+                        py::reinterpret_borrow<py::dict>(d).attr("pop")(py::str(name), py::none());
+                    }
+                };
+                for (auto& kv : self->named_parameters("")) {
+                    if (kv.first == name) {
+                        self->remove_parameter(name);
+                        remove_from_dict();
+                        return;
+                    }
+                }
+                for (auto& kv : self->named_buffers("")) {
+                    if (kv.first == name) {
+                        self->unregister_buffer(name);
+                        remove_from_dict();
+                        return;
+                    }
+                }
+                for (auto& kv : self->named_children()) {
+                    if (kv.first == name) {
+                        remove_child_module(self, name);
+                        remove_from_dict();
+                        return;
+                    }
+                }
+                py::module_::import("builtins").attr("object").attr("__delattr__")(py::cast(self), py::str(name));
+            });
 
         py::class_<nn::Linear, nn::Module, std::shared_ptr<nn::Linear>>(nn_mod, "Linear")
             .def(py::init<int, int, bool>(), py::arg("in_features"), py::arg("out_features"), py::arg("bias") = true)
