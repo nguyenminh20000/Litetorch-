@@ -35,7 +35,7 @@ int main() {
             std::printf("fp64 gradcheck threw: %s\n", e.what());
         }
         CHECK(ok);
-        std::printf("fp64_gradcheck done ok=%d err='%s'\n", (int)ok, err.c_str());
+        std::printf("fp64_gradcheck done ok=%d err=%s\n", (int)ok, err.c_str());
     }
 
     {
@@ -78,9 +78,24 @@ int main() {
                 std::printf("iter %d threw: %s\n", it, e.what());
             }
             CHECK(!threw);
-            CHECK(w->grad != nullptr);
+            CHECK(w->grad == nullptr);
+            CHECK(b->grad == nullptr);
+            CHECK(w0->grad != nullptr);
+            CHECK(b0->grad != nullptr);
+            if (w0->grad && b0->grad) {
+                auto w0g = w0->grad->to_vector();
+                auto xv = x->to_vector();
+                for (int i = 0; i < 4; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        CHECK(near(w0g[i * 3 + j], xv[i] + xv[4 + i]));
+                auto b0g = b0->grad->to_vector();
+                for (int j = 0; j < 3; ++j)
+                    CHECK(near(b0g[j], 2.0f));
+            }
             w->zero_grad();
             b->zero_grad();
+            w0->zero_grad();
+            b0->zero_grad();
         }
         std::printf("stateless_shared_node_reexec done\n");
     }

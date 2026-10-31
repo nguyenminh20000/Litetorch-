@@ -29,6 +29,8 @@ int main() {
         CHECK((bool)w->creator);
         auto b0 = Tensor::randn({4}, cpu0, true);
         auto b = b0->to(cpu1);
+        Autograd::retain_grad(w);
+        Autograd::retain_grad(b);
         auto lr = Tensor::from_vector({-0.01f}, {1}, cpu1, false);
         for (int it = 0; it < 3; ++it) {
             auto x = Tensor::randn({2, 8}, cpu1, false);
@@ -60,6 +62,8 @@ int main() {
         auto w = w0->to(cpu1);
         auto b0 = Tensor::from_vector({0.5f, -0.5f}, {2}, cpu0, true);
         auto b = b0->to(cpu1);
+        Autograd::retain_grad(w);
+        Autograd::retain_grad(b);
         auto x = Tensor::from_vector({1.0f, 1.0f, 2.0f, 2.0f}, {2, 2}, cpu1, false);
         for (int it = 0; it < 2; ++it) {
             auto out = Ops::matmul(x, w);
