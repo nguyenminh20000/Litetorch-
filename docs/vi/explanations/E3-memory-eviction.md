@@ -169,7 +169,7 @@ print("torch cuda kha dung", torch.cuda.is_available())
 ```
 Đã kiểm chứng trên CPU, LiteTorch 88a4ba1, PyTorch 2.14.1. Trên máy chỉ có CPU, cả hai bộ đếm bộ nhớ đều đọc `0` vì không storage GPU nào từng đăng ký, nên việc giải phóng không bao giờ chạy. Dòng `.to(Device("cuda"))` cũng minh họa D-02: tensor lặng lẽ ở lại CPU.
 
-<!-- ex: id=e3-3 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=e3-3 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")

@@ -318,7 +318,7 @@ sau .cpu(): cpu:0
 
 Cách xử lý là một kỷ luật một dòng: luôn kiểm tra `t.device` sau `.to()` / `.cuda()` và báo lỗi lớn tiếng nếu nó không phải thiết bị đã yêu cầu. Đừng bao giờ cho rằng một tensor đang nằm trên GPU chỉ vì code đã yêu cầu GPU. Cùng một fallback áp dụng cho TPU, và `Module.to()` thừa hưởng nó cho từng tham số. Các op nhị phân trên các thiết bị khác nhau cũng chuyển đổi thầm lặng thay vì ném lỗi (D-10) — hãy chuyển tensor một cách tường minh trước khi trộn các thiết bị.
 
-<!-- ex: id=E1-9 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=E1-9 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 
 ```python
 import sys

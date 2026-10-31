@@ -169,7 +169,7 @@ print("torch cuda available", torch.cuda.is_available())
 ```
 Verified on CPU, LiteTorch 88a4ba1, PyTorch 2.14.1. On a CPU-only machine both memory counters read `0` because no GPU storage ever registers, so eviction never runs. The `.to(Device("cuda"))` line also demonstrates D-02: the tensor silently stays on CPU.
 
-<!-- ex: id=e3-3 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=e3-3 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")

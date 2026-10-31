@@ -181,7 +181,7 @@ block on a CPU-only machine — `.to("cuda")` silently falls back to CPU
 (D-02), so the block below checks the device and stops loudly if no GPU
 is present.
 
-<!-- ex: id=T2.4-1 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=T2.4-1 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python skip-run
 
 import litetorch as lt

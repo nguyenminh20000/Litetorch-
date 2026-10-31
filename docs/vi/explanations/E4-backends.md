@@ -154,7 +154,7 @@ except TypeError:
 ```
 Đã kiểm chứng trên CPU, LiteTorch 88a4ba1, PyTorch 2.14.1. Lỗi gõ `Device("cude")` được phân tích thành CPU mà không báo lỗi (D-03), trong khi `.to("cuda")` với chuỗi ném `TypeError` vì không có overload chuỗi nào được bound.
 
-<!-- ex: id=e4-4 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=e4-4 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")

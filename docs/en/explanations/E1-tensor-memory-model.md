@@ -318,7 +318,7 @@ SILENT FALLBACK CONFIRMED
 
 The migration is a one-line discipline: always check `t.device` after `.to()` / `.cuda()` and fail loudly if it is not the requested device. Never assume a tensor is on the GPU because the code asked for the GPU. The same fallback applies to TPU, and `Module.to()` inherits it per parameter. Binary ops across devices also silently transfer instead of raising (D-10) — move tensors explicitly before mixing devices.
 
-<!-- ex: id=E1-9 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=E1-9 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 
 ```python
 import sys

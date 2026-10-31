@@ -185,7 +185,7 @@ chạy khối này trên máy chỉ có CPU — `.to("cuda")` lặng lẽ rơi v
 (D-02), nên khối dưới đây kiểm tra thiết bị và dừng lớn tiếng nếu không
 có GPU.
 
-<!-- ex: id=T2.4-1 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=T2.4-1 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python skip-run
 
 import litetorch as lt

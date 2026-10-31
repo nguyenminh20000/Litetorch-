@@ -154,7 +154,7 @@ except TypeError:
 ```
 Verified on CPU, LiteTorch 88a4ba1, PyTorch 2.14.1. The typo `Device("cude")` parses to CPU with no error (D-03), while `.to("cuda")` with a string raises `TypeError` because no string overload is bound.
 
-<!-- ex: id=e4-4 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=e4-4 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-10-31@cbba5af3 -->
 ```python
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")
