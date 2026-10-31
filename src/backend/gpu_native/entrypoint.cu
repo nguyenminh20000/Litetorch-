@@ -362,6 +362,13 @@ extern "C" int gpu_get_device() {
     return current_device();
 }
 
+extern "C" int gpu_get_device_count() {
+    int count = 0;
+    GPU_API(Error_t) err = GPU_API(GetDeviceCount)(&count);
+    if (err != GPU_API(Success)) return 0;
+    return count;
+}
+
 extern "C" void* gpu_start_recording() {
 #ifndef __HIP_PLATFORM_AMD__
     cudaStreamBeginCapture(dev_stream(current_device()), cudaStreamCaptureModeGlobal);

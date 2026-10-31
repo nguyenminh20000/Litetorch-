@@ -82,6 +82,17 @@ typedef const char* (*gpu_last_alloc_error_t)();
 typedef size_t (*gpu_mem_info_free_t)();
 typedef size_t (*gpu_mem_info_total_t)();
 
+static void* load_gpu_symbol(void* handle, const char* name) {
+    void* sym = dlsym(handle, name);
+    if (!sym) {
+        static std::unordered_set<std::string> warned;
+        if (warned.insert(name).second) {
+            std::cerr << "[litetorch Warning] liblitetorch_gpu.so is missing symbol '" << name << "'\n";
+        }
+    }
+    return sym;
+}
+
 class NativeGPUBackend : public DeviceBackend {
 public:
     void* handle = nullptr;
@@ -207,75 +218,75 @@ public:
         }
         if (!handle) return;
 
-        gpu_init_fn = (gpu_init_t)dlsym(handle, "gpu_init");
-        gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
-        gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
-        gpu_get_device_count_fn = (gpu_get_device_count_t)dlsym(handle, "gpu_get_device_count");
-        gpu_get_device_total_memory_fn = (gpu_get_device_total_memory_t)dlsym(handle, "gpu_get_device_total_memory");
-        gpu_allocate_fn = (gpu_allocate_t)dlsym(handle, "gpu_allocate");
-        gpu_free_fn = (gpu_free_t)dlsym(handle, "gpu_free");
-        gpu_empty_cache_fn = (gpu_empty_cache_t)dlsym(handle, "gpu_empty_cache");
-        gpu_read_fn = (gpu_read_t)dlsym(handle, "gpu_read");
-        gpu_write_fn = (gpu_write_t)dlsym(handle, "gpu_write");
-        gpu_copy_fn = (gpu_copy_t)dlsym(handle, "gpu_copy");
-        gpu_copy_peer_fn = (gpu_copy_peer_t)dlsym(handle, "gpu_copy_peer");
-        gpu_read_async_fn = (gpu_read_async_t)dlsym(handle, "gpu_read_async");
-        gpu_write_async_fn = (gpu_write_async_t)dlsym(handle, "gpu_write_async");
-        gpu_copy_async_fn = (gpu_copy_async_t)dlsym(handle, "gpu_copy_async");
-        gpu_finish_fn = (gpu_finish_t)dlsym(handle, "gpu_finish");
-        gpu_get_kernel_fn = (gpu_get_kernel_t)dlsym(handle, "gpu_get_kernel");
-        gpu_launch_fn = (gpu_launch_t)dlsym(handle, "gpu_launch");
-        gpu_compile_kernel_fn = (gpu_compile_kernel_t)dlsym(handle, "gpu_compile_kernel");
-        gpu_launch_dynamic_fn = (gpu_launch_dynamic_t)dlsym(handle, "gpu_launch_dynamic");
-        gpu_matmul_fn = (gpu_matmul_t)dlsym(handle, "gpu_matmul");
-        gpu_matmul_ex_fn = (gpu_matmul_ex_t)dlsym(handle, "gpu_matmul_ex");
-        gpu_bmm_fn = (gpu_bmm_t)dlsym(handle, "gpu_bmm");
-        gpu_bmm_ex_fn = (gpu_bmm_ex_t)dlsym(handle, "gpu_bmm_ex");
-        gpu_matmul_half_fn = (gpu_matmul_half_t)dlsym(handle, "gpu_matmul_half");
-        gpu_matmul_half_ex_fn = (gpu_matmul_half_ex_t)dlsym(handle, "gpu_matmul_half_ex");
-        gpu_bmm_half_fn = (gpu_bmm_half_t)dlsym(handle, "gpu_bmm_half");
-        gpu_bmm_half_ex_fn = (gpu_bmm_half_ex_t)dlsym(handle, "gpu_bmm_half_ex");
-        gpu_matmul_fp8_fn = (gpu_matmul_fp8_t)dlsym(handle, "gpu_matmul_fp8");
-        gpu_matmul_bf16_fn = (gpu_matmul_bf16_t)dlsym(handle, "gpu_matmul_bf16");
-        gpu_sum_fn = (gpu_sum_t)dlsym(handle, "gpu_sum_forward");
-        gpu_max_fn = (gpu_max_t)dlsym(handle, "gpu_max_forward");
-        gpu_adamw_step_fn = (gpu_adamw_step_t)dlsym(handle, "gpu_adamw_step");
-        gpu_adamw_8bit_step_fn = (gpu_adamw_8bit_step_t)dlsym(handle, "gpu_adamw_8bit_step");
-        gpu_flash_attention_fn = (gpu_flash_attention_t)dlsym(handle, "gpu_flash_attention");
-        gpu_flash_attention_half_fn = (gpu_flash_attention_half_t)dlsym(handle, "gpu_flash_attention_half");
-        gpu_flash_attention_backward_fn = (gpu_flash_attention_backward_t)dlsym(handle, "gpu_flash_attention_backward");
-        gpu_flash_attention_backward_half_fn = (gpu_flash_attention_backward_half_t)dlsym(handle, "gpu_flash_attention_backward_half");
-        gpu_flash_attention_forward_save_lse_fn = (gpu_flash_attention_forward_save_lse_t)dlsym(handle, "gpu_flash_attention_forward_save_lse");
-        gpu_flash_attention_half_forward_save_lse_fn = (gpu_flash_attention_half_forward_save_lse_t)dlsym(handle, "gpu_flash_attention_half_forward_save_lse");
-        gpu_flash_attention_backward_with_lse_fn = (gpu_flash_attention_backward_with_lse_t)dlsym(handle, "gpu_flash_attention_backward_with_lse");
-        gpu_flash_attention_backward_half_with_lse_fn = (gpu_flash_attention_backward_half_with_lse_t)dlsym(handle, "gpu_flash_attention_backward_half_with_lse");
-        gpu_cat_forward_fn = (gpu_cat_forward_t)dlsym(handle, "gpu_cat_forward");
-        gpu_cat_backward_fn = (gpu_cat_backward_t)dlsym(handle, "gpu_cat_backward");
-        gpu_moe_gate_fn = (gpu_moe_gate_t)dlsym(handle, "gpu_moe_gate");
-        gpu_moe_gate_backward_fn = (gpu_moe_gate_backward_t)dlsym(handle, "gpu_moe_gate_backward");
-        gpu_moe_expert_forward_fn = (gpu_moe_expert_forward_t)dlsym(handle, "gpu_moe_expert_forward");
-        gpu_moe_expert_backward_fn = (gpu_moe_expert_backward_t)dlsym(handle, "gpu_moe_expert_backward");
-        gpu_start_recording_fn = (gpu_start_recording_t)dlsym(handle, "gpu_start_recording");
-        gpu_stop_recording_fn = (gpu_stop_recording_t)dlsym(handle, "gpu_stop_recording");
-        gpu_launch_graph_fn = (gpu_launch_graph_t)dlsym(handle, "gpu_launch_graph");
-        gpu_free_graph_fn = (gpu_free_graph_t)dlsym(handle, "gpu_free_graph");
-        gpu_create_event_fn = (gpu_create_event_t)dlsym(handle, "gpu_create_event");
-        gpu_record_event_fn = (gpu_record_event_t)dlsym(handle, "gpu_record_event");
-        gpu_stream_wait_event_fn = (gpu_stream_wait_event_t)dlsym(handle, "gpu_stream_wait_event");
-        gpu_destroy_event_fn = (gpu_destroy_event_t)dlsym(handle, "gpu_destroy_event");
-        gpu_get_comm_stream_fn = (gpu_get_comm_stream_t)dlsym(handle, "gpu_get_comm_stream");
-        gpu_get_compute_stream_fn = (gpu_get_compute_stream_t)dlsym(handle, "gpu_get_compute_stream");
-        gpu_sync_stream_fn = (gpu_sync_stream_t)dlsym(handle, "gpu_sync_stream");
-        gpu_set_device_fn = (gpu_set_device_t)dlsym(handle, "gpu_set_device");
-        gpu_get_device_fn = (gpu_get_device_t)dlsym(handle, "gpu_get_device");
-        gpu_set_tf32_enabled_fn = (gpu_set_tf32_enabled_t)dlsym(handle, "gpu_set_tf32_enabled");
-        gpu_is_tf32_enabled_fn = (gpu_is_tf32_enabled_t)dlsym(handle, "gpu_is_tf32_enabled");
-        gpu_set_fp16_math_enabled_fn = (gpu_set_fp16_math_enabled_t)dlsym(handle, "gpu_set_fp16_math_enabled");
-        gpu_is_fp16_math_enabled_fn = (gpu_is_fp16_math_enabled_t)dlsym(handle, "gpu_is_fp16_math_enabled");
-        gpu_get_pool_cached_bytes_fn = (gpu_get_pool_cached_bytes_t)dlsym(handle, "gpu_get_pool_cached_bytes");
-        gpu_last_alloc_error_fn = (gpu_last_alloc_error_t)dlsym(handle, "gpu_last_alloc_error");
-        gpu_mem_info_free_fn = (gpu_mem_info_free_t)dlsym(handle, "gpu_mem_info_free");
-        gpu_mem_info_total_fn = (gpu_mem_info_total_t)dlsym(handle, "gpu_mem_info_total");
+        gpu_init_fn = (gpu_init_t)load_gpu_symbol(handle, "gpu_init");
+        gpu_set_device_fn = (gpu_set_device_t)load_gpu_symbol(handle, "gpu_set_device");
+        gpu_get_device_fn = (gpu_get_device_t)load_gpu_symbol(handle, "gpu_get_device");
+        gpu_get_device_count_fn = (gpu_get_device_count_t)load_gpu_symbol(handle, "gpu_get_device_count");
+        gpu_get_device_total_memory_fn = (gpu_get_device_total_memory_t)load_gpu_symbol(handle, "gpu_get_device_total_memory");
+        gpu_allocate_fn = (gpu_allocate_t)load_gpu_symbol(handle, "gpu_allocate");
+        gpu_free_fn = (gpu_free_t)load_gpu_symbol(handle, "gpu_free");
+        gpu_empty_cache_fn = (gpu_empty_cache_t)load_gpu_symbol(handle, "gpu_empty_cache");
+        gpu_read_fn = (gpu_read_t)load_gpu_symbol(handle, "gpu_read");
+        gpu_write_fn = (gpu_write_t)load_gpu_symbol(handle, "gpu_write");
+        gpu_copy_fn = (gpu_copy_t)load_gpu_symbol(handle, "gpu_copy");
+        gpu_copy_peer_fn = (gpu_copy_peer_t)load_gpu_symbol(handle, "gpu_copy_peer");
+        gpu_read_async_fn = (gpu_read_async_t)load_gpu_symbol(handle, "gpu_read_async");
+        gpu_write_async_fn = (gpu_write_async_t)load_gpu_symbol(handle, "gpu_write_async");
+        gpu_copy_async_fn = (gpu_copy_async_t)load_gpu_symbol(handle, "gpu_copy_async");
+        gpu_finish_fn = (gpu_finish_t)load_gpu_symbol(handle, "gpu_finish");
+        gpu_get_kernel_fn = (gpu_get_kernel_t)load_gpu_symbol(handle, "gpu_get_kernel");
+        gpu_launch_fn = (gpu_launch_t)load_gpu_symbol(handle, "gpu_launch");
+        gpu_compile_kernel_fn = (gpu_compile_kernel_t)load_gpu_symbol(handle, "gpu_compile_kernel");
+        gpu_launch_dynamic_fn = (gpu_launch_dynamic_t)load_gpu_symbol(handle, "gpu_launch_dynamic");
+        gpu_matmul_fn = (gpu_matmul_t)load_gpu_symbol(handle, "gpu_matmul");
+        gpu_matmul_ex_fn = (gpu_matmul_ex_t)load_gpu_symbol(handle, "gpu_matmul_ex");
+        gpu_bmm_fn = (gpu_bmm_t)load_gpu_symbol(handle, "gpu_bmm");
+        gpu_bmm_ex_fn = (gpu_bmm_ex_t)load_gpu_symbol(handle, "gpu_bmm_ex");
+        gpu_matmul_half_fn = (gpu_matmul_half_t)load_gpu_symbol(handle, "gpu_matmul_half");
+        gpu_matmul_half_ex_fn = (gpu_matmul_half_ex_t)load_gpu_symbol(handle, "gpu_matmul_half_ex");
+        gpu_bmm_half_fn = (gpu_bmm_half_t)load_gpu_symbol(handle, "gpu_bmm_half");
+        gpu_bmm_half_ex_fn = (gpu_bmm_half_ex_t)load_gpu_symbol(handle, "gpu_bmm_half_ex");
+        gpu_matmul_fp8_fn = (gpu_matmul_fp8_t)load_gpu_symbol(handle, "gpu_matmul_fp8");
+        gpu_matmul_bf16_fn = (gpu_matmul_bf16_t)load_gpu_symbol(handle, "gpu_matmul_bf16");
+        gpu_sum_fn = (gpu_sum_t)load_gpu_symbol(handle, "gpu_sum_forward");
+        gpu_max_fn = (gpu_max_t)load_gpu_symbol(handle, "gpu_max_forward");
+        gpu_adamw_step_fn = (gpu_adamw_step_t)load_gpu_symbol(handle, "gpu_adamw_step");
+        gpu_adamw_8bit_step_fn = (gpu_adamw_8bit_step_t)load_gpu_symbol(handle, "gpu_adamw_8bit_step");
+        gpu_flash_attention_fn = (gpu_flash_attention_t)load_gpu_symbol(handle, "gpu_flash_attention");
+        gpu_flash_attention_half_fn = (gpu_flash_attention_half_t)load_gpu_symbol(handle, "gpu_flash_attention_half");
+        gpu_flash_attention_backward_fn = (gpu_flash_attention_backward_t)load_gpu_symbol(handle, "gpu_flash_attention_backward");
+        gpu_flash_attention_backward_half_fn = (gpu_flash_attention_backward_half_t)load_gpu_symbol(handle, "gpu_flash_attention_backward_half");
+        gpu_flash_attention_forward_save_lse_fn = (gpu_flash_attention_forward_save_lse_t)load_gpu_symbol(handle, "gpu_flash_attention_forward_save_lse");
+        gpu_flash_attention_half_forward_save_lse_fn = (gpu_flash_attention_half_forward_save_lse_t)load_gpu_symbol(handle, "gpu_flash_attention_half_forward_save_lse");
+        gpu_flash_attention_backward_with_lse_fn = (gpu_flash_attention_backward_with_lse_t)load_gpu_symbol(handle, "gpu_flash_attention_backward_with_lse");
+        gpu_flash_attention_backward_half_with_lse_fn = (gpu_flash_attention_backward_half_with_lse_t)load_gpu_symbol(handle, "gpu_flash_attention_backward_half_with_lse");
+        gpu_cat_forward_fn = (gpu_cat_forward_t)load_gpu_symbol(handle, "gpu_cat_forward");
+        gpu_cat_backward_fn = (gpu_cat_backward_t)load_gpu_symbol(handle, "gpu_cat_backward");
+        gpu_moe_gate_fn = (gpu_moe_gate_t)load_gpu_symbol(handle, "gpu_moe_gate");
+        gpu_moe_gate_backward_fn = (gpu_moe_gate_backward_t)load_gpu_symbol(handle, "gpu_moe_gate_backward");
+        gpu_moe_expert_forward_fn = (gpu_moe_expert_forward_t)load_gpu_symbol(handle, "gpu_moe_expert_forward");
+        gpu_moe_expert_backward_fn = (gpu_moe_expert_backward_t)load_gpu_symbol(handle, "gpu_moe_expert_backward");
+        gpu_start_recording_fn = (gpu_start_recording_t)load_gpu_symbol(handle, "gpu_start_recording");
+        gpu_stop_recording_fn = (gpu_stop_recording_t)load_gpu_symbol(handle, "gpu_stop_recording");
+        gpu_launch_graph_fn = (gpu_launch_graph_t)load_gpu_symbol(handle, "gpu_launch_graph");
+        gpu_free_graph_fn = (gpu_free_graph_t)load_gpu_symbol(handle, "gpu_free_graph");
+        gpu_create_event_fn = (gpu_create_event_t)load_gpu_symbol(handle, "gpu_create_event");
+        gpu_record_event_fn = (gpu_record_event_t)load_gpu_symbol(handle, "gpu_record_event");
+        gpu_stream_wait_event_fn = (gpu_stream_wait_event_t)load_gpu_symbol(handle, "gpu_stream_wait_event");
+        gpu_destroy_event_fn = (gpu_destroy_event_t)load_gpu_symbol(handle, "gpu_destroy_event");
+        gpu_get_comm_stream_fn = (gpu_get_comm_stream_t)load_gpu_symbol(handle, "gpu_get_comm_stream");
+        gpu_get_compute_stream_fn = (gpu_get_compute_stream_t)load_gpu_symbol(handle, "gpu_get_compute_stream");
+        gpu_sync_stream_fn = (gpu_sync_stream_t)load_gpu_symbol(handle, "gpu_sync_stream");
+        gpu_set_device_fn = (gpu_set_device_t)load_gpu_symbol(handle, "gpu_set_device");
+        gpu_get_device_fn = (gpu_get_device_t)load_gpu_symbol(handle, "gpu_get_device");
+        gpu_set_tf32_enabled_fn = (gpu_set_tf32_enabled_t)load_gpu_symbol(handle, "gpu_set_tf32_enabled");
+        gpu_is_tf32_enabled_fn = (gpu_is_tf32_enabled_t)load_gpu_symbol(handle, "gpu_is_tf32_enabled");
+        gpu_set_fp16_math_enabled_fn = (gpu_set_fp16_math_enabled_t)load_gpu_symbol(handle, "gpu_set_fp16_math_enabled");
+        gpu_is_fp16_math_enabled_fn = (gpu_is_fp16_math_enabled_t)load_gpu_symbol(handle, "gpu_is_fp16_math_enabled");
+        gpu_get_pool_cached_bytes_fn = (gpu_get_pool_cached_bytes_t)load_gpu_symbol(handle, "gpu_get_pool_cached_bytes");
+        gpu_last_alloc_error_fn = (gpu_last_alloc_error_t)load_gpu_symbol(handle, "gpu_last_alloc_error");
+        gpu_mem_info_free_fn = (gpu_mem_info_free_t)load_gpu_symbol(handle, "gpu_mem_info_free");
+        gpu_mem_info_total_fn = (gpu_mem_info_total_t)load_gpu_symbol(handle, "gpu_mem_info_total");
 
         if (gpu_init_fn && gpu_allocate_fn && gpu_free_fn && gpu_read_fn && 
             gpu_write_fn && gpu_copy_fn && gpu_finish_fn && gpu_get_kernel_fn && gpu_launch_fn) {
