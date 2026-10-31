@@ -2,6 +2,7 @@
 #include "litetorch/ops.h"
 #include <stdexcept>
 #include <cmath>
+#include <vector>
 
 namespace litetorch {
 namespace nn {
@@ -138,22 +139,43 @@ std::shared_ptr<Tensor> MultiLabelMarginLoss::forward(std::shared_ptr<Tensor> in
     int64_t C = shape[1];
     auto zero = sc(0.0f, input);
     auto one = sc(1.0f, input);
-    auto total = Ops::mul(input, zero);
+    auto tz = sc(0.0f, target);
+    auto col0 = Ops::mul(Ops::narrow(input, 1, 0, 1), zero);
+    auto col1 = Ops::add(col0, one);
+    std::vector<std::shared_ptr<Tensor>> tcol((size_t)C);
+    std::vector<std::shared_ptr<Tensor>> act((size_t)C);
+    std::vector<std::shared_ptr<Tensor>> xt((size_t)C);
+    auto running = col1;
     for (int64_t j = 0; j < C; j++) {
         auto tj = Ops::narrow(target, 1, j, 1);
-        auto is_pos_label = Ops::ge(tj, zero);
-        auto xj = Ops::narrow(input, 1, j, 1);
+        tcol[(size_t)j] = tj;
+        running = Ops::mul(running, Ops::ge(tj, tz));
+        act[(size_t)j] = running;
+        auto safe_tj = Ops::where(running, tj, tz);
+        xt[(size_t)j] = Ops::gather(input, 1, safe_tj);
+    }
+    std::vector<std::shared_ptr<Tensor>> neg((size_t)C);
+    for (int64_t i = 0; i < C; i++) {
+        auto neg_i = col1;
+        for (int64_t j = 0; j < C; j++) {
+            auto ne_ij = Ops::ne(tcol[(size_t)j], sc((float)i, target));
+            neg_i = Ops::mul(neg_i, Ops::where(act[(size_t)j], ne_ij, col1));
+        }
+        neg[(size_t)i] = neg_i;
+    }
+    auto total = col0;
+    for (int64_t j = 0; j < C; j++) {
+        auto xj = xt[(size_t)j];
         for (int64_t i = 0; i < C; i++) {
-            auto ti = Ops::narrow(target, 1, i, 1);
-            auto is_neg_label = Ops::lt(ti, zero);
             auto xi = Ops::narrow(input, 1, i, 1);
-            auto diff = Ops::sub(Ops::sub(one, Ops::sub(xj, xi)), zero);
+            auto diff = Ops::sub(one, Ops::sub(xj, xi));
             auto term = Ops::where(Ops::gt(diff, zero), diff, zero);
-            auto mask = Ops::where(Ops::where(is_pos_label, is_neg_label, zero), one, zero);
+            auto mask = Ops::mul(act[(size_t)j], neg[(size_t)i]);
             total = Ops::add(total, Ops::mul(term, mask));
         }
     }
     auto loss = Ops::div(total, sc((float)C, input));
+    if (reduction == "none") return Ops::squeeze(loss, 1);
     return apply_reduction(loss, reduction);
 }
 
