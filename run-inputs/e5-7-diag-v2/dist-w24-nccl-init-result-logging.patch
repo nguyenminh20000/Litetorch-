@@ -1,0 +1,7 @@
+--- a/src/distributed/distributed.cpp
++++ b/src/distributed/distributed.cpp
+@@ -1343,3 +1343,4 @@
+     typedef int (*init_rank_t)(void**, int, ncclUniqueId, int);
+     int res = ((init_rank_t)comm_init_rank_fn)(&comm_, world_size, *reinterpret_cast<ncclUniqueId*>(unique_id), rank);
++    std::fprintf(stderr, "[dist-w24] NCCLBridge::init rank=%d ncclCommInitRank res=%d\n", rank, res);
+     if (res != 0) {
