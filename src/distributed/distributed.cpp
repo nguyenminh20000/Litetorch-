@@ -13,8 +13,11 @@
 #include <algorithm>
 #include <limits>
 #include <tuple>
+#include <vector>
+#include <string>
 
 #ifndef _WIN32
+#include <glob.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -1091,6 +1094,102 @@ NCCLBridge::~NCCLBridge() {
 }
 
 struct ncclUniqueId { char internal[128]; };
+static_assert(sizeof(ncclUniqueId) == 128, "dist-w13: ncclUniqueId must be 128 bytes (NCCL 2.x ABI)");
+
+#ifndef _WIN32
+struct DistW15NcclCand {
+    std::string path;
+    bool rccl;
+};
+
+static bool dist_w15_has_symbols(void* h) {
+    static const char* syms[] = {
+        "ncclGetUniqueId", "ncclCommInitRank", "ncclAllReduce", "ncclBroadcast",
+        "ncclAllGather", "ncclReduceScatter", "ncclCommDestroy"
+    };
+    for (const char* s : syms) {
+        if (!dlsym(h, s)) return false;
+    }
+    return true;
+}
+
+static int dist_w15_nccl_version(void* h) {
+    typedef int (*ver_fn_t)(int*);
+    ver_fn_t vf = (ver_fn_t)dlsym(h, "ncclGetVersion");
+    int v = -1;
+    if (vf && vf(&v) == 0) return v;
+    return -1;
+}
+
+static void dist_w15_glob_cands(std::vector<DistW15NcclCand>& out, const std::string& pattern) {
+    glob_t g;
+    std::memset(&g, 0, sizeof(g));
+    if (glob(pattern.c_str(), GLOB_NOSORT, nullptr, &g) == 0) {
+        for (size_t i = 0; i < g.gl_pathc; ++i) out.push_back({g.gl_pathv[i], false});
+    }
+    globfree(&g);
+}
+
+static std::vector<DistW15NcclCand> dist_w15_candidates() {
+    std::vector<DistW15NcclCand> c;
+    const char* roots[] = {"/usr/local/lib/python3*", "/usr/lib/python3*", "/opt/conda/lib/python3*"};
+    const char* kinds[] = {"dist-packages", "site-packages"};
+    for (const char* r : roots)
+        for (const char* k : kinds)
+            dist_w15_glob_cands(c, std::string(r) + "/" + k + "/nvidia/nccl/lib/libnccl.so.2");
+    const char* home = std::getenv("HOME");
+    if (home && *home)
+        dist_w15_glob_cands(c, std::string(home) + "/.local/lib/python3*/site-packages/nvidia/nccl/lib/libnccl.so.2");
+    c.push_back({"/usr/local/cuda/lib64/libnccl.so.2", false});
+    c.push_back({"/usr/lib/x86_64-linux-gnu/libnccl.so.2", false});
+    c.push_back({"libnccl.so.2", false});
+    c.push_back({"libnccl.so", false});
+    c.push_back({"librccl.so", true});
+    return c;
+}
+
+static void* dist_w15_select(std::string& tried) {
+    const char* env = std::getenv("LITETORCH_NCCL_LIB");
+    if (env && *env) {
+        dlerror();
+        void* h = dlopen(env, RTLD_NOW | RTLD_GLOBAL);
+        const char* derr = dlerror();
+        if (!h || !dist_w15_has_symbols(h)) {
+            if (h) dlclose(h);
+            std::string msg = std::string("[litetorch Error] NCCLBridge: LITETORCH_NCCL_LIB='") + env + "' is not a usable NCCL library";
+            if (derr && *derr) { msg += ": "; msg += derr; }
+            throw std::runtime_error(msg);
+        }
+        tried = env;
+        return h;
+    }
+    void* best = nullptr;
+    long best_score = -3;
+    std::vector<DistW15NcclCand> cands = dist_w15_candidates();
+    for (const DistW15NcclCand& cd : cands) {
+        if (!tried.empty()) tried += ", ";
+        tried += cd.path;
+        void* h = dlopen(cd.path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!h || !dist_w15_has_symbols(h)) { if (h) dlclose(h); continue; }
+        long score;
+        if (cd.rccl) {
+            score = -2;
+        } else {
+            int v = dist_w15_nccl_version(h);
+            if (v >= 0 && v / 10000 != 2) { dlclose(h); continue; }
+            score = v;
+        }
+        if (score > best_score) {
+            if (best) dlclose(best);
+            best = h;
+            best_score = score;
+        } else {
+            dlclose(h);
+        }
+    }
+    return best;
+}
+#endif
 
 void NCCLBridge::init(int rank, int world_size) {
     if (initialized_) return;
@@ -1101,12 +1200,14 @@ void NCCLBridge::init(int rank, int world_size) {
     initialized_ = true;
     return;
 #else
-    lib_handle_ = dlopen("libnccl.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!lib_handle_) {
-        lib_handle_ = dlopen("librccl.so", RTLD_NOW | RTLD_GLOBAL);
-    }
+    std::string dist_w15_tried;
+    lib_handle_ = dist_w15_select(dist_w15_tried);
 
     if (!lib_handle_) {
+        auto dist_w15_be = BackendDispatcher::get().get_backend();
+        if (dist_w15_be && dist_w15_be->is_available()) {
+            throw std::runtime_error(std::string("[litetorch Error] NCCLBridge: no usable libnccl found on a GPU-enabled host; tried: ") + dist_w15_tried + ". Set LITETORCH_NCCL_LIB to an explicit NCCL library path.");
+        }
         available_ = false;
         initialized_ = true;
         return;
@@ -1130,6 +1231,34 @@ void NCCLBridge::init(int rank, int world_size) {
         available_ = false;
         initialized_ = true;
         return;
+    }
+
+    {
+        Dl_info dist_w12_info;
+        const char* dist_w12_path = "unknown";
+        if (dladdr((void*)get_unique_id_fn, &dist_w12_info) && dist_w12_info.dli_fname)
+            dist_w12_path = dist_w12_info.dli_fname;
+        int dist_w12_ver = -1;
+        typedef int (*dist_w12_ver_t)(int*);
+        dist_w12_ver_t dist_w12_ver_fn = (dist_w12_ver_t)dlsym(lib_handle_, "ncclGetVersion");
+        if (dist_w12_ver_fn && dist_w12_ver_fn(&dist_w12_ver) != 0) dist_w12_ver = -1;
+        if (dist_w12_ver < 0)
+            std::fprintf(stderr, "[dist-w12] NCCLBridge::init rank=%d lib=%s nccl_version=unknown\n",
+                         rank, dist_w12_path);
+        else
+            std::fprintf(stderr, "[dist-w12] NCCLBridge::init rank=%d lib=%s nccl_version=%d.%d.%d\n",
+                         rank, dist_w12_path,
+                         dist_w12_ver / 10000, (dist_w12_ver / 100) % 100, dist_w12_ver % 100);
+        if (dist_w12_ver >= 0 && dist_w12_ver / 10000 != 2)
+            throw std::runtime_error("[litetorch Error] NCCLBridge: unsupported NCCL major version (dist-w13)");
+    }
+
+    {
+        int ndev = cuda::device_count();
+        if (ndev > 0 && rank >= 0) {
+            int want = rank % ndev;
+            if (cuda::current_device() != want) cuda::set_device(want);
+        }
     }
 
     char unique_id[128] = {0};
@@ -1197,9 +1326,27 @@ void NCCLBridge::init(int rank, int world_size) {
         }
     }
 
+    {
+        char dist_w12_head[33];
+        char dist_w12_tail[33];
+        for (int dist_w12_i = 0; dist_w12_i < 16; ++dist_w12_i) {
+            std::snprintf(dist_w12_head + 2 * dist_w12_i, 3, "%02x",
+                          (unsigned char)unique_id[dist_w12_i]);
+            std::snprintf(dist_w12_tail + 2 * dist_w12_i, 3, "%02x",
+                          (unsigned char)unique_id[112 + dist_w12_i]);
+        }
+        dist_w12_head[32] = 0;
+        dist_w12_tail[32] = 0;
+        std::fprintf(stderr, "[dist-w12] NCCLBridge::init rank=%d unique_id head=%s tail=%s\n",
+                     rank, dist_w12_head, dist_w12_tail);
+    }
+
     typedef int (*init_rank_t)(void**, int, ncclUniqueId, int);
     int res = ((init_rank_t)comm_init_rank_fn)(&comm_, world_size, *reinterpret_cast<ncclUniqueId*>(unique_id), rank);
     if (res != 0) {
+        comm_ = nullptr;
+        comm_destroy_fn = nullptr;
+        comm_get_async_error_fn = nullptr;
         dlclose(lib_handle_);
         lib_handle_ = nullptr;
         available_ = false;
