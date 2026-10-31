@@ -1670,7 +1670,7 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
             if (t->device.type == DeviceType::CPU) {
                 t->storage->ensure_cpu();
                 flat_buffer->storage->ensure_cpu();
-                std::memcpy(flat_buffer->raw_data_ptr() + offset, t->raw_data_ptr(), n * t->storage->element_size());
+                std::memcpy(flat_buffer->raw_data_ptr() + offset * t->storage->element_size(), t->raw_data_ptr(), n * t->storage->element_size());
             } else {
                 rt_gpu_copy(t->gpu_data(), flat_buffer->gpu_data(), n * t->storage->element_size(), 0, offset * t->storage->element_size());
             }
@@ -1691,7 +1691,7 @@ void all_reduce_bucketed(const std::vector<std::shared_ptr<Tensor>>& tensors, si
             if (t->device.type == DeviceType::CPU) {
                 t->storage->ensure_cpu();
                 flat_buffer->storage->ensure_cpu();
-                std::memcpy(t->raw_data_ptr(), flat_buffer->raw_data_ptr() + offset, n * t->storage->element_size());
+                std::memcpy(t->raw_data_ptr(), flat_buffer->raw_data_ptr() + offset * t->storage->element_size(), n * t->storage->element_size());
             } else {
                 rt_gpu_copy(flat_buffer->gpu_data(), t->gpu_data(), n * t->storage->element_size(), offset * t->storage->element_size(), 0);
             }
