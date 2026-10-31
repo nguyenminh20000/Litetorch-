@@ -245,7 +245,7 @@ CTCBatchResult ctc_forward_backward(const float* lp, int64_t T, int64_t C,
         B(T - 1, L - 1) = LP(T - 1, blank);
         if (S > 0) B(T - 1, L - 2) = LP(T - 1, ext[L - 2]);
         for (int64_t t = T - 2; t >= 0; --t) {
-            int64_t s_min = std::max<int64_t>(0, L - 2 * (T - 1 - t) - 1);
+            int64_t s_min = std::max<int64_t>(0, L - 2 * (T - 1 - t) - 2);
             for (int64_t s = L - 1; s >= s_min; --s) {
                 float v = B(t + 1, s);
                 if (s + 1 < L) v = logaddexp_f(v, B(t + 1, s + 1));
@@ -261,6 +261,9 @@ CTCBatchResult ctc_forward_backward(const float* lp, int64_t T, int64_t C,
                 r.grad[t * C + ext[s]] -= post;
             }
         }
+        for (int64_t t = 0; t < T; ++t)
+            for (int64_t c = 0; c < C; ++c)
+                r.grad[t * C + c] += std::exp(lp[t * C + c]);
     }
     return r;
 }
@@ -289,7 +292,7 @@ public:
         float out_scale = go.empty() ? 1.0f : go[0];
         for (int64_t n = 0; n < N; ++n) {
             float scale = (reduction == "none") ? (n < (int64_t)go.size() ? go[n] : 1.0f) : out_scale;
-            if (reduction == "mean") scale /= static_cast<float>(N);
+            if (reduction == "mean") scale /= static_cast<float>(N) * static_cast<float>(target_lengths[n] > 0 ? target_lengths[n] : 1);
             const auto& br = batch_results[n];
             if (br.is_inf && zero_infinity) continue;
             for (int64_t t = 0; t < input_lengths[n]; ++t)
@@ -359,8 +362,13 @@ std::shared_ptr<Tensor> CTCLoss::forward(std::shared_ptr<Tensor> log_probs, std:
         out = Tensor::from_vector(losses, {N}, log_probs->device, out_requires_grad, DataType::FP32);
     } else {
         float total = 0.0f;
-        for (float v : losses) total += v;
-        if (reduction == "mean") total /= static_cast<float>(N);
+        if (reduction == "mean") {
+            for (int64_t n = 0; n < N; ++n)
+                total += losses[n] / static_cast<float>(tl[n] > 0 ? tl[n] : 1);
+            total /= static_cast<float>(N);
+        } else {
+            for (float v : losses) total += v;
+        }
         out = Tensor::from_vector({total}, {1}, log_probs->device, out_requires_grad, DataType::FP32);
     }
 

@@ -150,7 +150,7 @@ void bind_nn_layers(py::module_& m) {
             .def_readwrite("margin", &nn::MarginRankingLoss::margin)
             .def_readwrite("reduction", &nn::MarginRankingLoss::reduction);
         py::class_<nn::MultiMarginLoss, nn::Module, std::shared_ptr<nn::MultiMarginLoss>>(nn_mod, "MultiMarginLoss")
-            .def(py::init<int, float, const std::string&>(), py::arg("p") = 1, py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
+            .def(py::init<double, float, const std::string&>(), py::arg("p") = 1, py::arg("margin") = 1.0f, py::arg("reduction") = "mean")
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::MultiMarginLoss::forward))
             .def_readwrite("p", &nn::MultiMarginLoss::p)

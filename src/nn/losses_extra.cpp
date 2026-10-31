@@ -36,11 +36,10 @@ std::shared_ptr<Tensor> HingeEmbeddingLoss::forward(std::shared_ptr<Tensor> inpu
     auto m = sc(margin, input);
     auto one = sc(1.0f, input);
     auto is_pos = Ops::eq(target, one);
-    auto pos_loss = Ops::where(Ops::gt(Ops::sub(m, input), sc(0.0f, input)),
-                               Ops::sub(m, input), Ops::mul(input, sc(0.0f, input)));
-    auto neg_loss = Ops::where(Ops::gt(Ops::add(m, input), sc(0.0f, input)),
-                               Ops::add(m, input), Ops::mul(input, sc(0.0f, input)));
-    auto loss = Ops::where(is_pos, pos_loss, neg_loss);
+    auto neg_candidate = Ops::sub(m, input);
+    auto neg_loss = Ops::where(Ops::gt(neg_candidate, sc(0.0f, input)),
+                               neg_candidate, Ops::mul(input, sc(0.0f, input)));
+    auto loss = Ops::where(is_pos, input, neg_loss);
     return apply_reduction(loss, reduction);
 }
 
@@ -93,8 +92,11 @@ std::shared_ptr<Tensor> MarginRankingLoss::forward(std::shared_ptr<Tensor> input
     return apply_reduction(loss, reduction);
 }
 
-MultiMarginLoss::MultiMarginLoss(int p, float margin, const std::string& reduction)
-    : p(p), margin(margin), reduction(reduction) { check_red(reduction); }
+MultiMarginLoss::MultiMarginLoss(double p, float margin, const std::string& reduction)
+    : p(p), margin(margin), reduction(reduction) {
+    check_red(reduction);
+    if (p != 1 && p != 2) throw std::invalid_argument("[litetorch Error] MultiMarginLoss p must be 1 or 2");
+}
 
 std::shared_ptr<Tensor> MultiMarginLoss::forward(std::shared_ptr<Tensor>) {
     throw std::runtime_error("MultiMarginLoss requires input and target");
@@ -102,22 +104,24 @@ std::shared_ptr<Tensor> MultiMarginLoss::forward(std::shared_ptr<Tensor>) {
 
 std::shared_ptr<Tensor> MultiMarginLoss::forward(std::shared_ptr<Tensor> input,
                                                   std::shared_ptr<Tensor> target) {
+    if (p != 1 && p != 2) throw std::invalid_argument("[litetorch Error] MultiMarginLoss p must be 1 or 2");
     auto shape = input->shape;
     int64_t C = shape[1];
     auto m = sc(margin, input);
     auto zero = sc(0.0f, input);
-    auto total = Ops::mul(input, zero);
+    auto total = Ops::mul(Ops::narrow(input, 1, 0, 1), zero);
+    auto t2d = Ops::unsqueeze(target, 1);
     for (int64_t i = 0; i < C; i++) {
         auto xi = Ops::narrow(input, 1, i, 1);
-        auto is_target = Ops::eq(Ops::narrow(target, 0, 0, 1), sc((float)i, target));
-        auto t2d = Ops::unsqueeze(target, 1);
+        auto is_target = Ops::eq(t2d, sc((float)i, target));
         auto diff = Ops::sub(Ops::add(m, xi), Ops::gather(input, 1, t2d));
         auto term = Ops::where(Ops::gt(diff, zero), diff, zero);
         if (p != 1) term = Ops::pow(term, (float)p);
         auto mask = Ops::where(is_target, zero, sc(1.0f, input));
         total = Ops::add(total, Ops::mul(term, mask));
     }
-    auto loss = Ops::div(total, sc((float)(C - 1), input));
+    auto loss = Ops::div(total, sc((float)C, input));
+    if (reduction == "none") return Ops::squeeze(loss, 1);
     return apply_reduction(loss, reduction);
 }
 

@@ -1325,10 +1325,10 @@ public:
 
 class MultiMarginLoss : public Module {
 public:
-    int p;
+    double p;
     float margin;
     std::string reduction;
-    MultiMarginLoss(int p = 1, float margin = 1.0f, const std::string& reduction = "mean");
+    MultiMarginLoss(double p = 1, float margin = 1.0f, const std::string& reduction = "mean");
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> target);
 };
