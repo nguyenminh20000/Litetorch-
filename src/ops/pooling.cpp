@@ -359,8 +359,8 @@ std::shared_ptr<Tensor> max_pool2d(std::shared_ptr<Tensor> input, int kernel_siz
         auto node = std::make_shared<MaxPool2dNode>(kernel_size, stride, padding);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
-        node->saved_tensors = { input, save_indices, out };
-        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
+        node->saved_tensors = { input, save_indices };
+        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -462,8 +462,8 @@ std::shared_ptr<Tensor> max_pool3d(std::shared_ptr<Tensor> input, int kernel_siz
         auto node = std::make_shared<MaxPool3dNode>(kernel_size, stride, padding);
         node->inputs = { {input, true} };
         node->next_nodes = { input->creator };
-        node->saved_tensors = { input, save_indices, out };
-        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0), (out ? out->_version() : 0)};
+        node->saved_tensors = { input, save_indices };
+        node->saved_versions = {(input ? input->_version() : 0), (save_indices ? save_indices->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

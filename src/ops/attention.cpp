@@ -40,8 +40,8 @@ public:
 
         float scale = 1.0f / std::sqrt(static_cast<float>(D));
 
-        if (saved_tensors.size() <= 3 || !saved_tensors[3]) throw std::runtime_error("[litetorch Error] FlashAttention backward: saved output tensor missing");
-        auto out_shared = saved_tensors[3];
+        auto out_shared = output.lock();
+        if (!out_shared) throw std::runtime_error("[litetorch Error] FlashAttention backward: saved output tensor missing");
         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
 
@@ -59,8 +59,8 @@ public:
             storages.push_back(grad_k->storage);
             storages.push_back(grad_v->storage);
             std::shared_ptr<Tensor> saved_lse;
-            if (saved_tensors.size() > 4 && saved_tensors[4]) {
-                saved_lse = saved_tensors[4]->is_contiguous() ? saved_tensors[4] : saved_tensors[4]->contiguous();
+            if (saved_tensors.size() > 3 && saved_tensors[3]) {
+                saved_lse = saved_tensors[3]->is_contiguous() ? saved_tensors[3] : saved_tensors[3]->contiguous();
                 storages.push_back(saved_lse->storage);
             }
             StorageUseGuard guard(storages);
@@ -412,8 +412,8 @@ std::shared_ptr<Tensor> flash_attention(std::shared_ptr<Tensor> q, std::shared_p
         auto node = std::make_shared<FlashAttentionNode>(causal);
         node->inputs = { {q, q->requires_grad}, {k, k->requires_grad}, {v, v->requires_grad} };
         node->next_nodes = { q->creator, k->creator, v->creator };
-        node->saved_tensors = { q_c, k_c, v_c, out };
-        node->saved_versions = {(q_c ? q_c->_version() : 0), (k_c ? k_c->_version() : 0), (v_c ? v_c->_version() : 0), (out ? out->_version() : 0)};
+        node->saved_tensors = { q_c, k_c, v_c };
+        node->saved_versions = {(q_c ? q_c->_version() : 0), (k_c ? k_c->_version() : 0), (v_c ? v_c->_version() : 0)};
         if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
         node->output = out;
         out->creator = node;
@@ -724,7 +724,7 @@ public:
         auto q = saved_tensors[1];
         auto k = saved_tensors[2];
         auto v = saved_tensors[3];
-        std::shared_ptr<Tensor> saved_lse = saved_tensors.size() > 5 ? saved_tensors[5] : nullptr;
+        std::shared_ptr<Tensor> saved_lse = saved_tensors.size() > 4 ? saved_tensors[4] : nullptr;
         int64_t B = q->shape[0];
         int64_t H = q->shape[1];
         int64_t T = q->shape[2];
@@ -732,8 +732,8 @@ public:
         int64_t H_kv = k->shape[1];
         int64_t Tk = k->shape[2];
         float scale = 1.0f / std::sqrt(static_cast<float>(D));
-        if (saved_tensors.size() <= 4 || !saved_tensors[4]) throw std::runtime_error("[litetorch Error] FlashAttentionQKV backward: saved output tensor missing");
-        auto out_shared = saved_tensors[4];
+        auto out_shared = output.lock();
+        if (!out_shared) throw std::runtime_error("[litetorch Error] FlashAttentionQKV backward: saved output tensor missing");
         auto out_c = out_shared->is_contiguous() ? out_shared : out_shared->contiguous();
         auto gout_c = grad_output->is_contiguous() ? grad_output : grad_output->contiguous();
         auto grad_q = Tensor::create(q->shape, q->device, false, q->dtype);
@@ -842,8 +842,8 @@ std::shared_ptr<Tensor> flash_attention_qkv(std::shared_ptr<Tensor> qkv, int64_t
         auto node = std::make_shared<FlashAttentionQKVNode>(num_heads, causal);
         node->inputs = { {qkv, true} };
         node->next_nodes = { qkv->creator };
-        node->saved_tensors = { qkv_c, q, k, v, out };
-        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0), (q ? q->_version() : 0), (k ? k->_version() : 0), (v ? v->_version() : 0), (out ? out->_version() : 0)};
+        node->saved_tensors = { qkv_c, q, k, v };
+        node->saved_versions = {(qkv_c ? qkv_c->_version() : 0), (q ? q->_version() : 0), (k ? k->_version() : 0), (v ? v->_version() : 0)};
         if (lse_saved && attn_lse) { node->saved_tensors.push_back(attn_lse); node->saved_versions.push_back(attn_lse->_version()); }
         node->output = out;
         out->creator = node;

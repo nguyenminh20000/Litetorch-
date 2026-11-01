@@ -88,7 +88,7 @@ public:
         auto input = saved_tensors[0];
         auto weight = saved_tensors[1];
         size_t n_saved = saved_tensors.size();
-        size_t n_params = apply_relu ? n_saved - 1 : n_saved;
+        size_t n_params = n_saved;
         auto bias = n_params > 2 ? saved_tensors[2] : nullptr;
 
         std::shared_ptr<Tensor> gout = grad_output;
@@ -96,7 +96,7 @@ public:
         std::shared_ptr<Tensor> relu_gout_c;
         std::shared_ptr<Tensor> relu_masked;
         if (apply_relu) {
-            auto out = saved_tensors.back();
+            auto out = output.lock();
             relu_out_c = out->is_contiguous() ? out : out->contiguous();
             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
             DataType rdt = relu_gout_c->dtype;
@@ -1010,10 +1010,6 @@ static std::shared_ptr<Tensor> conv2d_with_relu(std::shared_ptr<Tensor> input, s
             node->next_nodes.push_back(bias->creator);
             node->saved_tensors.push_back(bias);
             node->saved_versions.push_back(bias->_version());
-        }
-        if (apply_relu) {
-            node->saved_tensors.push_back(out);
-            node->saved_versions.push_back(out->_version());
         }
         node->output = out;
         out->creator = node;

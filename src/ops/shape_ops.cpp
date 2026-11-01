@@ -602,7 +602,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        auto out = saved_tensors[0];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] LogSoftmax backward: saved output tensor missing");
+            out = Ops::log_softmax(saved_tensors[0], dim);
+        }
         auto s = sum(grad_output, dim, true);
         return { sub(grad_output, mul(exp(out), s)) };
     }
@@ -649,8 +653,8 @@ std::shared_ptr<Tensor> log_softmax(std::shared_ptr<Tensor> a, int64_t dim) {
         auto node = std::make_shared<LogSoftmaxNode>(d);
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = { out };
-        node->saved_versions = {(out ? out->_version() : 0)};
+        node->saved_tensors = {a};
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;

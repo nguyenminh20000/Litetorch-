@@ -1208,8 +1208,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sqrt backward: saved output tensor missing");
-        auto out = saved_tensors[0];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Sqrt backward: saved output tensor missing");
+            out = Ops::sqrt(saved_tensors[0]);
+        }
         auto two_t = Tensor::from_vector({2.0f}, {1}, out->device, false, out->dtype);
         auto grad_input = div(grad_output, mul(two_t, out));
         return { grad_input };
@@ -1262,8 +1265,8 @@ std::shared_ptr<Tensor> sqrt(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<SqrtNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {out};
-        node->saved_versions = {(out ? out->_version() : 0)};
+        node->saved_tensors = {a};
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -1277,8 +1280,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Exp backward: saved output tensor missing");
-        auto out = saved_tensors[0];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Exp backward: saved output tensor missing");
+            out = Ops::exp(saved_tensors[0]);
+        }
         auto grad_input = mul(grad_output, out);
         return { grad_input };
     }
@@ -1330,8 +1336,8 @@ std::shared_ptr<Tensor> exp(std::shared_ptr<Tensor> a) {
         auto node = std::make_shared<ExpNode>();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = {out};
-        node->saved_versions = {(out ? out->_version() : 0)};
+        node->saved_tensors = {a};
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2679,8 +2685,8 @@ std::shared_ptr<Tensor> unary_fp32_cpu(std::shared_ptr<Tensor> a, const char* op
         auto node = make_node();
         node->inputs = { {a, true} };
         node->next_nodes = { a->creator };
-        node->saved_tensors = { a, out };
-        node->saved_versions = {(a ? a->_version() : 0), (out ? out->_version() : 0)};
+        node->saved_tensors = { a };
+        node->saved_versions = {(a ? a->_version() : 0)};
         node->output = out;
         out->creator = node;
         out->requires_grad = true;
@@ -2748,8 +2754,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Rsqrt backward: saved output tensor missing");
-        auto out = saved_tensors[1];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Rsqrt backward: saved output tensor missing");
+            out = Ops::rsqrt(saved_tensors[0]);
+        }
         auto y3 = mul(mul(out, out), out);
         return { mul(grad_output, mul(scalar_tensor(-0.5f, out->device), y3)) };
     }
@@ -2761,8 +2770,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Tan backward: saved output tensor missing");
-        auto out = saved_tensors[1];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Tan backward: saved output tensor missing");
+            out = Ops::tan(saved_tensors[0]);
+        }
         auto sec2 = add(scalar_tensor(1.0f, out->device), mul(out, out));
         return { mul(grad_output, sec2) };
     }
@@ -2774,8 +2786,11 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
         std::unique_ptr<NoGradGuard> ng;
         if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
-        if (saved_tensors.size() <= 1 || !saved_tensors[1]) throw std::runtime_error("[litetorch Error] Reciprocal backward: saved output tensor missing");
-        auto out = saved_tensors[1];
+        auto out = output.lock();
+        if (!out) {
+            if (saved_tensors.size() <= 0 || !saved_tensors[0]) throw std::runtime_error("[litetorch Error] Reciprocal backward: saved output tensor missing");
+            out = Ops::reciprocal(saved_tensors[0]);
+        }
         return { mul(grad_output, neg(mul(out, out))) };
     }
 };
