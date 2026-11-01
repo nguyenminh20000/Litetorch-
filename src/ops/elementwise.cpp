@@ -107,7 +107,7 @@ std::vector<int64_t> broadcast_shapes(const std::vector<int64_t>& shape_a, const
         if (dim_a != dim_b && dim_a != 1 && dim_b != 1) {
             throw std::runtime_error("[litetorch Error] Incompatible shapes for broadcasting");
         }
-        result[max_ndims - 1 - i] = std::max(dim_a, dim_b);
+        result[max_ndims - 1 - i] = (dim_a == 1) ? dim_b : dim_a;
     }
     return result;
 }
