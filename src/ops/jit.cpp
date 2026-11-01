@@ -420,6 +420,9 @@ static std::shared_ptr<JITVar> trace_tensor(
     }
 
     std::shared_ptr<JITVar> res = nullptr;
+    if (t->_version() != 0) {
+        throw std::runtime_error("[litetorch Error] Tracer: an intermediate tensor was mutated in place during tracing; its recorded graph no longer matches its values. Traced functions must be pure functions of their inputs.");
+    }
     auto lock_input = [&](size_t i) {
         auto t = creator->inputs[i].tensor.lock();
         if (!t) {
@@ -485,8 +488,10 @@ std::shared_ptr<JITFunction> Tracer::trace(
 ) {
     RequireGradRestore restore;
     restore.inputs = inputs;
+    std::vector<uint64_t> input_versions;
     for (auto& inp : inputs) {
         restore.original.push_back(inp->requires_grad);
+        input_versions.push_back(inp->_version());
         inp->requires_grad = true;
     }
 
@@ -495,6 +500,11 @@ std::shared_ptr<JITFunction> Tracer::trace(
     {
         TraceScope scope;
         output = func(inputs);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            if (inputs[i]->_version() != input_versions[i]) {
+                throw std::runtime_error("[litetorch Error] Tracer: input tensor " + std::to_string(i) + " was mutated in place during tracing; traced functions must be pure functions of their inputs.");
+            }
+        }
     }
 
     if (get_rng_state() != rng_before) {
