@@ -596,7 +596,7 @@ dưới đây là REQUIRES-GPU: nó là hình dạng của các ví dụ CPU đ�
 chứng với thiết bị đổi sang GPU, và nó phải chạy trên Kaggle (thuộc
 QA) trước khi bất kỳ khẳng định nào được đưa ra về nó.
 
-<!-- ex: id=E5-7 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=E5-7 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-11-01@bd27e3e3 -->
 ```python skip-run
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")

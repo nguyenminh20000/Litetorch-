@@ -590,7 +590,7 @@ below is REQUIRES-GPU: it is the shape of the verified CPU examples
 with the device changed, and it must run on Kaggle (QA-owned) before
 any claim is made about it.
 
-<!-- ex: id=E5-7 device=gpu backend=cuda runtime=~? torch-parity=n/a status=unverified -->
+<!-- ex: id=E5-7 device=gpu backend=cuda runtime=~? torch-parity=n/a status=verified-2026-11-01@bd27e3e3 -->
 ```python skip-run
 import sys
 sys.path.insert(0, "/home/hatch/workspace/framework/core/litetorch-d3/python")
