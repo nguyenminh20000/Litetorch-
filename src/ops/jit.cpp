@@ -14,6 +14,28 @@
 
 namespace litetorch {
 
+thread_local bool g_tracing_active = false;
+
+bool Tracer::tracing_active() {
+    return g_tracing_active;
+}
+
+struct TraceScope {
+    bool previous;
+    TraceScope() : previous(g_tracing_active) { g_tracing_active = true; }
+    ~TraceScope() { g_tracing_active = previous; }
+};
+
+struct RequireGradRestore {
+    std::vector<std::shared_ptr<Tensor>> inputs;
+    std::vector<bool> original;
+    ~RequireGradRestore() {
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            inputs[i]->requires_grad = original[i];
+        }
+    }
+};
+
 static float evaluate_cpu(std::shared_ptr<JITVar> var, const std::unordered_map<std::string, float>& env) {
     if (var->op == JITVar::OpType::INPUT) return env.at(var->name);
     if (var->op == JITVar::OpType::CONST) return var->val;
@@ -461,21 +483,27 @@ std::shared_ptr<JITFunction> Tracer::trace(
     std::function<std::shared_ptr<Tensor>(const std::vector<std::shared_ptr<Tensor>>&)> func,
     const std::string& name
 ) {
-    std::vector<bool> original_requires_grad;
+    RequireGradRestore restore;
+    restore.inputs = inputs;
     for (auto& inp : inputs) {
-        original_requires_grad.push_back(inp->requires_grad);
+        restore.original.push_back(inp->requires_grad);
         inp->requires_grad = true;
     }
 
-    auto output = func(inputs);
+    std::string rng_before = get_rng_state();
+    std::shared_ptr<Tensor> output;
+    {
+        TraceScope scope;
+        output = func(inputs);
+    }
+
+    if (get_rng_state() != rng_before) {
+        throw std::runtime_error("[litetorch Error] Tracer RNG error: the global RNG state advanced during Tracer::trace; stateful random draws inside a traced function would be baked as constants. Move random draws outside trace or pass them as explicit inputs.");
+    }
 
     std::vector<std::shared_ptr<JITVar>> input_vars;
     std::unordered_map<Tensor*, std::shared_ptr<JITVar>> tensor_cache;
     auto expr = trace_tensor(output, inputs, input_vars, tensor_cache);
-
-    for (size_t i = 0; i < inputs.size(); ++i) {
-        inputs[i]->requires_grad = original_requires_grad[i];
-    }
 
     std::vector<std::shared_ptr<JITVar>> ordered_input_vars;
     for (size_t i = 0; i < inputs.size(); ++i) {

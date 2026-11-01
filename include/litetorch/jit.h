@@ -161,6 +161,8 @@ public:
 
 class Tracer {
 public:
+    static bool tracing_active();
+
     static std::shared_ptr<JITFunction> trace(
         const std::vector<std::shared_ptr<Tensor>>& inputs,
         std::function<std::shared_ptr<Tensor>(const std::vector<std::shared_ptr<Tensor>>&)> func,

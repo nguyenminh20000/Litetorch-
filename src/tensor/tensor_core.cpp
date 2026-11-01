@@ -1,4 +1,5 @@
 #include "litetorch/tensor.h"
+#include "litetorch/jit.h"
 #include "litetorch/memory_manager.h"
 #include "litetorch/autograd.h"
 #include "litetorch/ops.h"
@@ -1611,6 +1612,9 @@ void Tensor::zero_grad() {
 }
 
 float Tensor::item() const {
+    if (Tracer::tracing_active() && requires_grad) {
+        throw std::runtime_error("[litetorch Error] Tracer concretization error: item() on a traced tensor during Tracer::trace is forbidden; value-dependent control flow cannot be traced. Rewrite the traced function without reading tensor values.");
+    }
     if (numel() != 1) {
         throw std::runtime_error("item() can only be called on 1-element tensors");
     }
@@ -1623,6 +1627,9 @@ float Tensor::item() const {
 }
 
 std::vector<float> Tensor::to_vector() const {
+    if (Tracer::tracing_active() && requires_grad) {
+        throw std::runtime_error("[litetorch Error] Tracer concretization error: to_vector() on a traced tensor during Tracer::trace is forbidden; value-dependent control flow cannot be traced. Rewrite the traced function without reading tensor values.");
+    }
     if (dtype != DataType::FP32) {
         auto self_non_const = const_cast<Tensor*>(this)->shared_from_this();
         return self_non_const->cast(DataType::FP32)->to_vector();

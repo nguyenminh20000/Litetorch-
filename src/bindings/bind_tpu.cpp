@@ -1,4 +1,5 @@
 #include "bindings_common.h"
+#include "litetorch/jit.h"
 
 void bind_tpu(py::module_& m) {
         auto tpu_mod = m.def_submodule("tpu");
@@ -163,6 +164,9 @@ void bind_tpu(py::module_& m) {
             .def("int", &Tensor::to_int)
             .def("type_as", &Tensor::type_as, py::arg("other"))
             .def("numpy", [](Tensor& self) -> py::object {
+                if (Tracer::tracing_active() && self.requires_grad) {
+                    throw std::runtime_error("[litetorch Error] Tracer concretization error: numpy() on a traced tensor during Tracer::trace is forbidden; value-dependent control flow cannot be traced. Rewrite the traced function without reading tensor values.");
+                }
                 if (self.device.type != DeviceType::CPU) {
                     throw std::runtime_error("[litetorch Error] numpy(): cannot convert non-CPU tensor to numpy; call .cpu() first");
                 }
@@ -207,6 +211,9 @@ void bind_tpu(py::module_& m) {
                 return arr;
             })
             .def("tolist", [](Tensor& self) -> py::object {
+                if (Tracer::tracing_active() && self.requires_grad) {
+                    throw std::runtime_error("[litetorch Error] Tracer concretization error: tolist() on a traced tensor during Tracer::trace is forbidden; value-dependent control flow cannot be traced. Rewrite the traced function without reading tensor values.");
+                }
                 std::shared_ptr<Tensor> t = self.shared_from_this();
                 if (t->device.type != DeviceType::CPU) {
                     t = t->to(Device(DeviceType::CPU, 0));
