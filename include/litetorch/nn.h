@@ -479,6 +479,8 @@ public:
     int embed_dim;
     int num_heads;
     int dim_feedforward;
+    std::string activation;
+    bool batch_first;
 
     std::shared_ptr<MultiHeadAttention> self_attn;
     std::shared_ptr<MultiHeadAttention> multihead_attn;
@@ -488,7 +490,8 @@ public:
     std::shared_ptr<LayerNorm> norm2;
     std::shared_ptr<LayerNorm> norm3;
 
-    TransformerDecoderLayer(int embed_dim, int num_heads, int dim_feedforward = 2048);
+    TransformerDecoderLayer(int embed_dim, int num_heads, int dim_feedforward = 2048,
+                            const std::string& activation = "relu", bool batch_first = false);
 
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> tgt, std::shared_ptr<Tensor> memory);

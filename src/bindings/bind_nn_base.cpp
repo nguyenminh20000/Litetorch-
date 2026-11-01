@@ -403,7 +403,7 @@ void bind_nn_base(py::module_& m) {
             .def_readwrite("batch_first", &nn::MultiHeadAttention::batch_first);
 
         py::class_<nn::TransformerDecoderLayer, nn::Module, std::shared_ptr<nn::TransformerDecoderLayer>>(nn_mod, "TransformerDecoderLayer")
-            .def(py::init<int, int, int>(), py::arg("embed_dim"), py::arg("num_heads"), py::arg("dim_feedforward") = 2048)
+            .def(py::init<int, int, int, const std::string&, bool>(), py::arg("embed_dim"), py::arg("num_heads"), py::arg("dim_feedforward") = 2048, py::arg("activation") = "relu", py::arg("batch_first") = false)
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>>(&nn::TransformerDecoderLayer::forward))
             .def("forward", py::overload_cast<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>(&nn::TransformerDecoderLayer::forward))
             .def("__call__", [](nn::TransformerDecoderLayer& self, std::shared_ptr<Tensor> input) {

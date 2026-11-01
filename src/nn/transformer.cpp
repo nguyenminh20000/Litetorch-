@@ -4,10 +4,14 @@
 namespace litetorch {
 namespace nn {
 
-TransformerDecoderLayer::TransformerDecoderLayer(int embed_dim, int num_heads, int dim_feedforward)
-    : embed_dim(embed_dim), num_heads(num_heads), dim_feedforward(dim_feedforward) {
-    self_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, true);
-    multihead_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, true);
+TransformerDecoderLayer::TransformerDecoderLayer(int embed_dim, int num_heads, int dim_feedforward,
+                                                 const std::string& activation, bool batch_first)
+    : embed_dim(embed_dim), num_heads(num_heads), dim_feedforward(dim_feedforward),
+      activation(activation), batch_first(batch_first) {
+    if (activation != "relu" && activation != "gelu")
+        throw std::runtime_error("[litetorch Error] TransformerDecoderLayer: activation must be relu or gelu");
+    self_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, batch_first);
+    multihead_attn = std::make_shared<MultiHeadAttention>(embed_dim, num_heads, 0.0, true, -1, -1, batch_first);
     linear1 = std::make_shared<Linear>(embed_dim, dim_feedforward);
     linear2 = std::make_shared<Linear>(dim_feedforward, embed_dim);
     norm1 = std::make_shared<LayerNorm>(std::vector<int64_t>{embed_dim});
@@ -32,7 +36,7 @@ std::shared_ptr<Tensor> TransformerDecoderLayer::forward(std::shared_ptr<Tensor>
     }
 
     auto ffn1 = linear1->forward(x2);
-    auto act = Ops::gelu(ffn1);
+    auto act = activation == "relu" ? Ops::relu(ffn1) : Ops::gelu(ffn1);
     auto ffn2 = linear2->forward(act);
     auto out = Ops::fused_add_layernorm(x2, ffn2, norm3->normalized_shape, norm3->weight, norm3->bias, norm3->eps);
 
