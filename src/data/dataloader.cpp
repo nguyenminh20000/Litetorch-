@@ -1,5 +1,6 @@
 #include "litetorch/data.h"
 #include "litetorch/ops.h"
+#include <cxxabi.h>
 #include <pybind11/pybind11.h>
 #include <random>
 #include <algorithm>
@@ -16,7 +17,7 @@ struct GilHold {
     PyGILState_STATE state;
     bool held = false;
     explicit GilHold(bool want) {
-        if (want) {
+        if (want && Py_IsInitialized()) {
             state = PyGILState_Ensure();
             held = true;
         }
@@ -202,6 +203,11 @@ void DataLoader::worker_loop() {
 
         try {
             build_batch(b, gen);
+        } catch (__cxxabiv1::__forced_unwind&) {
+            std::lock_guard<std::mutex> elock(queue_mutex);
+            in_flight_--;
+            cv_cond.notify_all();
+            throw;
         } catch (...) {
             std::lock_guard<std::mutex> elock(queue_mutex);
             if (!worker_error_) worker_error_ = std::current_exception();
@@ -222,6 +228,9 @@ void DataLoader::build_batch(size_t batch_no, size_t gen) {
         from_python = collate_from_python_;
     }
     GilHold hold(collate || from_python || dataset->is_python_backed());
+    if (worker_stop.load()) {
+        return;
+    }
 
     size_t start = batch_no * batch_size;
     size_t end = std::min(start + batch_size, indices.size());

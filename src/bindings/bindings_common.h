@@ -176,6 +176,10 @@ public:
     using ItemType = std::pair<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>;
 
     size_t size() override {
+        if (!Py_IsInitialized()) {
+            throw std::runtime_error("[litetorch Error] Dataset::size called after Python interpreter shutdown");
+        }
+        PYBIND11_OVERRIDE_IMPL(size_t, data::Dataset, "__len__");
         PYBIND11_OVERRIDE_PURE(
             size_t,
             data::Dataset,
@@ -184,6 +188,10 @@ public:
     }
 
     ItemType get(size_t index) override {
+        if (!Py_IsInitialized()) {
+            throw std::runtime_error("[litetorch Error] Dataset::get called after Python interpreter shutdown");
+        }
+        PYBIND11_OVERRIDE_IMPL(ItemType, data::Dataset, "__getitem__", index);
         PYBIND11_OVERRIDE_PURE(
             ItemType,
             data::Dataset,
