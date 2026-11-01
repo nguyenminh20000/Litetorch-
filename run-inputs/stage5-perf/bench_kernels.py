@@ -20,14 +20,30 @@ except Exception as e:
     LT_ERR = str(e)
 
 
-def lt_fn(*names):
+def lt_ops_attr(name):
     if not HAVE_LT:
         return None
-    for n in names:
-        f = getattr(LT, n, None)
-        if callable(f):
-            return f
-    return None
+    ops = getattr(LT, "Ops", None)
+    if ops is None:
+        return None
+    f = getattr(ops, name, None)
+    return f if callable(f) else None
+
+
+def lt_device(device):
+    return LT.Device(device)
+
+
+def lt_randn(shape, device):
+    return LT.Tensor.randn(shape, lt_device(device))
+
+
+def lt_zeros(shape, device, dtype):
+    return LT.Tensor.zeros(shape, lt_device(device), False, dtype)
+
+
+def lt_dtype(name):
+    return getattr(LT.DataType, name)
 
 
 def sync(device):
@@ -86,14 +102,13 @@ def bench_matmul(args, device):
         out["torch"] = time_fn(lambda: torch.matmul(a, b), device, args.warmup, args.iters)
     else:
         out["torch"] = skip("torch not importable: " + TORCH_ERR)
-    mm = lt_fn("matmul", "mm", "mat_mul")
-    mk = lt_fn("tensor", "from_torch", "from_numpy", "Tensor")
-    if mm is None or mk is None:
-        out["litetorch"] = skip("litetorch matmul/tensor constructor not found in module")
+    mm = lt_ops_attr("matmul")
+    if mm is None:
+        out["litetorch"] = skip("LT.Ops.matmul not found in module")
     else:
         try:
-            la = mk(a) if HAVE_TORCH else None
-            lb = mk(b) if HAVE_TORCH else None
+            la = lt_randn([1024, 1024], device)
+            lb = lt_randn([1024, 1024], device)
             out["litetorch"] = time_fn(lambda: mm(la, lb), device, args.warmup, args.iters)
         except Exception as e:
             out["litetorch"] = skip("litetorch matmul failed: " + str(e))
@@ -110,13 +125,19 @@ def bench_ew_add(args, device, dtype):
         out["torch"] = time_fn(lambda: torch.add(a, b), device, args.warmup, args.iters)
     else:
         out["torch"] = skip("torch not importable")
-    add = lt_fn("add", "ew_add", "elementwise_add")
-    mk = lt_fn("tensor", "from_torch", "from_numpy", "Tensor")
-    if add is None or mk is None or not HAVE_TORCH:
-        out["litetorch"] = skip("litetorch add/tensor constructor not found")
+    add = lt_ops_attr("add")
+    if add is None:
+        out["litetorch"] = skip("LT.Ops.add not found in module")
+    elif dtype != "fp32" and device != "cpu":
+        out["litetorch"] = skip("no GPU integer add kernel: Ops.add requires CPU tensors for integer dtypes and otherwise falls back through FP32 cast to CPU, so a CUDA timing would measure CPU work under a CUDA label")
     else:
         try:
-            la, lb = mk(a), mk(b)
+            if dtype == "fp32":
+                la = lt_randn([n], device)
+                lb = lt_randn([n], device)
+            else:
+                la = lt_zeros([n], device, lt_dtype(dtype.upper()))
+                lb = lt_zeros([n], device, lt_dtype(dtype.upper()))
             out["litetorch"] = time_fn(lambda: add(la, lb), device, args.warmup, args.iters)
         except Exception as e:
             out["litetorch"] = skip("litetorch add failed: " + str(e))
@@ -133,14 +154,14 @@ def bench_conv2d(args, device):
         out["torch"] = time_fn(lambda: F.conv2d(x, w, padding=1), device, args.warmup, args.iters)
     else:
         out["torch"] = skip("torch not importable")
-    conv = lt_fn("conv2d", "conv_2d")
-    mk = lt_fn("tensor", "from_torch", "from_numpy", "Tensor")
-    if conv is None or mk is None or not HAVE_TORCH:
-        out["litetorch"] = skip("litetorch conv2d/tensor constructor not found")
+    conv = lt_ops_attr("conv2d")
+    if conv is None:
+        out["litetorch"] = skip("LT.Ops.conv2d not found in module")
     else:
         try:
-            lx, lw = mk(x), mk(w)
-            out["litetorch"] = time_fn(lambda: conv(lx, lw, 1), device, args.warmup, args.iters)
+            lx = lt_randn([3, 64, 32, 32], device)
+            lw = lt_randn([64, 64, 3, 3], device)
+            out["litetorch"] = time_fn(lambda: conv(lx, lw, None, 1, 1), device, args.warmup, args.iters)
         except Exception as e:
             out["litetorch"] = skip("litetorch conv2d failed: " + str(e))
     return out
@@ -154,13 +175,12 @@ def bench_softmax(args, device):
         out["torch"] = time_fn(lambda: torch.softmax(x, dim=0), device, args.warmup, args.iters)
     else:
         out["torch"] = skip("torch not importable")
-    sm = lt_fn("softmax")
-    mk = lt_fn("tensor", "from_torch", "from_numpy", "Tensor")
-    if sm is None or mk is None or not HAVE_TORCH:
-        out["litetorch"] = skip("litetorch softmax/tensor constructor not found")
+    sm = lt_ops_attr("softmax")
+    if sm is None:
+        out["litetorch"] = skip("LT.Ops.softmax not found in module")
     else:
         try:
-            lx = mk(x)
+            lx = lt_randn([1000000], device)
             out["litetorch"] = time_fn(lambda: sm(lx, 0), device, args.warmup, args.iters)
         except Exception as e:
             out["litetorch"] = skip("litetorch softmax failed: " + str(e))
@@ -176,13 +196,12 @@ def bench_reduce(args, device):
         out["torch"] = time_fn(lambda: torch.sum(x), device, args.warmup, args.iters)
     else:
         out["torch"] = skip("torch not importable")
-    sm = lt_fn("sum", "reduce_sum")
-    mk = lt_fn("tensor", "from_torch", "from_numpy", "Tensor")
-    if sm is None or mk is None or not HAVE_TORCH:
-        out["litetorch"] = skip("litetorch sum/tensor constructor not found")
+    sm = lt_ops_attr("sum")
+    if sm is None:
+        out["litetorch"] = skip("LT.Ops.sum not found in module")
     else:
         try:
-            lx = mk(x)
+            lx = lt_randn([n], device)
             out["litetorch"] = time_fn(lambda: sm(lx), device, args.warmup, args.iters)
         except Exception as e:
             out["litetorch"] = skip("litetorch sum failed: " + str(e))
@@ -204,38 +223,79 @@ def _allreduce_worker(rank, world, port, iters, warmup, q):
         ts.append((time.perf_counter() - t0) * 1000.0)
     ts.sort()
     if rank == 0:
-        q.put({"median_ms": ts[len(ts) // 2], "mean_ms": sum(ts) / len(ts), "iters": len(ts)})
+        q.put({"median_ms": ts[len(ts) // 2], "mean_ms": sum(ts) / len(ts), "p95_ms": ts[int(len(ts) * 0.95)], "iters": len(ts)})
     dist.destroy_process_group()
+
+
+def _lt_allreduce_worker(rank, world, port, device, iters, warmup, q):
+    import litetorch as LT
+    pg = None
+    try:
+        pg = LT.distributed.ProcessGroup.get()
+        pg.init(rank, world, "127.0.0.1", port)
+        t = LT.Tensor.randn([1024 * 1024], LT.Device(device))
+        for _ in range(warmup):
+            pg.all_reduce(t)
+        if device == "cuda":
+            LT.cuda_synchronize()
+        ts = []
+        for _ in range(iters):
+            t0 = time.perf_counter()
+            pg.all_reduce(t)
+            if device == "cuda":
+                LT.cuda_synchronize()
+            ts.append((time.perf_counter() - t0) * 1000.0)
+        ts.sort()
+        if rank == 0:
+            q.put({"median_ms": ts[len(ts) // 2], "mean_ms": sum(ts) / len(ts), "p95_ms": ts[int(len(ts) * 0.95)], "iters": len(ts)})
+    finally:
+        if pg is not None:
+            try:
+                pg.shutdown()
+            except Exception:
+                pass
 
 
 def bench_allreduce(args, device):
     out = {"name": "allreduce_2rank_4MB"}
     if not HAVE_TORCH:
         out["torch"] = skip("torch not importable")
-        out["litetorch"] = skip("torch missing; litetorch distributed API unprobed")
+    else:
+        try:
+            import torch.multiprocessing as mp
+            ctx = mp.get_context("spawn")
+            q = ctx.Queue()
+            p = ctx.Process(target=_allreduce_worker, args=(0, 2, 29577, 20, 5, q))
+            c = ctx.Process(target=_allreduce_worker, args=(1, 2, 29577, 20, 5, q))
+            p.start()
+            c.start()
+            p.join(300)
+            c.join(300)
+            if p.exitcode == 0 and c.exitcode == 0 and not q.empty():
+                out["torch"] = q.get()
+            else:
+                out["torch"] = skip("gloo 2-rank run failed")
+        except Exception as e:
+            out["torch"] = skip("gloo 2-rank run failed: " + str(e))
+    if not HAVE_LT:
+        out["litetorch"] = skip("litetorch not importable: " + LT_ERR)
         return out
     try:
-        import torch.multiprocessing as mp
+        import multiprocessing as mp
         ctx = mp.get_context("spawn")
         q = ctx.Queue()
-        p = ctx.Process(target=_allreduce_worker, args=(0, 2, 29577, 20, 5, q))
-        c = ctx.Process(target=_allreduce_worker, args=(1, 2, 29577, 20, 5, q))
+        p = ctx.Process(target=_lt_allreduce_worker, args=(0, 2, 29578, device, 20, 5, q))
+        c = ctx.Process(target=_lt_allreduce_worker, args=(1, 2, 29578, device, 20, 5, q))
         p.start()
         c.start()
         p.join(300)
         c.join(300)
         if p.exitcode == 0 and c.exitcode == 0 and not q.empty():
-            out["torch"] = q.get()
+            out["litetorch"] = q.get()
         else:
-            out["torch"] = skip("gloo 2-rank run failed")
+            out["litetorch"] = skip("litetorch 2-rank all_reduce run failed")
     except Exception as e:
-        out["torch"] = skip("gloo 2-rank run failed: " + str(e))
-    init_pg = lt_fn("init_process_group", "dist_init")
-    ar = lt_fn("all_reduce", "dist_all_reduce")
-    if init_pg is None or ar is None:
-        out["litetorch"] = skip("litetorch distributed API not found; run on Kaggle with built bindings")
-    else:
-        out["litetorch"] = skip("litetorch 2-rank all_reduce needs manual rank launch; see perf-gate.md")
+        out["litetorch"] = skip("litetorch 2-rank all_reduce run failed: " + str(e))
     return out
 
 
@@ -255,11 +315,22 @@ def bench_onnx_export(args, device):
             out["torch"] = skip("torch.onnx.export failed: " + str(e))
     else:
         out["torch"] = skip("torch not importable")
-    exp = lt_fn("export_onnx", "export_onnx_binary", "onnx_export")
-    if exp is None:
-        out["litetorch"] = skip("litetorch onnx export API not found")
-    else:
-        out["litetorch"] = skip("litetorch onnx export needs a traced module handle; wire to Phase 5 export API on Kaggle")
+    if not HAVE_LT:
+        out["litetorch"] = skip("litetorch not importable: " + LT_ERR)
+        return out
+    try:
+        nn_mod = getattr(LT, "nn", None)
+        onnx_mod = getattr(LT, "onnx", None)
+        if nn_mod is None or onnx_mod is None:
+            out["litetorch"] = skip("LT.nn or LT.onnx submodule not found in module")
+            return out
+        model = nn_mod.Sequential([nn_mod.Linear(256, 256), nn_mod.ReLU(), nn_mod.Linear(256, 256), nn_mod.ReLU(), nn_mod.Linear(256, 10)])
+        x = LT.Tensor.randn([1, 256], LT.Device("cpu"))
+        def do_export_lt():
+            onnx_mod.export(model, x, "/tmp/mlp_bench_lt.onnx")
+        out["litetorch"] = time_fn(do_export_lt, "cpu", 2, 5)
+    except Exception as e:
+        out["litetorch"] = skip("litetorch onnx export failed: " + str(e))
     return out
 
 
@@ -303,7 +374,14 @@ def main():
             if s.get("skipped"):
                 line += side + "=SKIP(" + s["reason"][:60] + ") "
             else:
-                line += side + " median=%.3fms mean=%.3fms p95=%.3fms " % (s["median_ms"], s["mean_ms"], s["p95_ms"])
+                med = s.get("median_ms")
+                mean = s.get("mean_ms")
+                p95 = s.get("p95_ms")
+                p95_note = ""
+                if p95 is None:
+                    p95 = med
+                    p95_note = "p95=median-fallback "
+                line += side + " median=%.3fms mean=%.3fms p95=%.3fms %s" % (med, mean, p95, p95_note)
         t, l = r.get("torch", {}), r.get("litetorch", {})
         if not t.get("skipped") and not l.get("skipped"):
             line += "lt/torch ratio=%.3f" % (l["median_ms"] / t["median_ms"])
