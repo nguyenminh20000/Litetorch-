@@ -6,6 +6,8 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <unordered_map>
+#include <cstdint>
 
 namespace litetorch {
 
@@ -144,16 +146,27 @@ inline std::shared_ptr<JITVar> abs(std::shared_ptr<JITVar> a) {
 }
 
 
+class JITShapeCacheEntry {
+public:
+    std::vector<int64_t> out_shape;
+    std::vector<std::vector<int64_t>> input_strides;
+};
+
 class JITFunction {
 private:
     std::string name_;
     std::shared_ptr<JITVar> expr_;
     std::vector<std::shared_ptr<JITVar>> inputs_;
+    std::unordered_map<std::string, JITShapeCacheEntry> shape_cache_;
+    uint64_t shape_cache_hits_ = 0;
 
 public:
     JITFunction(const std::string& name, std::shared_ptr<JITVar> expr, const std::vector<std::shared_ptr<JITVar>>& inputs);
 
     std::shared_ptr<Tensor> operator()(const std::vector<std::shared_ptr<Tensor>>& args);
+
+    size_t shape_cache_size() const { return shape_cache_.size(); }
+    uint64_t shape_cache_hits() const { return shape_cache_hits_; }
 
     void save(const std::string& filepath);
     static std::shared_ptr<JITFunction> load(const std::string& filepath);

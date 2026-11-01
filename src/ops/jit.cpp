@@ -295,9 +295,124 @@ public:
             in_grad->requires_grad = false;
             grads.push_back(in_grad);
         }
+        for (size_t i = 0; i < grads.size() && i < saved_inputs_.size(); ++i) {
+            if (grads[i] && grads[i]->shape != saved_inputs_[i]->shape) {
+                grads[i] = Ops::reduce_broadcast(grads[i], saved_inputs_[i]->shape);
+            }
+        }
         return grads;
     }
 };
+
+static std::string jit_expr_key(std::shared_ptr<JITVar> var) {
+    if (!var) return "N";
+    std::string key = std::to_string(static_cast<int>(var->op));
+    if (var->op == JITVar::OpType::CONST) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &var->val, sizeof(bits));
+        key += ":";
+        key += std::to_string(bits);
+    }
+    if (var->op == JITVar::OpType::INPUT) {
+        key += ":";
+        key += var->name;
+    }
+    key += "(";
+    key += jit_expr_key(var->left);
+    key += ",";
+    key += jit_expr_key(var->right);
+    key += ")";
+    return key;
+}
+
+static std::string jit_dtype_key(DataType dtype) {
+    switch (dtype) {
+        case DataType::FP64: return "f64";
+        case DataType::FP32: return "f32";
+        case DataType::FP16: return "f16";
+        case DataType::BF16: return "bf16";
+        case DataType::INT16: return "i16";
+        case DataType::INT8: return "i8";
+        case DataType::INT4: return "i4";
+        case DataType::FP8_E4M3: return "e4m3";
+        case DataType::FP8_E5M2: return "e5m2";
+        case DataType::NF4: return "nf4";
+        case DataType::FP4_E2M1: return "e2m1";
+        case DataType::INT32: return "i32";
+        case DataType::INT64: return "i64";
+        case DataType::UINT8: return "u8";
+        case DataType::BOOL: return "bool";
+        default: return "unknown";
+    }
+}
+
+static std::string jit_shape_text(const std::vector<int64_t>& shape) {
+    std::string text = "[";
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i > 0) text += ",";
+        text += std::to_string(shape[i]);
+    }
+    text += "]";
+    return text;
+}
+
+static std::vector<int64_t> jit_broadcast_pair(const std::vector<int64_t>& a, const std::vector<int64_t>& b, size_t b_arg) {
+    size_t na = a.size();
+    size_t nb = b.size();
+    size_t n = std::max(na, nb);
+    std::vector<int64_t> out(n);
+    for (size_t k = 0; k < n; ++k) {
+        int64_t da = (k < na) ? a[na - 1 - k] : 1;
+        int64_t db = (k < nb) ? b[nb - 1 - k] : 1;
+        if (da != db && da != 1 && db != 1) {
+            throw std::runtime_error("[litetorch Error] JITFunction: inputs are not broadcast-compatible (argument " + std::to_string(b_arg) + " shape " + jit_shape_text(b) + " against broadcast shape " + jit_shape_text(a) + ")");
+        }
+        out[n - 1 - k] = (da == 1) ? db : da;
+    }
+    return out;
+}
+
+static std::vector<int64_t> jit_broadcast_all(const std::vector<std::shared_ptr<Tensor>>& args) {
+    std::vector<int64_t> out = args[0]->shape;
+    for (size_t i = 1; i < args.size(); ++i) {
+        out = jit_broadcast_pair(out, args[i]->shape, i);
+    }
+    return out;
+}
+
+static std::vector<int64_t> jit_broadcast_strides(const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape) {
+    std::vector<int64_t> strides(out_shape.size(), 0);
+    std::vector<int64_t> in_default = default_strides(in_shape);
+    size_t ni = in_shape.size();
+    size_t no = out_shape.size();
+    size_t lead = no - ni;
+    for (size_t p = 0; p < no; ++p) {
+        if (p < lead) {
+            strides[p] = 0;
+            continue;
+        }
+        size_t ip = p - lead;
+        if (in_shape[ip] == 1) {
+            strides[p] = 0;
+            continue;
+        }
+        strides[p] = in_default[ip];
+    }
+    return strides;
+}
+
+static std::string jit_shape_key(std::shared_ptr<JITVar> expr, const std::vector<std::shared_ptr<Tensor>>& args) {
+    std::string key = jit_expr_key(expr);
+    for (auto& a : args) {
+        key += "|";
+        for (auto d : a->shape) {
+            key += std::to_string(d);
+            key += ",";
+        }
+        key += jit_dtype_key(a->dtype);
+    }
+    return key;
+}
 
 std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_ptr<Tensor>>& args) {
     if (args.empty()) {
@@ -308,10 +423,20 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
         throw std::runtime_error("[litetorch Error] JITFunction input count mismatch");
     }
 
-    for (size_t i = 1; i < args.size(); ++i) {
-        if (args[i]->shape != args[0]->shape) {
-            throw std::runtime_error("[litetorch Error] JITFunction requires all inputs to have identical shapes");
+    std::string cache_key = jit_shape_key(expr_, args);
+    JITShapeCacheEntry entry;
+    auto cache_it = shape_cache_.find(cache_key);
+    if (cache_it != shape_cache_.end()) {
+        shape_cache_hits_++;
+        entry = cache_it->second;
+    } else {
+        JITShapeCacheEntry fresh;
+        fresh.out_shape = jit_broadcast_all(args);
+        for (auto& a : args) {
+            fresh.input_strides.push_back(jit_broadcast_strides(a->shape, fresh.out_shape));
         }
+        shape_cache_[cache_key] = fresh;
+        entry = fresh;
     }
 
     std::shared_ptr<Tensor> out = nullptr;
@@ -337,22 +462,38 @@ std::shared_ptr<Tensor> JITFunction::operator()(const std::vector<std::shared_pt
             for (size_t i = 0; i < args.size(); ++i) {
                 env[inputs_[i]->name] = args[i];
             }
-            out = evaluate_gpu(expr_, env, args[0]->device, args[0]->shape);
+            out = evaluate_gpu(expr_, env, args[0]->device, entry.out_shape);
         }
     } else {
-        int size = args[0]->numel();
-        out = Tensor::create(args[0]->shape, args[0]->device);
-
+        std::vector<std::shared_ptr<Tensor>> contig(args.size());
         std::vector<const float*> input_ptrs(args.size());
         for (size_t i = 0; i < args.size(); ++i) {
-            input_ptrs[i] = args[i]->data_ptr();
+            contig[i] = args[i]->is_contiguous() ? args[i] : args[i]->contiguous();
+            input_ptrs[i] = contig[i]->data_ptr();
         }
+
+        size_t rank = entry.out_shape.size();
+        size_t size = 1;
+        for (auto d : entry.out_shape) {
+            size *= static_cast<size_t>(d);
+        }
+        out = Tensor::create(entry.out_shape, args[0]->device);
 
         std::vector<float> cpu_out(size);
         ThreadPool::get().parallel_for(0, size, [&](int64_t id) {
+            std::vector<int64_t> coords(rank);
+            int64_t rem = id;
+            for (size_t j = rank; j-- > 0;) {
+                coords[j] = rem % entry.out_shape[j];
+                rem /= entry.out_shape[j];
+            }
             std::unordered_map<std::string, float> env;
             for (size_t i = 0; i < args.size(); ++i) {
-                env[inputs_[i]->name] = input_ptrs[i][id];
+                int64_t off = 0;
+                for (size_t j = 0; j < rank; ++j) {
+                    off += coords[j] * entry.input_strides[i][j];
+                }
+                env[inputs_[i]->name] = input_ptrs[i][off];
             }
             cpu_out[id] = evaluate_cpu(expr_, env);
         });
