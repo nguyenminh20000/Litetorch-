@@ -22,13 +22,13 @@ void test_transformer(const Device& dev) {
     for (int i = 0; i < B * T_tgt * C; ++i) {
         tgt_data.push_back(sin(static_cast<float>(i)));
     }
-    auto tgt = Tensor::from_vector(tgt_data, {B, T_tgt, C}, dev, true);
+    auto tgt = Tensor::from_vector(tgt_data, {T_tgt, B, C}, dev, true);
 
     std::vector<float> mem_data;
     for (int i = 0; i < B * T_mem * C; ++i) {
         mem_data.push_back(cos(static_cast<float>(i)));
     }
-    auto memory = Tensor::from_vector(mem_data, {B, T_mem, C}, dev, true);
+    auto memory = Tensor::from_vector(mem_data, {T_mem, B, C}, dev, true);
 
     auto layer = std::make_shared<nn::TransformerDecoderLayer>(C, num_heads, dim_feedforward);
     layer->to(dev);
@@ -36,8 +36,8 @@ void test_transformer(const Device& dev) {
     std::cout << "1. Testing Decoder-only mode (self-attention + FFN)...\n";
     auto out_self = layer->forward(tgt);
     std::cout << "Output shape: (" << out_self->shape[0] << ", " << out_self->shape[1] << ", " << out_self->shape[2] << ")\n";
-    assert(out_self->shape[0] == B);
-    assert(out_self->shape[1] == T_tgt);
+    assert(out_self->shape[0] == T_tgt);
+    assert(out_self->shape[1] == B);
     assert(out_self->shape[2] == C);
 
     auto loss_self = Ops::sum(out_self);
@@ -71,8 +71,8 @@ void test_transformer(const Device& dev) {
     std::cout << "2. Testing Encoder-Decoder mode (self-attention + cross-attention + FFN)...\n";
     auto out_cross = layer->forward(tgt, memory);
     std::cout << "Output shape: (" << out_cross->shape[0] << ", " << out_cross->shape[1] << ", " << out_cross->shape[2] << ")\n";
-    assert(out_cross->shape[0] == B);
-    assert(out_cross->shape[1] == T_tgt);
+    assert(out_cross->shape[0] == T_tgt);
+    assert(out_cross->shape[1] == B);
     assert(out_cross->shape[2] == C);
 
     auto loss_cross = Ops::sum(out_cross);

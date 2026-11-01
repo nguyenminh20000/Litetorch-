@@ -46,8 +46,8 @@ void run_leak_test(const Device& dev) {
     std::cout << "Iteration 0   | RAM RSS: " << start_rss / 1024.0 << " MB\n";
 
     for (int iter = 1; iter <= 1000; ++iter) {
-        auto tgt = Tensor::from_vector(tgt_data, {B, T_tgt, C}, dev, true);
-        auto memory = Tensor::from_vector(mem_data, {B, T_mem, C}, dev, true);
+        auto tgt = Tensor::from_vector(tgt_data, {T_tgt, B, C}, dev, true);
+        auto memory = Tensor::from_vector(mem_data, {T_mem, B, C}, dev, true);
 
         auto out = layer->forward(tgt, memory);
         auto loss = Ops::sum(out);
