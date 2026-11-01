@@ -1,0 +1,277 @@
+diff --git a/src/ops/quant_scheme.cpp b/src/ops/quant_scheme.cpp
+index 8d2a67c..dc3f8a8 100644
+--- a/src/ops/quant_scheme.cpp
++++ b/src/ops/quant_scheme.cpp
+@@ -742,6 +742,8 @@ struct SaveEntry {
+     std::string scales_key;
+     std::string zero_points_key;
+     std::string bias_key;
++    std::string bias_ih_key;
++    std::string bias_hh_key;
+ };
+ 
+ bool safetensors_save_supported(DataType dt) {
+@@ -819,6 +821,16 @@ void collect_entries(std::shared_ptr<nn::Module> module, const std::string& path
+                 e.stored_dtype = dtype_name(w->dtype);
+                 e.data_key = name + ".cell_" + std::to_string(i) + "." + field;
+                 tensors[e.data_key] = w;
++                auto bih = lstm->cells[i]->bias_ih;
++                auto bhh = lstm->cells[i]->bias_hh;
++                if (bih) {
++                    e.bias_ih_key = name + ".cell_" + std::to_string(i) + ".bias_ih";
++                    tensors[e.bias_ih_key] = bih;
++                }
++                if (bhh) {
++                    e.bias_hh_key = name + ".cell_" + std::to_string(i) + ".bias_hh";
++                    tensors[e.bias_hh_key] = bhh;
++                }
+                 entries.push_back(e);
+             }
+         }
+@@ -838,6 +850,16 @@ void collect_entries(std::shared_ptr<nn::Module> module, const std::string& path
+                 e.stored_dtype = dtype_name(w->dtype);
+                 e.data_key = name + ".cell_" + std::to_string(i) + "." + field;
+                 tensors[e.data_key] = w;
++                auto bih = gru->cells[i]->bias_ih;
++                auto bhh = gru->cells[i]->bias_hh;
++                if (bih) {
++                    e.bias_ih_key = name + ".cell_" + std::to_string(i) + ".bias_ih";
++                    tensors[e.bias_ih_key] = bih;
++                }
++                if (bhh) {
++                    e.bias_hh_key = name + ".cell_" + std::to_string(i) + ".bias_hh";
++                    tensors[e.bias_hh_key] = bhh;
++                }
+                 entries.push_back(e);
+             }
+         }
+@@ -855,6 +877,8 @@ std::string entry_json(const SaveEntry& e) {
+     if (e.kind == "cell") {
+         s += ",\"cell_index\":" + std::to_string(e.cell_index);
+         s += ",\"field\":\"" + json_escape(e.field) + "\"";
++        s += ",\"bias_ih_key\":\"" + json_escape(e.bias_ih_key) + "\"";
++        s += ",\"bias_hh_key\":\"" + json_escape(e.bias_hh_key) + "\"";
+     } else {
+         s += ",\"scheme\":\"" + json_escape(e.scheme) + "\"";
+         s += ",\"params\":{";
+@@ -1071,16 +1095,26 @@ std::shared_ptr<nn::Module> load_quantized(std::shared_ptr<nn::Module> model_tem
+             bool set = false;
+             if (auto lstm = std::dynamic_pointer_cast<nn::LSTM>(container)) {
+                 if (cell_index < 0 || cell_index >= (int)lstm->cells.size()) throw std::runtime_error("quant_scheme: cell_index out of range for '" + name + "'");
+-                if (field == "weight_ih") lstm->cells[cell_index]->weight_ih = w;
+-                else if (field == "weight_hh") lstm->cells[cell_index]->weight_hh = w;
++                auto cell = lstm->cells[cell_index];
++                if (field == "weight_ih") { cell->weight_ih = w; cell->register_parameter("weight_ih", w); }
++                else if (field == "weight_hh") { cell->weight_hh = w; cell->register_parameter("weight_hh", w); }
+                 else throw std::runtime_error("quant_scheme: unknown cell field '" + field + "'");
++                std::string bih_key = opt_str(entry, "bias_ih_key");
++                if (!bih_key.empty()) { auto b = req_tensor(tensors, bih_key, "cell '" + name + "' bias_ih"); cell->bias_ih = b; cell->register_parameter("bias_ih", b); }
++                std::string bhh_key = opt_str(entry, "bias_hh_key");
++                if (!bhh_key.empty()) { auto b = req_tensor(tensors, bhh_key, "cell '" + name + "' bias_hh"); cell->bias_hh = b; cell->register_parameter("bias_hh", b); }
+                 set = true;
+             }
+             if (auto gru = std::dynamic_pointer_cast<nn::GRU>(container)) {
+                 if (cell_index < 0 || cell_index >= (int)gru->cells.size()) throw std::runtime_error("quant_scheme: cell_index out of range for '" + name + "'");
+-                if (field == "weight_ih") gru->cells[cell_index]->weight_ih = w;
+-                else if (field == "weight_hh") gru->cells[cell_index]->weight_hh = w;
++                auto cell = gru->cells[cell_index];
++                if (field == "weight_ih") { cell->weight_ih = w; cell->register_parameter("weight_ih", w); }
++                else if (field == "weight_hh") { cell->weight_hh = w; cell->register_parameter("weight_hh", w); }
+                 else throw std::runtime_error("quant_scheme: unknown cell field '" + field + "'");
++                std::string bih_key = opt_str(entry, "bias_ih_key");
++                if (!bih_key.empty()) { auto b = req_tensor(tensors, bih_key, "cell '" + name + "' bias_ih"); cell->bias_ih = b; cell->register_parameter("bias_ih", b); }
++                std::string bhh_key = opt_str(entry, "bias_hh_key");
++                if (!bhh_key.empty()) { auto b = req_tensor(tensors, bhh_key, "cell '" + name + "' bias_hh"); cell->bias_hh = b; cell->register_parameter("bias_hh", b); }
+                 set = true;
+             }
+             if (!set) throw std::runtime_error("quant_scheme: template module at '" + name + "' is not an LSTM or GRU");
+diff --git a/tests/core_w54_quant_scheme_test.cpp b/tests/core_w54_quant_scheme_test.cpp
+index f362bfa..2809248 100644
+--- a/tests/core_w54_quant_scheme_test.cpp
++++ b/tests/core_w54_quant_scheme_test.cpp
+@@ -447,6 +447,96 @@ int main() {
+         (void)std::system("rm -rf core_w54_tmp2");
+         return ok;
+     }());
++    check("LSTM cell save and load round-trip preserves forward exactly and biases", [&]() {
++        (void)std::system("rm -rf core_w59_tmp_lstm");
++        auto lstm = std::make_shared<nn::LSTM>(8, 16, 1, true);
++        auto qlstm = quantize_model(lstm, "fake-quant");
++        std::vector<float> xv;
++        for (int i = 0; i < 5 * 2 * 8; ++i) xv.push_back(std::sin(i * 0.37f));
++        auto x = fvec(xv, {5, 2, 8});
++        auto ref = tovec(qlstm->forward(x));
++        save_quantized(qlstm, "core_w59_tmp_lstm");
++        auto fresh = std::make_shared<nn::LSTM>(8, 16, 1, true);
++        auto loaded = load_quantized(fresh, "core_w59_tmp_lstm");
++        auto got = tovec(loaded->forward(x));
++        bool ok = near_vec(got, ref, 0.0f);
++        auto qcell = std::dynamic_pointer_cast<nn::LSTM>(qlstm)->cells[0];
++        auto lcell = std::dynamic_pointer_cast<nn::LSTM>(loaded)->cells[0];
++        ok = ok && near_vec(tovec(lcell->bias_ih), tovec(qcell->bias_ih), 0.0f);
++        ok = ok && near_vec(tovec(lcell->bias_hh), tovec(qcell->bias_hh), 0.0f);
++        ok = ok && near_vec(tovec(lcell->weight_ih), tovec(qcell->weight_ih), 0.0f);
++        ok = ok && near_vec(tovec(lcell->weight_hh), tovec(qcell->weight_hh), 0.0f);
++        for (auto& kv : lcell->named_parameters()) {
++            if (kv.first == "weight_ih") ok = ok && kv.second == lcell->weight_ih;
++            if (kv.first == "weight_hh") ok = ok && kv.second == lcell->weight_hh;
++            if (kv.first == "bias_ih") ok = ok && kv.second == lcell->bias_ih;
++            if (kv.first == "bias_hh") ok = ok && kv.second == lcell->bias_hh;
++        }
++        (void)std::system("rm -rf core_w59_tmp_lstm");
++        return ok;
++    }());
++    check("GRU cell save and load round-trip preserves forward exactly and biases", [&]() {
++        (void)std::system("rm -rf core_w59_tmp_gru");
++        auto gru = std::make_shared<nn::GRU>(8, 16, 1, true);
++        auto qgru = quantize_model(gru, "fake-quant");
++        std::vector<float> xv;
++        for (int i = 0; i < 5 * 2 * 8; ++i) xv.push_back(std::sin(i * 0.37f));
++        auto x = fvec(xv, {5, 2, 8});
++        auto ref = tovec(qgru->forward(x));
++        save_quantized(qgru, "core_w59_tmp_gru");
++        auto fresh = std::make_shared<nn::GRU>(8, 16, 1, true);
++        auto loaded = load_quantized(fresh, "core_w59_tmp_gru");
++        auto got = tovec(loaded->forward(x));
++        bool ok = near_vec(got, ref, 0.0f);
++        auto qcell = std::dynamic_pointer_cast<nn::GRU>(qgru)->cells[0];
++        auto lcell = std::dynamic_pointer_cast<nn::GRU>(loaded)->cells[0];
++        ok = ok && near_vec(tovec(lcell->bias_ih), tovec(qcell->bias_ih), 0.0f);
++        ok = ok && near_vec(tovec(lcell->bias_hh), tovec(qcell->bias_hh), 0.0f);
++        ok = ok && near_vec(tovec(lcell->weight_ih), tovec(qcell->weight_ih), 0.0f);
++        ok = ok && near_vec(tovec(lcell->weight_hh), tovec(qcell->weight_hh), 0.0f);
++        for (auto& kv : lcell->named_parameters()) {
++            if (kv.first == "weight_ih") ok = ok && kv.second == lcell->weight_ih;
++            if (kv.first == "weight_hh") ok = ok && kv.second == lcell->weight_hh;
++            if (kv.first == "bias_ih") ok = ok && kv.second == lcell->bias_ih;
++            if (kv.first == "bias_hh") ok = ok && kv.second == lcell->bias_hh;
++        }
++        (void)std::system("rm -rf core_w59_tmp_gru");
++        return ok;
++    }());
++    check("bias-free LSTM cell save and load round-trip preserves forward exactly", [&]() {
++        (void)std::system("rm -rf core_w59_tmp_nobias");
++        auto lstm = std::make_shared<nn::LSTM>(8, 16, 1, false);
++        auto qlstm = quantize_model(lstm, "fake-quant");
++        std::vector<float> xv;
++        for (int i = 0; i < 5 * 2 * 8; ++i) xv.push_back(std::sin(i * 0.37f));
++        auto x = fvec(xv, {5, 2, 8});
++        auto ref = tovec(qlstm->forward(x));
++        save_quantized(qlstm, "core_w59_tmp_nobias");
++        auto fresh = std::make_shared<nn::LSTM>(8, 16, 1, false);
++        auto loaded = load_quantized(fresh, "core_w59_tmp_nobias");
++        auto got = tovec(loaded->forward(x));
++        auto lcell = std::dynamic_pointer_cast<nn::LSTM>(loaded)->cells[0];
++        bool ok = near_vec(got, ref, 0.0f) && lcell->bias_ih == nullptr && lcell->bias_hh == nullptr;
++        (void)std::system("rm -rf core_w59_tmp_nobias");
++        return ok;
++    }());
++    check("bias-free GRU cell save and load round-trip preserves forward exactly", [&]() {
++        (void)std::system("rm -rf core_w59_tmp_nobias_gru");
++        auto gru = std::make_shared<nn::GRU>(8, 16, 1, false);
++        auto qgru = quantize_model(gru, "fake-quant");
++        std::vector<float> xv;
++        for (int i = 0; i < 5 * 2 * 8; ++i) xv.push_back(std::sin(i * 0.37f));
++        auto x = fvec(xv, {5, 2, 8});
++        auto ref = tovec(qgru->forward(x));
++        save_quantized(qgru, "core_w59_tmp_nobias_gru");
++        auto fresh = std::make_shared<nn::GRU>(8, 16, 1, false);
++        auto loaded = load_quantized(fresh, "core_w59_tmp_nobias_gru");
++        auto got = tovec(loaded->forward(x));
++        auto lcell = std::dynamic_pointer_cast<nn::GRU>(loaded)->cells[0];
++        bool ok = near_vec(got, ref, 0.0f) && lcell->bias_ih == nullptr && lcell->bias_hh == nullptr;
++        (void)std::system("rm -rf core_w59_tmp_nobias_gru");
++        return ok;
++    }());
+     printf("core_w54: %d passed, %d failed\n", passed, failed);
+     return failed == 0 ? 0 : 1;
+ }
+diff --git a/tests/test_quant_scheme.py b/tests/test_quant_scheme.py
+index bb504f7..cc81aac 100644
+--- a/tests/test_quant_scheme.py
++++ b/tests/test_quant_scheme.py
+@@ -270,5 +270,84 @@ check("load after re-registration restores scheme", kids["0"].record.scheme_name
+ unregister_scheme("py-affine")
+ shutil.rmtree("py_w54_tmp2", ignore_errors=True)
+ 
++print("== LSTM/GRU cell save load ==")
++def cell_out(model, x):
++    o = model(x)
++    return o[0] if isinstance(o, tuple) else o
++
++def params_agree(cell, members):
++    reg_vals = [to_np(t) for t in cell.parameters()]
++    for m in members:
++        mv = to_np(m)
++        if not any(np.array_equal(rv, mv) for rv in reg_vals):
++            return False
++    return True
++
++np.random.seed(41)
++lstm = nn.LSTM(8, 16, num_layers=1)
++xl = lt.tensor((np.random.randn(5, 2, 8)).astype(np.float32).tolist())
++qlstm = quantize(lstm, "fake-quant")
++ref = to_np(cell_out(qlstm, xl))
++shutil.rmtree("py_w59_tmp_lstm", ignore_errors=True)
++save_quantized(qlstm, "py_w59_tmp_lstm")
++fresh = nn.LSTM(8, 16, num_layers=1)
++loaded = load_quantized(fresh, "py_w59_tmp_lstm")
++got = to_np(cell_out(loaded, xl))
++check("lstm cell save load round-trip forward exactly equal", np.array_equal(got, ref))
++check("lstm loaded biases equal quantized biases",
++      np.array_equal(to_np(loaded.cells[0].bias_ih), to_np(qlstm.cells[0].bias_ih)) and
++      np.array_equal(to_np(loaded.cells[0].bias_hh), to_np(qlstm.cells[0].bias_hh)))
++check("lstm named parameters agree with members after load",
++      params_agree(loaded.cells[0], [loaded.cells[0].weight_ih, loaded.cells[0].weight_hh,
++                                     loaded.cells[0].bias_ih, loaded.cells[0].bias_hh]))
++shutil.rmtree("py_w59_tmp_lstm", ignore_errors=True)
++
++np.random.seed(43)
++gru = nn.GRU(8, 16, num_layers=1)
++xg = lt.tensor((np.random.randn(5, 2, 8)).astype(np.float32).tolist())
++qgru = quantize(gru, "fake-quant")
++ref = to_np(cell_out(qgru, xg))
++shutil.rmtree("py_w59_tmp_gru", ignore_errors=True)
++save_quantized(qgru, "py_w59_tmp_gru")
++fresh = nn.GRU(8, 16, num_layers=1)
++loaded = load_quantized(fresh, "py_w59_tmp_gru")
++got = to_np(cell_out(loaded, xg))
++check("gru cell save load round-trip forward exactly equal", np.array_equal(got, ref))
++check("gru loaded biases equal quantized biases",
++      np.array_equal(to_np(loaded.cells[0].bias_ih), to_np(qgru.cells[0].bias_ih)) and
++      np.array_equal(to_np(loaded.cells[0].bias_hh), to_np(qgru.cells[0].bias_hh)))
++check("gru named parameters agree with members after load",
++      params_agree(loaded.cells[0], [loaded.cells[0].weight_ih, loaded.cells[0].weight_hh,
++                                     loaded.cells[0].bias_ih, loaded.cells[0].bias_hh]))
++shutil.rmtree("py_w59_tmp_gru", ignore_errors=True)
++
++np.random.seed(47)
++lstm_nb = nn.LSTM(8, 16, num_layers=1, bias=False)
++xn = lt.tensor((np.random.randn(5, 2, 8)).astype(np.float32).tolist())
++qlstm_nb = quantize(lstm_nb, "fake-quant")
++ref = to_np(cell_out(qlstm_nb, xn))
++shutil.rmtree("py_w59_tmp_nobias", ignore_errors=True)
++save_quantized(qlstm_nb, "py_w59_tmp_nobias")
++fresh = nn.LSTM(8, 16, num_layers=1, bias=False)
++loaded = load_quantized(fresh, "py_w59_tmp_nobias")
++got = to_np(cell_out(loaded, xn))
++check("bias-free lstm cell save load round-trip forward exactly equal", np.array_equal(got, ref))
++check("bias-free lstm loaded cell has no biases", loaded.cells[0].bias_ih is None and loaded.cells[0].bias_hh is None)
++shutil.rmtree("py_w59_tmp_nobias", ignore_errors=True)
++
++np.random.seed(49)
++gru_nb = nn.GRU(8, 16, num_layers=1, bias=False)
++xn = lt.tensor((np.random.randn(5, 2, 8)).astype(np.float32).tolist())
++qgru_nb = quantize(gru_nb, "fake-quant")
++ref = to_np(cell_out(qgru_nb, xn))
++shutil.rmtree("py_w59_tmp_nobias_gru", ignore_errors=True)
++save_quantized(qgru_nb, "py_w59_tmp_nobias_gru")
++fresh = nn.GRU(8, 16, num_layers=1, bias=False)
++loaded = load_quantized(fresh, "py_w59_tmp_nobias_gru")
++got = to_np(cell_out(loaded, xn))
++check("bias-free gru cell save load round-trip forward exactly equal", np.array_equal(got, ref))
++check("bias-free gru loaded cell has no biases", loaded.cells[0].bias_ih is None and loaded.cells[0].bias_hh is None)
++shutil.rmtree("py_w59_tmp_nobias_gru", ignore_errors=True)
++
+ print(f"test_quant_scheme: {passed} passed, {failed} failed")
+ sys.exit(0 if failed == 0 else 1)

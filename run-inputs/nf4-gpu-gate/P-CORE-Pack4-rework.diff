@@ -1,0 +1,43 @@
+--- a/src/ops/pack4_ops.cpp
++++ b/src/ops/pack4_ops.cpp
+@@ -41,6 +41,10 @@
+ std::shared_ptr<Tensor> unpack4_indices(std::shared_ptr<Tensor> packed, int64_t numel, DataType idx_dtype) {
+     if (numel <= 0)
+         throw std::runtime_error("[litetorch Error] unpack4: numel must be positive");
++    if (packed->dtype != DataType::INT8)
++        throw std::runtime_error("[litetorch Error] unpack4: packed tensor must have INT8 dtype");
++    if (packed->numel() < (numel + 1) / 2)
++        throw std::runtime_error("[litetorch Error] unpack4: packed tensor too small for numel");
+     auto pc = packed->device.type == DeviceType::CPU ? packed : packed->to(Device(DeviceType::CPU));
+     auto pcc = pc->is_contiguous() ? pc : pc->contiguous();
+     auto out = Tensor::create({numel}, packed->device, false, idx_dtype);
+--- a/tests/test_quant_pack4.py
++++ b/tests/test_quant_pack4.py
+@@ -102,5 +102,27 @@
+ orig = lt.tensor(vals.tolist(), dtype=lt.INT8)
+ check("packed bytes halved", list(packed.shape) == [8] and list(orig.shape) == [16])
+ 
++print("== unpack validation (QA rework) ==")
++def check_throws(name, fn):
++    global passed, failed
++    try:
++        fn()
++    except Exception:
++        passed += 1
++        print(f"  PASS {name}")
++    else:
++        failed += 1
++        print(f"  FAIL {name}")
++
++small = ops.nf4_pack(lt.tensor([1, 2, 0, 15, 5, 5, 3, 2], dtype=lt.INT8))
++check("nf4 packed fixture size", list(small.shape) == [4])
++check_throws("nf4 oversized numel throws", lambda: ops.nf4_unpack(small, 10))
++check_throws("fp4 oversized numel throws", lambda: ops.fp4_unpack(small, 10))
++check_throws("nf4 non-INT8 packed throws", lambda: ops.nf4_unpack(lt.tensor([1.0, 2.0, 3.0, 4.0]), 8))
++check_throws("fp4 non-INT8 packed throws", lambda: ops.fp4_unpack(lt.tensor([1.0, 2.0, 3.0, 4.0]), 8))
++check_throws("nf4 NF4-dtype packed throws", lambda: ops.nf4_unpack(lt.tensor([1.0, 2.0, 3.0, 4.0]).cast(lt.NF4), 8))
++check("nf4 exact ceil numel passes", to_int_list(ops.nf4_pack(ops.nf4_unpack(small, 8))) == to_int_list(small))
++check("nf4 odd ceil numel passes", to_int_list(ops.nf4_pack(ops.nf4_unpack(small, 7))) == [0x21, -0x10, 0x55, 0x03])
++
+ print(f"\nTOTAL: {passed} passed, {failed} failed")
+ sys.exit(1 if failed else 0)
