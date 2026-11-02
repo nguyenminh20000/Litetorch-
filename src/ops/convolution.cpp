@@ -97,6 +97,7 @@ public:
         std::shared_ptr<Tensor> relu_masked;
         if (apply_relu) {
             auto out = output.lock();
+            if (!out) throw std::runtime_error("[litetorch Error] Fused conv+relu backward: saved output tensor missing");
             relu_out_c = out->is_contiguous() ? out : out->contiguous();
             relu_gout_c = gout->is_contiguous() ? gout : gout->contiguous();
             DataType rdt = relu_gout_c->dtype;
