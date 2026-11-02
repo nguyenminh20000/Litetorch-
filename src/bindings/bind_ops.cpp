@@ -151,6 +151,12 @@ void bind_ops(py::module_& m) {
         ops.def("int4_pack", &Ops::int4_pack, py::arg("x"));
         ops.def("int4_unpack", &Ops::int4_unpack, py::arg("packed"), py::arg("numel"));
         ops.def("int4_weight_only_linear", &Ops::int4_weight_only_linear, py::arg("x"), py::arg("packed_w"), py::arg("w_scale"), py::arg("bias") = nullptr);
+        ops.def("nf4_pack", &Ops::nf4_pack, py::arg("x"));
+        ops.def("nf4_unpack", &Ops::nf4_unpack, py::arg("packed"), py::arg("numel"));
+        ops.def("nf4_weight_only_linear", &Ops::nf4_weight_only_linear, py::arg("x"), py::arg("packed_w"), py::arg("w_scale"), py::arg("bias") = nullptr);
+        ops.def("fp4_pack", &Ops::fp4_pack, py::arg("x"));
+        ops.def("fp4_unpack", &Ops::fp4_unpack, py::arg("packed"), py::arg("numel"));
+        ops.def("fp4_weight_only_linear", &Ops::fp4_weight_only_linear, py::arg("x"), py::arg("packed_w"), py::arg("w_scale"), py::arg("bias") = nullptr);
         ops.def("moe_gate", [](std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> gate_weight, int top_k) {
             std::shared_ptr<Tensor> indices_out;
             auto probs = Ops::moe_gate(input, gate_weight, top_k, indices_out);

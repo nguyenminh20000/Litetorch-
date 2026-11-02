@@ -146,6 +146,18 @@ std::shared_ptr<Tensor> int4_weight_only_linear(std::shared_ptr<Tensor> x,
                                                  std::shared_ptr<Tensor> packed_w,
                                                  std::shared_ptr<Tensor> w_scale,
                                                  std::shared_ptr<Tensor> bias = nullptr);
+std::shared_ptr<Tensor> nf4_pack(std::shared_ptr<Tensor> x);
+std::shared_ptr<Tensor> nf4_unpack(std::shared_ptr<Tensor> packed, int64_t numel);
+std::shared_ptr<Tensor> nf4_weight_only_linear(std::shared_ptr<Tensor> x,
+                                               std::shared_ptr<Tensor> packed_w,
+                                               std::shared_ptr<Tensor> w_scale,
+                                               std::shared_ptr<Tensor> bias = nullptr);
+std::shared_ptr<Tensor> fp4_pack(std::shared_ptr<Tensor> x);
+std::shared_ptr<Tensor> fp4_unpack(std::shared_ptr<Tensor> packed, int64_t numel);
+std::shared_ptr<Tensor> fp4_weight_only_linear(std::shared_ptr<Tensor> x,
+                                               std::shared_ptr<Tensor> packed_w,
+                                               std::shared_ptr<Tensor> w_scale,
+                                               std::shared_ptr<Tensor> bias = nullptr);
 // === W1-T4 ===
 std::shared_ptr<Tensor> conv1d(std::shared_ptr<Tensor> input, std::shared_ptr<Tensor> weight, std::shared_ptr<Tensor> bias = nullptr, int stride = 1, int padding = 0);
 std::shared_ptr<Tensor> avg_pool2d(std::shared_ptr<Tensor> input, int kernel_size, int stride = -1, int padding = 0);
