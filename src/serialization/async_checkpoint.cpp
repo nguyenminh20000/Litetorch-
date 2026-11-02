@@ -5,8 +5,9 @@
 namespace litetorch {
 namespace async_checkpoint {
 
-AsyncCheckpointSaver::AsyncCheckpointSaver()
-    : worker_(&AsyncCheckpointSaver::worker_loop, this) {}
+AsyncCheckpointSaver::AsyncCheckpointSaver() {
+    worker_ = std::thread(&AsyncCheckpointSaver::worker_loop, this);
+}
 
 AsyncCheckpointSaver::~AsyncCheckpointSaver() {
     wait();
