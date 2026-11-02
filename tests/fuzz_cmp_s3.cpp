@@ -51,11 +51,32 @@ int main() {
     int fails = 0;
 
     std::vector<std::vector<int64_t>> bases = {{2, 3, 4}, {3, 1, 5}, {4, 4}, {2, 3}, {5}};
+    int zero_iters = 0;
     for (int iter = 0; iter < 200; ++iter) {
         auto base = bases[iter % bases.size()];
         auto sa = derive_shape(rng, base);
         auto sb = derive_shape(rng, base);
         auto sc = derive_shape(rng, base);
+        std::vector<int> zero_pos;
+        for (int t = 0; t < 3; ++t) {
+            if (std::uniform_int_distribution<int>(0, 3)(rng) == 0) zero_pos.push_back(t);
+        }
+        auto apply_zeros = [&](std::vector<int64_t>& s) {
+            for (size_t j = 0; j < s.size(); ++j) {
+                int t = static_cast<int>(s.size()) - 1 - static_cast<int>(j);
+                for (size_t k = 0; k < zero_pos.size(); ++k) {
+                    if (zero_pos[k] == t) s[j] = 0;
+                }
+            }
+        };
+        apply_zeros(sa);
+        apply_zeros(sb);
+        apply_zeros(sc);
+        bool has_zero = false;
+        for (auto d : sa) if (d == 0) has_zero = true;
+        for (auto d : sb) if (d == 0) has_zero = true;
+        for (auto d : sc) if (d == 0) has_zero = true;
+        if (has_zero) zero_iters++;
         auto a = Tensor::from_vector(rand_data(rng, numel_of(sa)), sa, cpu);
         auto b = Tensor::from_vector(rand_data(rng, numel_of(sb)), sb, cpu);
         auto c = Tensor::from_vector(rand_data(rng, numel_of(sc)), sc, cpu);
@@ -85,5 +106,6 @@ int main() {
         }
     }
     std::cout << "FUZZ RESULT " << (200 - fails) << "/200 passed" << std::endl;
+    std::cout << "ZERO DIM ITERS " << zero_iters << std::endl;
     return fails == 0 ? 0 : 1;
 }
