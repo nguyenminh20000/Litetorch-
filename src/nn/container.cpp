@@ -48,8 +48,9 @@ std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
             } else if (!is_graph_recorded) {
                 backend->start_recording();
                 auto out = input;
-                for (auto& module : modules) {
-                    out = module->forward(out);
+                for (size_t i = 0; i < modules.size(); ++i) {
+                    if (!modules[i]) throw std::runtime_error("[litetorch Error] Sequential::forward: module at index " + std::to_string(i) + " is null (None)");
+                    out = modules[i]->forward(out);
                 }
                 void* exec = backend->stop_recording(nullptr);
                 is_graph_recorded = true;
@@ -63,8 +64,9 @@ std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
         }
     }
     auto out = input;
-    for (auto& module : modules) {
-        out = module->forward(out);
+    for (size_t i = 0; i < modules.size(); ++i) {
+        if (!modules[i]) throw std::runtime_error("[litetorch Error] Sequential::forward: module at index " + std::to_string(i) + " is null (None)");
+        out = modules[i]->forward(out);
     }
     return out;
 }
@@ -72,6 +74,7 @@ std::shared_ptr<Tensor> Sequential::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> Sequential::parameters() {
     std::vector<std::shared_ptr<Tensor>> params;
     for (auto& module : modules) {
+        if (!module) continue;
         auto m_params = module->parameters();
         params.insert(params.end(), m_params.begin(), m_params.end());
     }
@@ -80,6 +83,7 @@ std::vector<std::shared_ptr<Tensor>> Sequential::parameters() {
 
 void Sequential::to(const Device& device) {
     for (auto& module : modules) {
+        if (!module) continue;
         module->to(device);
     }
 }
@@ -87,6 +91,7 @@ void Sequential::to(const Device& device) {
 void Sequential::train() {
     training = true;
     for (auto& module : modules) {
+        if (!module) continue;
         module->train();
     }
 }
@@ -94,6 +99,7 @@ void Sequential::train() {
 void Sequential::eval() {
     training = false;
     for (auto& module : modules) {
+        if (!module) continue;
         module->eval();
     }
 }
@@ -433,6 +439,15 @@ void Module::remove_module(const std::string& name) {
     for (auto it = named_children_.begin(); it != named_children_.end(); ++it) {
         if (it->first == name) {
             named_children_.erase(it);
+            return;
+        }
+    }
+}
+
+void Module::null_module(const std::string& name) {
+    for (auto& kv : named_children_) {
+        if (kv.first == name) {
+            kv.second = nullptr;
             return;
         }
     }

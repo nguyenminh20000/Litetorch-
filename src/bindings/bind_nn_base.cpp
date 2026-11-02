@@ -3,15 +3,31 @@
 namespace {
 
 void remove_child_module(std::shared_ptr<nn::Module> self, const std::string& name) {
-    std::shared_ptr<nn::Module> old;
+    size_t idx = 0;
+    bool found = false;
     for (auto& kv : self->named_children()) {
-        if (kv.first == name) old = kv.second;
+        if (kv.first == name) { found = true; break; }
+        ++idx;
     }
     self->remove_module(name);
-    if (old) {
+    if (found) {
         if (auto* seq = dynamic_cast<nn::Sequential*>(self.get())) {
-            auto& mods = seq->modules;
-            mods.erase(std::remove(mods.begin(), mods.end(), old), mods.end());
+            if (idx < seq->modules.size()) seq->modules.erase(seq->modules.begin() + idx);
+        }
+    }
+}
+
+void null_child_module(std::shared_ptr<nn::Module> self, const std::string& name) {
+    size_t idx = 0;
+    bool found = false;
+    for (auto& kv : self->named_children()) {
+        if (kv.first == name) { found = true; break; }
+        ++idx;
+    }
+    self->null_module(name);
+    if (found) {
+        if (auto* seq = dynamic_cast<nn::Sequential*>(self.get())) {
+            if (idx < seq->modules.size()) seq->modules[idx] = nullptr;
         }
     }
 }
@@ -99,7 +115,7 @@ void bind_nn_base(py::module_& m) {
                 }
                 if (has_child()) {
                     if (value.is_none()) {
-                        remove_child_module(self, name);
+                        null_child_module(self, name);
                         write_none_to_dict();
                         return;
                     }

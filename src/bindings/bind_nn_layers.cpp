@@ -35,7 +35,9 @@ void bind_nn_layers(py::module_& m) {
             Module_.attr("named_children") = py::cpp_function(
                 [](std::shared_ptr<nn::Module> self) {
                     py::list out;
-                    for (auto& kv : self->named_children()) out.append(py::make_tuple(kv.first, kv.second));
+                    for (auto& kv : self->named_children()) {
+                        if (kv.second) out.append(py::make_tuple(kv.first, kv.second));
+                    }
                     return out;
                 }, method_tag);
             Module_.attr("named_modules") = py::cpp_function(
