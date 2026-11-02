@@ -19,8 +19,8 @@ void bind_distributed(py::module_& m) {
         }, py::arg("tp_size"));
         // === end DT-A2 ===
 
-        py::class_<distributed::ProcessGroup>(dist_mod, "ProcessGroup")
-            .def_static("get", &distributed::ProcessGroup::get, py::return_value_policy::reference)
+        py::class_<distributed::ProcessGroup, std::shared_ptr<distributed::ProcessGroup>>(dist_mod, "ProcessGroup")
+            .def_static("get", []() { return std::shared_ptr<distributed::ProcessGroup>(&distributed::ProcessGroup::get(), [](distributed::ProcessGroup *) {}); })
             .def("init", &distributed::ProcessGroup::init, py::arg("rank"), py::arg("world_size"), py::arg("master_addr"), py::arg("master_port"))
             .def("shutdown", &distributed::ProcessGroup::shutdown)
             .def("all_reduce", py::overload_cast<std::shared_ptr<Tensor>>(&distributed::ProcessGroup::all_reduce), py::arg("tensor"))
