@@ -197,3 +197,19 @@ def test_equal_non_contiguous():
     a = lt.Tensor.from_vector([1.0, 2.0, 3.0, 4.0], [2, 2], cpu()).transpose(0, 1)
     b = lt.Tensor.from_vector([1.0, 3.0, 2.0, 4.0], [2, 2], cpu())
     assert lt.equal(a, b) is True
+
+
+def test_numpy_int64():
+    vals = [1.0, 2.0, 1099511627776.0, -1099511627776.0, -7.0]
+    li = lt.Tensor.from_vector(vals, [5], cpu()).long()
+    assert li.dtype == lt.DataType.INT64
+    arr = li.numpy()
+    assert arr.dtype == np.int64
+    assert arr.tolist() == [1, 2, 1099511627776, -1099511627776, -7]
+    arr[0] = 999
+    assert li.to_vector()[0] == 1.0
+    m = lt.Tensor.from_vector([3.0, 4.0, 5.0, 6.0], [2, 2], cpu()).long()
+    marr = m.numpy()
+    assert marr.dtype == np.int64
+    assert marr.shape == (2, 2)
+    assert marr.tolist() == [[3, 4], [5, 6]]

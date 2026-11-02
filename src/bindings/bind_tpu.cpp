@@ -204,6 +204,7 @@ void bind_tpu(py::module_& m) {
                     case DataType::INT32: fmt = "int32"; break;
                     case DataType::INT16: fmt = "int16"; break;
                     case DataType::INT8: fmt = "int8"; break;
+                    case DataType::INT64: fmt = "int64"; break;
                     default: throw std::runtime_error("[litetorch Error] numpy(): unsupported dtype for copy conversion");
                 }
                 py::array arr(py::dtype(fmt), shape);
