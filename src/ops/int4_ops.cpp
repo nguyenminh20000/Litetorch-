@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <cstring>
 
 #include "litetorch/storage_guard.h"
 namespace litetorch {
@@ -49,6 +50,10 @@ std::shared_ptr<Tensor> int4_pack(std::shared_ptr<Tensor> x) {
 std::shared_ptr<Tensor> int4_unpack(std::shared_ptr<Tensor> packed, int64_t numel) {
     if (numel <= 0)
         throw std::runtime_error("[litetorch Error] int4_unpack: numel must be positive");
+    if (packed->dtype != DataType::INT8)
+        throw std::runtime_error("[litetorch Error] int4_unpack: packed tensor must have INT8 dtype");
+    if (packed->numel() < (numel + 1) / 2)
+        throw std::runtime_error("[litetorch Error] int4_unpack: packed tensor too small for numel");
     auto pc = packed->device.type == DeviceType::CPU ? packed : packed->to(Device(DeviceType::CPU));
     auto pcc = pc->is_contiguous() ? pc : pc->contiguous();
     auto out = Tensor::create({numel}, packed->device, false, DataType::INT8);
@@ -81,7 +86,21 @@ std::shared_ptr<Tensor> int4_weight_only_linear(std::shared_ptr<Tensor> x,
     xc = xc->is_contiguous() ? xc : xc->contiguous();
     auto sc = w_scale->device.type == DeviceType::CPU ? w_scale : w_scale->to(Device(DeviceType::CPU), DataType::FP32);
     if (sc->dtype != DataType::FP32) sc = sc->cast(DataType::FP32);
-    auto w_unpacked = int4_unpack(packed_w->reshape({N * packed_k}), N * K);
+    auto pwc = packed_w->device.type == DeviceType::CPU ? packed_w : packed_w->to(Device(DeviceType::CPU));
+    auto pwcc = pwc->is_contiguous() ? pwc : pwc->contiguous();
+    auto w_unpacked_cpu = Tensor::create({N, K}, Device(DeviceType::CPU), false, DataType::INT8);
+    StorageUseGuard guard({pwcc->storage, w_unpacked_cpu->storage});
+    int8_t* psrc = (int8_t*)pwcc->storage->get_cpu_ptr();
+    int8_t* pdst = (int8_t*)w_unpacked_cpu->storage->get_cpu_ptr();
+    for (int64_t r = 0; r < N; ++r) {
+        auto row = Tensor::create({packed_k}, Device(DeviceType::CPU), false, DataType::INT8);
+        int8_t* row_data = (int8_t*)row->storage->get_cpu_ptr();
+        std::memcpy(row_data, psrc + r * packed_k, packed_k);
+        auto row_unpacked = int4_unpack(row, K);
+        int8_t* row_out = (int8_t*)row_unpacked->storage->get_cpu_ptr();
+        std::memcpy(pdst + r * K, row_out, K);
+    }
+    auto w_unpacked = packed_w->device.type != DeviceType::CPU ? w_unpacked_cpu->to(packed_w->device) : w_unpacked_cpu;
     auto w_fp32 = w_unpacked->cast(DataType::FP32)->reshape({N, K});
     float* w_data = (float*)w_fp32->storage->get_cpu_ptr();
     float* s_data = (float*)sc->storage->get_cpu_ptr();

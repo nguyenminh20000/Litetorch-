@@ -124,5 +124,35 @@ check_throws("nf4 NF4-dtype packed throws", lambda: ops.nf4_unpack(lt.tensor([1.
 check("nf4 exact ceil numel passes", to_int_list(ops.nf4_pack(ops.nf4_unpack(small, 8))) == to_int_list(small))
 check("nf4 odd ceil numel passes", to_int_list(ops.nf4_pack(ops.nf4_unpack(small, 7))) == [0x21, -0x10, 0x55, 0x03])
 
+print("== NF4/FP4 odd-K weight-only linear (per-row unpack) ==")
+def pack_rows_4(pack_fn, w_scaled):
+    rows = []
+    for r in range(w_scaled.shape[0]):
+        rows.append([int(v) for v in pack_fn(lt.tensor(w_scaled[r].tolist())).tolist()])
+    return lt.tensor(rows, dtype=lt.INT8)
+
+def odd_pack4_case(name, pack_fn, linear_fn, cast_dtype, N, K, seed, div):
+    rng = np.random.RandomState(seed)
+    x_np = rng.randn(2, K).astype(np.float32)
+    w_np = rng.randn(N, K).astype(np.float32)
+    scale_np = np.abs(w_np).max(axis=1) / div
+    w_scaled = w_np / scale_np[:, None]
+    packed_w = pack_rows_4(pack_fn, w_scaled)
+    check(name + " packed shape", list(packed_w.shape) == [N, (K + 1) // 2])
+    out = linear_fn(lt.tensor(x_np.tolist()), packed_w, lt.tensor(scale_np.tolist()))
+    w_deq = to_np(lt.tensor(w_scaled.tolist()).cast(cast_dtype).cast(lt.FP32))
+    ref = x_np @ (w_deq * scale_np[:, None]).T
+    rel = np.abs(to_np(out) - ref) / (np.abs(ref) + 1e-3)
+    check(name + " rel_err<1e-3", float(rel.max()) < 1e-3)
+
+odd_pack4_case("nf4 odd-K N=2 K=5", ops.nf4_pack, ops.nf4_weight_only_linear, lt.NF4, 2, 5, 21, 1.0)
+odd_pack4_case("nf4 odd-K N=2 K=3", ops.nf4_pack, ops.nf4_weight_only_linear, lt.NF4, 2, 3, 22, 1.0)
+odd_pack4_case("nf4 odd-K N=2 K=1", ops.nf4_pack, ops.nf4_weight_only_linear, lt.NF4, 2, 1, 23, 1.0)
+odd_pack4_case("nf4 odd-K N=1 K=5", ops.nf4_pack, ops.nf4_weight_only_linear, lt.NF4, 1, 5, 24, 1.0)
+odd_pack4_case("fp4 odd-K N=2 K=5", ops.fp4_pack, ops.fp4_weight_only_linear, lt.FP4_E2M1, 2, 5, 31, 6.0)
+odd_pack4_case("fp4 odd-K N=2 K=3", ops.fp4_pack, ops.fp4_weight_only_linear, lt.FP4_E2M1, 2, 3, 32, 6.0)
+odd_pack4_case("fp4 odd-K N=2 K=1", ops.fp4_pack, ops.fp4_weight_only_linear, lt.FP4_E2M1, 2, 1, 33, 6.0)
+odd_pack4_case("fp4 odd-K N=1 K=5", ops.fp4_pack, ops.fp4_weight_only_linear, lt.FP4_E2M1, 1, 5, 34, 6.0)
+
 print(f"\nTOTAL: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
