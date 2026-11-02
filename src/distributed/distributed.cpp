@@ -1349,6 +1349,10 @@ void NCCLBridge::init(int rank, int world_size) {
         comm_get_async_error_fn = nullptr;
         dlclose(lib_handle_);
         lib_handle_ = nullptr;
+        auto dist_w28_be = BackendDispatcher::get().get_backend();
+        if (dist_w28_be && dist_w28_be->is_available()) {
+            throw std::runtime_error(std::string("[litetorch Error] NCCLBridge: ncclCommInitRank failed with res=") + std::to_string(res) + " for rank=" + std::to_string(rank) + " world_size=" + std::to_string(world_size));
+        }
         available_ = false;
         initialized_ = true;
         return;
