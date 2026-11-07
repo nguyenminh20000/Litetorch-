@@ -112,11 +112,21 @@ __global__ void fa_fwd_kernel(const T* Q, const T* K, const T* V, T* O, float* L
             }
         }
         float rowmax = warp_reduce_max(s);
+#ifdef __HIP_PLATFORM_AMD__
+        rowmax = __shfl(rowmax, 0);
+#else
+        rowmax = __shfl_sync(0xffffffff, rowmax, 0);
+#endif
         float m_new = fmaxf(m, rowmax);
         float alpha = expf(m - m_new);
         float p = expf(s - m_new);
         if (lane < BCMAX) PS[warp][lane] = p;
         float rowsum = warp_reduce_sum(p);
+#ifdef __HIP_PLATFORM_AMD__
+        rowsum = __shfl(rowsum, 0);
+#else
+        rowsum = __shfl_sync(0xffffffff, rowsum, 0);
+#endif
         float l_new = l * alpha + rowsum;
 
         for (int t = threadIdx.x; t < BCMAX * DMAX; t += blockDim.x) {
