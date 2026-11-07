@@ -1,0 +1,74 @@
+--- a/src/backend/gpu_native/nn/flash_attention.cu
++++ b/src/backend/gpu_native/nn/flash_attention.cu
+@@ -355,6 +355,11 @@
+         if (val > max_val) max_val = val;
+     }
+     max_val = warp_reduce_max(max_val);
++#ifdef __HIP_PLATFORM_AMD__
++    max_val = __shfl(max_val, 0);
++#else
++    max_val = __shfl_sync(0xffffffff, max_val, 0);
++#endif
+ 
+     float sum_exp = 0.0f;
+     for (int i = lane; i < Tk; i += 32) {
+@@ -363,6 +368,11 @@
+         sum_exp += e;
+     }
+     sum_exp = warp_reduce_sum(sum_exp);
++#ifdef __HIP_PLATFORM_AMD__
++    sum_exp = __shfl(sum_exp, 0);
++#else
++    sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
++#endif
+     float inv_sum = 1.0f / (sum_exp + 1e-6f);
+ 
+     for (int i = lane; i < Tk; i += 32) {
+@@ -383,6 +393,11 @@
+         dot += dp_row[i] * p_row[i];
+     }
+     dot = warp_reduce_sum(dot);
++#ifdef __HIP_PLATFORM_AMD__
++    dot = __shfl(dot, 0);
++#else
++    dot = __shfl_sync(0xffffffff, dot, 0);
++#endif
+ 
+     for (int i = lane; i < Tk; i += 32) {
+         ds_row[i] = p_row[i] * (dp_row[i] - dot) * scale;
+@@ -403,6 +418,11 @@
+         if (val > max_val) max_val = val;
+     }
+     max_val = warp_reduce_max(max_val);
++#ifdef __HIP_PLATFORM_AMD__
++    max_val = __shfl(max_val, 0);
++#else
++    max_val = __shfl_sync(0xffffffff, max_val, 0);
++#endif
+ 
+     float sum_exp = 0.0f;
+     for (int i = lane; i < Tk; i += 32) {
+@@ -411,6 +431,11 @@
+         sum_exp += e;
+     }
+     sum_exp = warp_reduce_sum(sum_exp);
++#ifdef __HIP_PLATFORM_AMD__
++    sum_exp = __shfl(sum_exp, 0);
++#else
++    sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
++#endif
+     float inv_sum = 1.0f / (sum_exp + 1e-6f);
+ 
+     for (int i = lane; i < Tk; i += 32) {
+@@ -431,6 +456,11 @@
+         dot += __half2float(dp_row[i]) * __half2float(p_row[i]);
+     }
+     dot = warp_reduce_sum(dot);
++#ifdef __HIP_PLATFORM_AMD__
++    dot = __shfl(dot, 0);
++#else
++    dot = __shfl_sync(0xffffffff, dot, 0);
++#endif
+ 
+     for (int i = lane; i < Tk; i += 32) {
+         float p_val = __half2float(p_row[i]);
