@@ -37,6 +37,7 @@ import litetorch as lt
 def run_phase(rank, dev, cpu, xvals, seed):
     lt.manual_seed(seed)
     model = lt.nn.Sequential([lt.nn.Linear(4, 4, True)])
+    params = model.parameters()
     model.to(dev)
     ddp = lt.distributed.DistributedDataParallel(model)
     xx = lt.Tensor.from_vector(xvals, [1, 4], dev, False, lt.DataType.FP32)
@@ -44,7 +45,6 @@ def run_phase(rank, dev, cpu, xvals, seed):
         raise RuntimeError("input device is %s, not GPU" % (xx.device,))
     loss = ddp.forward(xx).sum()
     ddp.backward(loss)
-    params = model.parameters()
     wg = params[0].grad
     bg = params[1].grad
     if wg is None or bg is None:
