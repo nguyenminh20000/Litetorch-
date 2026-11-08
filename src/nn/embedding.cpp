@@ -280,7 +280,7 @@ std::vector<std::shared_ptr<Tensor>> Embedding::parameters() {
 }
 
 void Embedding::to(const Device& device) {
-    weight = weight->to(device);
+    weight->move_to(device);
 }
 
 }

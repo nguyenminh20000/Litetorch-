@@ -90,8 +90,8 @@ std::vector<std::shared_ptr<Tensor>> ColumnParallelLinear::parameters() {
 }
 
 void ColumnParallelLinear::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 RowParallelLinear::RowParallelLinear(int in_features, int out_features, bool has_bias) {
@@ -124,8 +124,8 @@ std::vector<std::shared_ptr<Tensor>> RowParallelLinear::parameters() {
 }
 
 void RowParallelLinear::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 }

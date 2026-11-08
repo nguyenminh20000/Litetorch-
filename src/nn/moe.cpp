@@ -285,7 +285,7 @@ std::vector<std::shared_ptr<Tensor>> MoELinear::parameters() {
 }
 
 void MoELinear::to(const Device& device) {
-    gate_weight = gate_weight->to(device);
+    gate_weight->move_to(device);
     for (int i = 0; i < num_experts; ++i) {
         experts[i]->to(device);
     }

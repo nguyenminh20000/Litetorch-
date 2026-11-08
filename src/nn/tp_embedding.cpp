@@ -214,7 +214,7 @@ std::vector<std::shared_ptr<Tensor>> VocabParallelEmbedding::parameters() {
 }
 
 void VocabParallelEmbedding::to(const Device& device) {
-    weight = weight->to(device);
+    weight->move_to(device);
 }
 
 }

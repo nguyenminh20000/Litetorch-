@@ -139,8 +139,8 @@ std::vector<std::shared_ptr<Tensor>> Bilinear::parameters() {
 }
 
 void Bilinear::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 Fold::Fold(const std::vector<int64_t>& output_size, const std::vector<int64_t>& kernel_size,

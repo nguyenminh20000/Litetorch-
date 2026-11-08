@@ -1072,6 +1072,14 @@ std::shared_ptr<Tensor> Tensor::to(DataType target_dtype) {
     return Ops::cast(shared_from_this(), target_dtype);
 }
 
+void Tensor::move_to(const Device& target_device) {
+    if (device == target_device) return;
+    auto moved = to(target_device);
+    storage = moved->storage;
+    device = moved->device;
+    if (grad) grad = grad->to(moved->device);
+}
+
 std::shared_ptr<Tensor> Tensor::to(const Device& target_device, DataType target_dtype) {
     return to(target_device)->to(target_dtype);
 }

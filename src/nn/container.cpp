@@ -369,7 +369,7 @@ std::vector<std::shared_ptr<Tensor>> Module::parameters() {
 
 void Module::to(const Device& device) {
     for (auto& kv : named_params_) {
-        if (kv.second) kv.second = kv.second->to(device);
+        if (kv.second) kv.second->move_to(device);
     }
     for (auto& kv : named_buffers_) {
         if (kv.second) kv.second = kv.second->to(device);

@@ -244,9 +244,9 @@ std::vector<std::shared_ptr<Tensor>> TPAttention::parameters() {
 }
 
 void TPAttention::to(const Device& device) {
-    w_q = w_q->to(device); w_k = w_k->to(device);
-    w_v = w_v->to(device); w_o = w_o->to(device);
-    if (has_bias) { b_q = b_q->to(device); b_k = b_k->to(device); b_v = b_v->to(device); b_o = b_o->to(device); }
+    w_q->move_to(device); w_k->move_to(device);
+    w_v->move_to(device); w_o->move_to(device);
+    if (has_bias) { b_q->move_to(device); b_k->move_to(device); b_v->move_to(device); b_o->move_to(device); }
 }
 
 }

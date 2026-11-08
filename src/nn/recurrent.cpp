@@ -63,10 +63,10 @@ std::shared_ptr<Tensor> RNNCell::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> RNNCell::parameters() { return Module::parameters(); }
 
 void RNNCell::to(const Device& device) {
-    weight_ih = weight_ih->to(device);
-    weight_hh = weight_hh->to(device);
-    if (bias_ih) bias_ih = bias_ih->to(device);
-    if (bias_hh) bias_hh = bias_hh->to(device);
+    weight_ih->move_to(device);
+    weight_hh->move_to(device);
+    if (bias_ih) bias_ih->move_to(device);
+    if (bias_hh) bias_hh->move_to(device);
 }
 
 LSTMCell::LSTMCell(int input_size, int hidden_size, bool bias)
@@ -111,10 +111,10 @@ std::shared_ptr<Tensor> LSTMCell::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> LSTMCell::parameters() { return Module::parameters(); }
 
 void LSTMCell::to(const Device& device) {
-    weight_ih = weight_ih->to(device);
-    weight_hh = weight_hh->to(device);
-    if (bias_ih) bias_ih = bias_ih->to(device);
-    if (bias_hh) bias_hh = bias_hh->to(device);
+    weight_ih->move_to(device);
+    weight_hh->move_to(device);
+    if (bias_ih) bias_ih->move_to(device);
+    if (bias_hh) bias_hh->move_to(device);
 }
 
 GRUCell::GRUCell(int input_size, int hidden_size, bool bias)
@@ -161,10 +161,10 @@ std::shared_ptr<Tensor> GRUCell::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> GRUCell::parameters() { return Module::parameters(); }
 
 void GRUCell::to(const Device& device) {
-    weight_ih = weight_ih->to(device);
-    weight_hh = weight_hh->to(device);
-    if (bias_ih) bias_ih = bias_ih->to(device);
-    if (bias_hh) bias_hh = bias_hh->to(device);
+    weight_ih->move_to(device);
+    weight_hh->move_to(device);
+    if (bias_ih) bias_ih->move_to(device);
+    if (bias_hh) bias_hh->move_to(device);
 }
 
 RNN::RNN(int input_size, int hidden_size, int num_layers, const std::string& nonlinearity,
@@ -609,7 +609,7 @@ std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> EmbeddingBag::parameters() { return Module::parameters(); }
 
 void EmbeddingBag::to(const Device& device) {
-    weight = weight->to(device);
+    weight->move_to(device);
 }
 
 }

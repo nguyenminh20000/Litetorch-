@@ -50,8 +50,8 @@ std::vector<std::shared_ptr<Tensor>> BatchNorm2d::parameters() {
 }
 
 void BatchNorm2d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -78,8 +78,8 @@ std::vector<std::shared_ptr<Tensor>> LayerNorm::parameters() {
 }
 
 void LayerNorm::to(const Device& device) {
-    weight = weight->to(device);
-    bias = bias->to(device);
+    weight->move_to(device);
+    bias->move_to(device);
 }
 
 GroupNorm::GroupNorm(int num_groups, int num_channels, float eps, bool affine)
@@ -137,8 +137,8 @@ std::vector<std::shared_ptr<Tensor>> GroupNorm::parameters() {
 }
 
 void GroupNorm::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 BatchNorm1d::BatchNorm1d(int num_features, float eps, float momentum, bool affine, bool track_running_stats)
@@ -204,8 +204,8 @@ std::vector<std::shared_ptr<Tensor>> BatchNorm1d::parameters() {
 }
 
 void BatchNorm1d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }

@@ -259,8 +259,8 @@ std::shared_ptr<Tensor> ConvTranspose1d::forward(std::shared_ptr<Tensor> input) 
 std::vector<std::shared_ptr<Tensor>> ConvTranspose1d::parameters() { return Module::parameters(); }
 
 void ConvTranspose1d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 ConvTranspose2d::ConvTranspose2d(int in_channels, int out_channels, int kernel_size, int stride,
@@ -286,8 +286,8 @@ std::shared_ptr<Tensor> ConvTranspose2d::forward(std::shared_ptr<Tensor> input) 
 std::vector<std::shared_ptr<Tensor>> ConvTranspose2d::parameters() { return Module::parameters(); }
 
 void ConvTranspose2d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 ConvTranspose3d::ConvTranspose3d(int in_channels, int out_channels, int kernel_size, int stride,
@@ -312,8 +312,8 @@ std::shared_ptr<Tensor> ConvTranspose3d::forward(std::shared_ptr<Tensor> input) 
 std::vector<std::shared_ptr<Tensor>> ConvTranspose3d::parameters() { return Module::parameters(); }
 
 void ConvTranspose3d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 static std::shared_ptr<Tensor> mul_scalar(const std::shared_ptr<Tensor>& t, float s) {
@@ -431,8 +431,8 @@ std::shared_ptr<Tensor> InstanceNorm1d::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> InstanceNorm1d::parameters() { return Module::parameters(); }
 
 void InstanceNorm1d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -458,8 +458,8 @@ std::shared_ptr<Tensor> InstanceNorm2d::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> InstanceNorm2d::parameters() { return Module::parameters(); }
 
 void InstanceNorm2d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -485,8 +485,8 @@ std::shared_ptr<Tensor> InstanceNorm3d::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> InstanceNorm3d::parameters() { return Module::parameters(); }
 
 void InstanceNorm3d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -541,8 +541,8 @@ std::shared_ptr<Tensor> BatchNorm3d::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> BatchNorm3d::parameters() { return Module::parameters(); }
 
 void BatchNorm3d::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -566,8 +566,8 @@ std::shared_ptr<Tensor> SyncBatchNorm::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> SyncBatchNorm::parameters() { return Module::parameters(); }
 
 void SyncBatchNorm::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (running_mean) running_mean = running_mean->to(device);
     if (running_var) running_var = running_var->to(device);
 }
@@ -606,7 +606,7 @@ std::shared_ptr<Tensor> PReLU::forward(std::shared_ptr<Tensor> input) {
 std::vector<std::shared_ptr<Tensor>> PReLU::parameters() { return Module::parameters(); }
 
 void PReLU::to(const Device& device) {
-    weight = weight->to(device);
+    weight->move_to(device);
 }
 
 GLU::GLU(int64_t dim) : dim(dim) {}

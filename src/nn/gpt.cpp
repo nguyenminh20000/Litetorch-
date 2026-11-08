@@ -31,7 +31,7 @@ std::vector<std::shared_ptr<Tensor>> RMSNorm::parameters() {
 
 void RMSNorm::to(const Device& device) {
     if (weight->device != device) {
-        weight = weight->to(device);
+        weight->move_to(device);
     }
 }
 

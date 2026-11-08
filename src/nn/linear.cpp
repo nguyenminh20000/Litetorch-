@@ -45,8 +45,8 @@ std::vector<std::shared_ptr<Tensor>> Linear::parameters() {
 }
 
 void Linear::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (scales) scales = scales->to(device);
 }
 

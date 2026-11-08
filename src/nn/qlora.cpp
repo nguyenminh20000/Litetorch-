@@ -58,12 +58,12 @@ std::vector<std::shared_ptr<Tensor>> QLoRALinear::parameters() {
 }
 
 void QLoRALinear::to(const Device& device) {
-    weight = weight->to(device);
+    weight->move_to(device);
     if (bias) {
-        bias = bias->to(device);
+        bias->move_to(device);
     }
-    lora_A = lora_A->to(device);
-    lora_B = lora_B->to(device);
+    lora_A->move_to(device);
+    lora_B->move_to(device);
 }
 
 }

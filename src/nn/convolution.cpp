@@ -80,8 +80,8 @@ std::vector<std::shared_ptr<Tensor>> Conv2d::parameters() {
 }
 
 void Conv2d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 Conv3d::Conv3d(int in_channels, int out_channels, int kernel_size, int stride, int padding, bool has_bias, int groups)
@@ -132,8 +132,8 @@ std::vector<std::shared_ptr<Tensor>> Conv3d::parameters() {
 }
 
 void Conv3d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 Conv1d::Conv1d(int in_channels, int out_channels, int kernel_size, int stride, int padding, bool has_bias)
@@ -173,8 +173,8 @@ std::vector<std::shared_ptr<Tensor>> Conv1d::parameters() {
 }
 
 void Conv1d::to(const Device& device) {
-    weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    weight->move_to(device);
+    if (bias) bias->move_to(device);
 }
 
 }

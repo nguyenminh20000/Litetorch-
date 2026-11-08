@@ -144,6 +144,7 @@ public:
     std::shared_ptr<Tensor> to(const Device& target_device);
     std::shared_ptr<Tensor> to(DataType target_dtype);
     std::shared_ptr<Tensor> to(const Device& target_device, DataType target_dtype);
+    void move_to(const Device& target_device);
     std::shared_ptr<Tensor> to_device_async(const Device& target_device);
     std::shared_ptr<Tensor> cuda(int device_index = -1);
     std::shared_ptr<Tensor> cpu();
