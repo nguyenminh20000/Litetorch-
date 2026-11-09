@@ -1439,8 +1439,7 @@ bool NCCLBridge::all_reduce(std::shared_ptr<Tensor> tensor, ReduceOp op) {
                 work->dtype != DataType::BF16 && work->dtype != DataType::FP64) {
                 throw std::runtime_error("NCCL all_reduce AVG requires float dtype");
             }
-            float inv = 1.0f / (float)world_size_;
-            auto denom = Tensor::from_vector(std::vector<float>(count, inv), work->shape, work->device, false, work->dtype);
+            auto denom = Tensor::from_vector(std::vector<float>(count, (float)world_size_), work->shape, work->device, false, work->dtype);
             auto scaled = Ops::div(work, denom);
             work->copy_(scaled);
         }
@@ -1608,9 +1607,8 @@ bool NCCLBridge::reduce_scatter(std::shared_ptr<Tensor> shard, std::shared_ptr<T
                 shard->dtype != DataType::BF16 && shard->dtype != DataType::FP64) {
                 throw std::runtime_error("NCCL reduce_scatter AVG requires float dtype");
             }
-            float inv = 1.0f / (float)world_size_;
             auto shard_c2 = nccl_contig_in(shard);
-            auto denom = Tensor::from_vector(std::vector<float>(sendcount, inv), shard_c2->shape, shard_c2->device, false, shard_c2->dtype);
+            auto denom = Tensor::from_vector(std::vector<float>(sendcount, (float)world_size_), shard_c2->shape, shard_c2->device, false, shard_c2->dtype);
             auto scaled = Ops::div(shard_c2, denom);
             shard_c2->copy_(scaled);
             nccl_contig_out(shard, shard_c2);
