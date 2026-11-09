@@ -32,8 +32,8 @@ std::vector<std::shared_ptr<Tensor>> MedusaHead::parameters() {
 }
 
 void MedusaHead::to(const Device& device) {
-    weight = weight->to(device);
-    bias = bias->to(device);
+    weight->move_to(device);
+    bias->move_to(device);
 }
 
 MedusaEngine::MedusaEngine(std::shared_ptr<Module> base, const std::vector<std::shared_ptr<MedusaHead>>& heads)
