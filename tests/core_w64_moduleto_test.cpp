@@ -1,6 +1,7 @@
 #include "litetorch/nn.h"
 #include "litetorch/tensor.h"
 #include "litetorch/ops.h"
+#include "litetorch/quant_scheme.h"
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -136,6 +137,54 @@ int main() {
     check("embbag grad populated", epost[0]->grad != nullptr);
     check("embbag grad all 1.0", epost[0]->grad && all_close(epost[0]->grad->to_vector(), 1.0f, 1e-6f));
     check("embbag grad device moved", epost[0]->grad && epost[0]->grad->device == cpu1);
+
+    auto qlin = std::make_shared<Linear>(4, 4);
+    auto qat = std::make_shared<quantization::SchemeQATLinear>(qlin, "fake-quant");
+    auto qpre = qat->parameters();
+    check("qat parameters 2", qpre.size() == 2);
+    check("qat baseline weight is member", qpre.size() == 2 && qpre[0].get() == qat->weight.get());
+    check("qat baseline bias is member", qpre.size() == 2 && qpre[1].get() == qat->bias.get());
+    check("qat baseline leaves", qpre[0]->creator == nullptr && qpre[1]->creator == nullptr);
+    check("qat baseline grad null", qpre[0]->grad == nullptr && qpre[1]->grad == nullptr);
+    check("qat baseline device CPU:0", qpre[0]->device == cpu0 && qpre[1]->device == cpu0);
+    std::vector<float> qw_before = qpre[0]->to_vector();
+    std::vector<float> qb_before = qpre[1]->to_vector();
+    qat->to(cpu1);
+    auto qpost = qat->parameters();
+    check("qat identity preserved", qpost.size() == 2 && qpost[0].get() == qpre[0].get() && qpost[1].get() == qpre[1].get());
+    check("qat members are post params", qpost[0].get() == qat->weight.get() && qpost[1].get() == qat->bias.get());
+    check("qat device moved", qpost[0]->device == cpu1 && qpost[1]->device == cpu1);
+    check("qat leaves stay leaves", qpost[0]->creator == nullptr && qpost[1]->creator == nullptr);
+    check("qat values preserved", qpost[0]->to_vector() == qw_before && qpost[1]->to_vector() == qb_before);
+    qat->qat_enabled = false;
+    auto qx = fvec({0.5f, 0.5f, 0.5f, 0.5f}, {1, 4}, 1);
+    auto qy = qat->forward(qx);
+    std::vector<float> qwant(4);
+    for (int j = 0; j < 4; ++j) qwant[j] = 0.5f * (qw_before[j * 4 + 0] + qw_before[j * 4 + 1] + qw_before[j * 4 + 2] + qw_before[j * 4 + 3]) + qb_before[j];
+    std::vector<float> qyv = qy->to_vector();
+    bool qvalues = qyv.size() == 4;
+    for (int j = 0; j < 4 && qvalues; ++j) qvalues = std::fabs(qyv[j] - qwant[j]) <= 1e-6f;
+    check("qat forward values", qvalues);
+    auto qloss = Ops::sum(qpost[0]);
+    qloss->backward();
+    check("qat grad populated on weight", qpost[0]->grad != nullptr);
+    check("qat grad all 1.0", qpost[0]->grad && all_close(qpost[0]->grad->to_vector(), 1.0f, 1e-6f));
+    check("qat grad device moved", qpost[0]->grad && qpost[0]->grad->device == cpu1);
+    auto qlossb = Ops::sum(qpost[1]);
+    qlossb->backward();
+    check("qat grad populated on bias", qpost[1]->grad != nullptr);
+    check("qat grad all 1.0 bias", qpost[1]->grad && all_close(qpost[1]->grad->to_vector(), 1.0f, 1e-6f));
+    check("qat grad device moved bias", qpost[1]->grad && qpost[1]->grad->device == cpu1);
+    auto qatf = std::make_shared<quantization::SchemeQATLinear>(std::make_shared<Linear>(4, 4), "fake-quant");
+    qatf->to(cpu1);
+    qatf->qat_enabled = false;
+    auto qfx = fvec({0.5f, 0.5f, 0.5f, 0.5f}, {1, 4}, 1);
+    auto qfy = qatf->forward(qfx);
+    auto qfloss = Ops::sum(qfy);
+    qfloss->backward();
+    auto qfp = qatf->parameters();
+    check("qat forward grad weight all 0.5", qfp[0]->grad && all_close(qfp[0]->grad->to_vector(), 0.5f, 1e-6f));
+    check("qat forward grad bias all 1.0", qfp[1]->grad && all_close(qfp[1]->grad->to_vector(), 1.0f, 1e-6f));
 
     printf("TOTAL %d passed, %d failed\n", passed, failed);
     return failed == 0 ? 0 : 1;

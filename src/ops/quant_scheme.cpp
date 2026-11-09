@@ -617,8 +617,8 @@ std::vector<std::shared_ptr<Tensor>> SchemeQATLinear::parameters() {
 }
 
 void SchemeQATLinear::to(const Device& device) {
-    if (weight) weight = weight->to(device);
-    if (bias) bias = bias->to(device);
+    if (weight) weight->move_to(device);
+    if (bias) bias->move_to(device);
     if (weight) register_parameter("weight", weight);
     if (bias) register_parameter("bias", bias);
 }
