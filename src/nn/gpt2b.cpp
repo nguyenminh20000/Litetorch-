@@ -33,7 +33,9 @@ void GPT2B::pipeline_to(const Device& d0, const Device& d1, int split) {
         blocks[i]->to(i < split ? d0 : d1);
     }
     final_norm->to(d1);
-    lm_head->weight = lm_head->weight->to(d1);
+    auto moved = lm_head->weight->to(d1);
+    lm_head->weight = moved->detach();
+    lm_head->weight->requires_grad = moved->requires_grad;
     tied = false;
     n_stages = 2;
 }
