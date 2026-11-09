@@ -568,7 +568,7 @@ void SchemeQuantizedLinear::to(const Device& device) {
     if (record.data) record.data = record.data->to(device);
     if (record.qparams.scales) record.qparams.scales = record.qparams.scales->to(device);
     if (record.qparams.zero_points) record.qparams.zero_points = record.qparams.zero_points->to(device);
-    if (bias) bias = bias->to(device);
+    if (bias) bias->move_to(device);
     if (record.data) register_buffer("record_data", record.data);
     if (record.qparams.scales) register_buffer("record_scales", record.qparams.scales);
     if (record.qparams.zero_points) register_buffer("record_zero_points", record.qparams.zero_points);
