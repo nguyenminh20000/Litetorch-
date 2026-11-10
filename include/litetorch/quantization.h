@@ -138,8 +138,8 @@ public:
     }
 
     void to(const Device& dev) override {
-        weight = weight->to(dev);
-        if (bias) bias = bias->to(dev);
+        weight->move_to(dev);
+        if (bias) bias->move_to(dev);
     }
 };
 
