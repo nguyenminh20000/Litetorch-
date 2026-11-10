@@ -345,6 +345,8 @@ QParams fake_quant_calibrate(std::shared_ptr<Tensor> t, const Calibrator* cal, c
             mx = std::max(mx, d[i]);
         }
     }
+    mn = std::min(mn, 0.0f);
+    mx = std::max(mx, 0.0f);
     float bound = (float)((1LL << (bits - 1)) - 1);
     float qmin = -bound, qmax = bound;
     float scale = (mx - mn) / (qmax - qmin);

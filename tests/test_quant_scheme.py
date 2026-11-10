@@ -349,5 +349,74 @@ check("bias-free gru cell save load round-trip forward exactly equal", np.array_
 check("bias-free gru loaded cell has no biases", loaded.cells[0].bias_ih is None and loaded.cells[0].bias_hh is None)
 shutil.rmtree("py_w59_tmp_nobias_gru", ignore_errors=True)
 
+print("== fake-quant calibrate include-0 (w76) ==")
+
+def fixed_qparams(vals):
+    mn = min(min(vals), 0.0)
+    mx = max(max(vals), 0.0)
+    scale = (mx - mn) / 254.0
+    if scale == 0.0:
+        scale = 1.0
+    zp = round(-127.0 - mn / scale)
+    zp = max(-127.0, min(127.0, zp))
+    return scale, int(zp)
+
+def ste_fake_quant(x, scale, zp):
+    fq = torch.fake_quantize_per_tensor_affine(x, scale, zp, -127, 127)
+    return x + (fq - x).detach()
+
+W76 = [[0.5, 1.0, 1.5, 2.0], [0.25, 0.75, 1.25, 1.75], [0.1, 0.2, 0.3, 0.4], [2.0, 1.0, 0.5, 0.25]]
+B76 = [0.1, -0.2, 0.3, -0.4]
+
+def make_qat76():
+    lin = nn.Linear(4, 4)
+    lin.weight = lt.tensor(W76)
+    lin.bias = lt.tensor(B76)
+    qat = SchemeQATLinear(lin, "fake-quant")
+    qat.train()
+    return qat
+
+def torch_qat76(x_list, w_scale, w_zp, a_scale, a_zp):
+    w = torch.tensor(W76, requires_grad=True)
+    x = torch.tensor(x_list)
+    b = torch.tensor(B76)
+    w_fq = ste_fake_quant(w, w_scale, w_zp)
+    x_fq = ste_fake_quant(x, a_scale, a_zp)
+    y = F.linear(x_fq, w_fq, b)
+    y.sum().backward()
+    return y.detach().numpy(), w.grad.numpy(), x_fq.detach().numpy()
+
+w76_w_scale, w76_w_zp = fixed_qparams([v for row in W76 for v in row])
+
+xc76 = lt.tensor([[0.5, 0.5, 0.5, 0.5]])
+qatc76 = make_qat76()
+pc76 = qatc76.parameters()
+outc76 = qatc76(xc76)
+yc76 = to_np(outc76)
+check("qat constant input forward differs from bias", float(np.max(np.abs(yc76 - np.array(B76)))) > 0.1)
+outc76.sum().backward()
+gc76 = to_np(pc76[0].grad)
+a76_scale, a76_zp = fixed_qparams([0.5, 0.5, 0.5, 0.5])
+yt76, gt76, xq76 = torch_qat76([[0.5, 0.5, 0.5, 0.5]], w76_w_scale, w76_w_zp, a76_scale, a76_zp)
+tol76 = max(w76_w_scale, a76_scale) * 1.5 + 1e-4
+check("qat constant input forward matches torch fake-quant linear within 1 LSB", float(np.max(np.abs(yc76 - yt76))) <= tol76)
+check("qat constant input weight grad is non-zero", bool(np.all(np.abs(gc76) > 0.1)))
+check("qat constant input weight grad equals fake-quantized input", float(np.max(np.abs(gc76 - xq76))) < 1e-6)
+check("qat constant input weight grad matches torch STE grad within 1 LSB", float(np.max(np.abs(gc76 - gt76))) <= tol76)
+
+xv76 = lt.tensor([[0.1, 0.4, 0.7, 1.0]])
+qatv76 = make_qat76()
+pv76 = qatv76.parameters()
+outv76 = qatv76(xv76)
+yv76 = to_np(outv76)
+outv76.sum().backward()
+gv76 = to_np(pv76[0].grad)
+av76_scale, av76_zp = fixed_qparams([0.1, 0.4, 0.7, 1.0])
+ytv76, gtv76, xqv76 = torch_qat76([[0.1, 0.4, 0.7, 1.0]], w76_w_scale, w76_w_zp, av76_scale, av76_zp)
+tolv76 = max(w76_w_scale, av76_scale) * 1.5 + 1e-4
+check("qat varied single-signed forward matches torch fake-quant linear within 1 LSB", float(np.max(np.abs(yv76 - ytv76))) <= tolv76)
+check("qat varied single-signed weight grad equals fake-quantized input", float(np.max(np.abs(gv76 - xqv76))) < 1e-6)
+check("qat varied single-signed weight grad matches torch STE grad within 1 LSB", float(np.max(np.abs(gv76 - gtv76))) <= tolv76)
+
 print(f"test_quant_scheme: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)
