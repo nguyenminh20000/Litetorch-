@@ -656,6 +656,8 @@ std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input, std
             for (int64_t j = 0; j < embedding_dim; ++j) ad[j] = -1e30f;
             for (int64_t k = start; k < end; ++k) {
                 int64_t r = static_cast<int64_t>(idxv[k]);
+                if (r < 0 || r >= num_embeddings)
+                    throw std::runtime_error("[litetorch Error] EmbeddingBag: index out of range");
                 for (int64_t j = 0; j < embedding_dim; ++j)
                     if (wd[r * embedding_dim + j] > ad[j]) {
                         ad[j] = wd[r * embedding_dim + j];
