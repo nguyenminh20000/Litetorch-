@@ -1,6 +1,9 @@
 #include "litetorch/nn.h"
 #include "litetorch/ops.h"
+#include "litetorch/autograd.h"
+#include "litetorch/storage_guard.h"
 #include <cmath>
+#include <cstring>
 #include <random>
 #include <stdexcept>
 
@@ -551,6 +554,78 @@ std::vector<std::shared_ptr<Module>> TransformerEncoder::children() {
     return ch;
 }
 
+namespace {
+
+class EmbeddingBagNode : public litetorch::Node {
+public:
+    int num_embeddings;
+    int embedding_dim;
+    std::string mode;
+    std::vector<int64_t> argmax;
+    EmbeddingBagNode(int num_embeddings, int embedding_dim, const std::string& mode, const std::vector<int64_t>& argmax)
+        : litetorch::Node("EmbeddingBag"), num_embeddings(num_embeddings),
+          embedding_dim(embedding_dim), mode(mode), argmax(argmax) {}
+
+    std::vector<std::shared_ptr<Tensor>> backward(std::shared_ptr<Tensor> grad_output) override {
+        std::unique_ptr<NoGradGuard> ng;
+        if (!Autograd::is_create_graph_) ng = std::make_unique<NoGradGuard>();
+        auto input = saved_tensors[0];
+        auto offsets = saved_tensors[1];
+        auto weight = saved_tensors[2];
+        auto cpu_input = input->device.type == DeviceType::CPU ? input : input->to(Device(DeviceType::CPU, 0));
+        auto cpu_offsets = offsets->device.type == DeviceType::CPU ? offsets : offsets->to(Device(DeviceType::CPU, 0));
+        auto cpu_gout = grad_output->device.type == DeviceType::CPU ? grad_output : grad_output->to(Device(DeviceType::CPU, 0));
+        if (!cpu_input->is_contiguous()) cpu_input = cpu_input->contiguous();
+        if (!cpu_offsets->is_contiguous()) cpu_offsets = cpu_offsets->contiguous();
+        if (!cpu_gout->is_contiguous()) cpu_gout = cpu_gout->contiguous();
+        auto grad_weight = Tensor::create(weight->shape, weight->device, false, weight->dtype);
+        StorageUseGuard guard({cpu_input->storage, cpu_offsets->storage, cpu_gout->storage, grad_weight->storage});
+        auto cpu_gw = Tensor::create(weight->shape, Device(DeviceType::CPU, 0), false, DataType::FP32);
+        std::memset(cpu_gw->storage->get_cpu_ptr(), 0, cpu_gw->numel() * sizeof(float));
+        auto idxv = cpu_input->to_vector();
+        auto offv = cpu_offsets->to_vector();
+        auto goutv = cpu_gout->to_vector();
+        float* gw_ptr = reinterpret_cast<float*>(cpu_gw->storage->get_cpu_ptr());
+        int64_t nbags = grad_output->shape[0];
+        int64_t nidx = input->shape[0];
+        for (int64_t b = 0; b < nbags; ++b) {
+            int64_t start = static_cast<int64_t>(offv[(size_t)b]);
+            int64_t end = (b + 1 < nbags) ? static_cast<int64_t>(offv[(size_t)(b + 1)]) : nidx;
+            int64_t count = end - start;
+            for (int64_t j = 0; j < embedding_dim; ++j) {
+                float g = goutv[(size_t)(b * embedding_dim + j)];
+                if (mode == "max") {
+                    if (count > 0) {
+                        int64_t r = argmax[(size_t)(b * embedding_dim + j)];
+                        if (r >= 0 && r < num_embeddings) gw_ptr[(size_t)(r * embedding_dim + j)] += g;
+                    }
+                } else if (mode == "mean") {
+                    if (count > 0) {
+                        float gs = g / static_cast<float>(count);
+                        for (int64_t k = start; k < end; ++k) {
+                            int64_t r = static_cast<int64_t>(idxv[(size_t)k]);
+                            if (r >= 0 && r < num_embeddings) gw_ptr[(size_t)(r * embedding_dim + j)] += gs;
+                        }
+                    }
+                } else {
+                    for (int64_t k = start; k < end; ++k) {
+                        int64_t r = static_cast<int64_t>(idxv[(size_t)k]);
+                        if (r >= 0 && r < num_embeddings) gw_ptr[(size_t)(r * embedding_dim + j)] += g;
+                    }
+                }
+            }
+        }
+        if (weight->dtype == DataType::FP32) {
+            grad_weight->copy_(cpu_gw);
+        } else {
+            grad_weight->copy_(cpu_gw->cast(weight->dtype));
+        }
+        return { nullptr, nullptr, grad_weight };
+    }
+};
+
+}
+
 EmbeddingBag::EmbeddingBag(int num_embeddings, int embedding_dim, const std::string& mode)
     : num_embeddings(num_embeddings), embedding_dim(embedding_dim), mode(mode) {
     if (mode != "sum" && mode != "mean" && mode != "max")
@@ -567,6 +642,7 @@ std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input, std
     auto offv = offsets->to_vector();
     auto idxv = input->to_vector();
     std::vector<std::shared_ptr<Tensor>> bags;
+    std::vector<int64_t> argmax((size_t)(nbags * embedding_dim), -1);
     for (int64_t b = 0; b < nbags; ++b) {
         int64_t start = static_cast<int64_t>(offv[b]);
         int64_t end = (b + 1 < nbags) ? static_cast<int64_t>(offv[b + 1]) : nidx;
@@ -581,7 +657,10 @@ std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input, std
             for (int64_t k = start; k < end; ++k) {
                 int64_t r = static_cast<int64_t>(idxv[k]);
                 for (int64_t j = 0; j < embedding_dim; ++j)
-                    if (wd[r * embedding_dim + j] > ad[j]) ad[j] = wd[r * embedding_dim + j];
+                    if (wd[r * embedding_dim + j] > ad[j]) {
+                        ad[j] = wd[r * embedding_dim + j];
+                        argmax[(size_t)(b * embedding_dim + j)] = r;
+                    }
             }
             if (count == 0)
                 for (int64_t j = 0; j < embedding_dim; ++j) ad[j] = 0.0f;
@@ -598,7 +677,17 @@ std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input, std
         bags.push_back(acc);
     }
     if (bags.empty()) return Tensor::zeros({0, embedding_dim}, weight->device, false, weight->dtype);
-    return Ops::stack(bags, 0);
+    auto out = Ops::stack(bags, 0);
+    if (Autograd::is_grad_enabled() && (input->requires_grad || offsets->requires_grad || weight->requires_grad)) {
+        auto node = std::make_shared<EmbeddingBagNode>(num_embeddings, embedding_dim, mode, argmax);
+        node->inputs = { {input, input->requires_grad}, {offsets, offsets->requires_grad}, {weight, weight->requires_grad} };
+        node->next_nodes = { input->creator, offsets->creator, weight->creator };
+        node->saved_tensors = { input, offsets, weight };
+        node->output = out;
+        out->creator = node;
+        out->requires_grad = true;
+    }
+    return out;
 }
 
 std::shared_ptr<Tensor> EmbeddingBag::forward(std::shared_ptr<Tensor> input) {
