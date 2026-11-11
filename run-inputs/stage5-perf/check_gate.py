@@ -28,9 +28,20 @@ def main():
 
     blocked = []
     blocked_skip = []
+    blocked_throw = []
     skipped = []
     warned = []
     for name, c in cand.items():
+        # Fail-loud throw cases (e.g. ew_add_mixed_u8_i64_gate) are self-contained:
+        # they carry no median_ms and need no baseline comparison. Evaluate them
+        # directly: a missing throw, or the wrong exception, BLOCKS the gate.
+        lt = c.get("litetorch", {})
+        if "throws_fail_loud" in lt:
+            if not lt["throws_fail_loud"]:
+                blocked_throw.append((name, "mixed-dtype GPU add did not throw fail-loud: " + str(lt.get("error") or "")[:120]))
+            elif "mixed integer dtypes" not in (lt.get("error") or ""):
+                blocked_throw.append((name, "mixed-dtype GPU add threw the wrong exception: " + str(lt.get("error") or "")[:120]))
+            continue
         b = base.get(name)
         if b is None:
             warned.append((name, "no baseline entry"))
@@ -72,11 +83,13 @@ def main():
         sys.stdout.write("BLOCK %s [%s]: +%.1f%% (baseline %.3fms -> candidate %.3fms)\n" % (name, side, pct, bmed, cmed))
     for name, reason in blocked_skip:
         sys.stdout.write("BLOCK %s [litetorch]: skipped (%s) - no measurement, cannot pass BLOCKING gate on device %s\n" % (name, reason, device))
+    for name, reason in blocked_throw:
+        sys.stdout.write("BLOCK %s [litetorch]: %s\n" % (name, reason))
     for name, side, reason in skipped:
         sys.stdout.write("SKIP %s [%s]: %s\n" % (name, side, reason))
     for name, reason in warned:
         sys.stdout.write("WARN %s: %s\n" % (name, reason))
-    if blocked or blocked_skip:
+    if blocked or blocked_skip or blocked_throw:
         sys.stdout.write("verdict: BLOCK\n")
         return 1
     if warned or skipped:
