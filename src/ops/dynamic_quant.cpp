@@ -80,7 +80,7 @@ public:
     void to(const Device& dev) override {
         q_weight = q_weight->to(dev);
         w_scales = w_scales->to(dev);
-        if (bias) bias = bias->to(dev);
+        if (bias) bias->move_to(dev);
     }
 };
 
