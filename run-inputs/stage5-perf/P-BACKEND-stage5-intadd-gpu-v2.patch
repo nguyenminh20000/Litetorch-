@@ -1,0 +1,62 @@
+--- a/src/ops/elementwise.cpp
++++ b/src/ops/elementwise.cpp
+@@ -499,6 +499,48 @@
+     }
+ }
+ 
++std::shared_ptr<Tensor> ew_add_int_gpu(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, DataType dt) {
++    if (a->dtype != dt || b->dtype != dt) {
++        throw std::runtime_error("[litetorch Error] ew_add_int_gpu: mixed integer dtypes for GPU add");
++    }
++    const char* kname = nullptr;
++    if (dt == DataType::UINT8) kname = "elementwise_add_u8";
++    else if (dt == DataType::INT64) kname = "elementwise_add_i64";
++    else throw std::runtime_error("[litetorch Error] ew_add_int_gpu: unsupported integer dtype for GPU add");
++    if (a->shape != b->shape || !a->is_contiguous() || !b->is_contiguous()) {
++        throw std::runtime_error("[litetorch Error] ew_add_int_gpu: GPU integer add requires same-shape contiguous tensors");
++    }
++    void* kernel = rt_gpu_get_kernel("litetorch_kernels", litetorch_kernels_src, kname);
++    if (!kernel) {
++        throw std::runtime_error("[litetorch Error] ew_add_int_gpu: GPU integer add kernel not available");
++    }
++    auto out = Tensor::create(a->shape, a->device, false, dt);
++    StorageUseGuard guard({a->storage, b->storage, out->storage});
++    cl_mem a_mem = a->gpu_data();
++    cl_mem b_mem = b->gpu_data();
++    cl_mem c_mem = out->gpu_data();
++    int64_t a_off = a->offset;
++    int64_t b_off = b->offset;
++    int64_t c_off = out->offset;
++    int64_t size = out->numel();
++    if (size > 0) {
++        rt_gpu_launch(kernel, {static_cast<size_t>(size)}, {},
++            {&a_mem, &a_off, &b_mem, &b_off, &c_mem, &c_off, &size},
++            {sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(cl_mem), sizeof(int64_t), sizeof(int64_t)});
++    }
++    if (Autograd::is_grad_enabled() && (a->requires_grad || b->requires_grad)) {
++        auto node = std::make_shared<AddNode>(a->shape, b->shape);
++        node->inputs = { {a, a->requires_grad}, {b, b->requires_grad} };
++        node->next_nodes = { a->creator, b->creator };
++        node->saved_tensors = {};
++        node->saved_versions = {};
++        node->output = out;
++        out->creator = node;
++        out->requires_grad = true;
++    }
++    return out;
++}
++
+ std::shared_ptr<Tensor> ew_sub_int(std::shared_ptr<Tensor> a, std::shared_ptr<Tensor> b, DataType dt) {
+     switch (dt) {
+         case DataType::BOOL:
+@@ -573,6 +615,10 @@
+             && a->device == b->device) {
+             return ew_add_int(a, b, dt);
+         }
++        if (is_integer_dtype(dt) && a->device.type == DeviceType::GPU && b->device.type == DeviceType::GPU
++            && a->device == b->device) {
++            return ew_add_int_gpu(a, b, dt);
++        }
+         if (a->dtype != DataType::FP32 || b->dtype != DataType::FP32) {
+             auto a_fp32 = cast(a, DataType::FP32);
+             auto b_fp32 = cast(b, DataType::FP32);

@@ -1,0 +1,508 @@
+--- a/src/backend/gpu_native/nn/flash_attention.cu
++++ b/src/backend/gpu_native/nn/flash_attention.cu
+@@ -365,6 +365,11 @@
+         if (val > max_val) max_val = val;
+     }
+     max_val = warp_reduce_max(max_val);
++#ifdef __HIP_PLATFORM_AMD__
++    max_val = __shfl(max_val, 0);
++#else
++    max_val = __shfl_sync(0xffffffff, max_val, 0);
++#endif
+ 
+     float sum_exp = 0.0f;
+     for (int i = lane; i < Tk; i += 32) {
+@@ -373,6 +378,11 @@
+         sum_exp += e;
+     }
+     sum_exp = warp_reduce_sum(sum_exp);
++#ifdef __HIP_PLATFORM_AMD__
++    sum_exp = __shfl(sum_exp, 0);
++#else
++    sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
++#endif
+     float inv_sum = 1.0f / (sum_exp + 1e-6f);
+ 
+     for (int i = lane; i < Tk; i += 32) {
+@@ -393,6 +403,11 @@
+         dot += dp_row[i] * p_row[i];
+     }
+     dot = warp_reduce_sum(dot);
++#ifdef __HIP_PLATFORM_AMD__
++    dot = __shfl(dot, 0);
++#else
++    dot = __shfl_sync(0xffffffff, dot, 0);
++#endif
+ 
+     for (int i = lane; i < Tk; i += 32) {
+         ds_row[i] = p_row[i] * (dp_row[i] - dot) * scale;
+@@ -413,6 +428,11 @@
+         if (val > max_val) max_val = val;
+     }
+     max_val = warp_reduce_max(max_val);
++#ifdef __HIP_PLATFORM_AMD__
++    max_val = __shfl(max_val, 0);
++#else
++    max_val = __shfl_sync(0xffffffff, max_val, 0);
++#endif
+ 
+     float sum_exp = 0.0f;
+     for (int i = lane; i < Tk; i += 32) {
+@@ -421,6 +441,11 @@
+         sum_exp += e;
+     }
+     sum_exp = warp_reduce_sum(sum_exp);
++#ifdef __HIP_PLATFORM_AMD__
++    sum_exp = __shfl(sum_exp, 0);
++#else
++    sum_exp = __shfl_sync(0xffffffff, sum_exp, 0);
++#endif
+     float inv_sum = 1.0f / (sum_exp + 1e-6f);
+ 
+     for (int i = lane; i < Tk; i += 32) {
+@@ -441,6 +466,11 @@
+         dot += __half2float(dp_row[i]) * __half2float(p_row[i]);
+     }
+     dot = warp_reduce_sum(dot);
++#ifdef __HIP_PLATFORM_AMD__
++    dot = __shfl(dot, 0);
++#else
++    dot = __shfl_sync(0xffffffff, dot, 0);
++#endif
+ 
+     for (int i = lane; i < Tk; i += 32) {
+         float p_val = __half2float(p_row[i]);
+@@ -854,24 +884,25 @@
+     const __half* k_ptr, const __half* q_ptr, __half* s_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
+     float alpha) {
+-    __half h_alpha = __float2half(alpha);
+-    __half h_beta = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sQ = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+-            Tk, Tq, D, &h_alpha, k_ptr, D, sK, q_ptr, D, sQ, &h_beta,
+-            s_ptr, Tk, sS, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_transpose, rocblas_operation_none,
++            Tk, Tq, D, &alpha, k_ptr, rocblas_datatype_f16_r, D, sK, q_ptr, rocblas_datatype_f16_r, D, sQ, &f_zero,
++            s_ptr, rocblas_datatype_f16_r, Tk, sS, B * H,
++            s_ptr, rocblas_datatype_f16_r, Tk, sS, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            rocblas_hgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+-                Tk, Tq, D, &h_alpha,
+-                k_ptr + (b * H_kv + hk) * Tk * D, D, 0,
+-                q_ptr + (b * H + hk * G) * Tq * D, D, sQ, &h_beta,
+-                s_ptr + (b * H + hk * G) * Tq * Tk, Tk, sS, G);
++            rocblas_gemm_strided_batched_ex(handle, rocblas_operation_transpose, rocblas_operation_none,
++                Tk, Tq, D, &alpha,
++                k_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, 0,
++                q_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sQ, &f_zero,
++                s_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, G,
++                s_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, G, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -879,23 +910,25 @@
+ static void gqa_gemm_o_f16(rocblas_handle handle,
+     const __half* v_ptr, const __half* p_ptr, __half* o_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sS = Tq * Tk, sO = Tq * D;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+-            D, Tq, Tk, &h_one, v_ptr, D, sV, p_ptr, Tk, sS, &h_zero,
+-            o_ptr, D, sO, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_none,
++            D, Tq, Tk, &f_one, v_ptr, rocblas_datatype_f16_r, D, sV, p_ptr, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++            o_ptr, rocblas_datatype_f16_r, D, sO, B * H,
++            o_ptr, rocblas_datatype_f16_r, D, sO, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+-                D, Tq, Tk, &h_one,
+-                v_ptr + (b * H_kv + hk) * Tk * D, D, 0,
+-                p_ptr + (b * H + hk * G) * Tq * Tk, Tk, sS, &h_zero,
+-                o_ptr + (b * H + hk * G) * Tq * D, D, sO, G);
++            rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_none,
++                D, Tq, Tk, &f_one,
++                v_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, 0,
++                p_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++                o_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sO, G,
++                o_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sO, G, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -903,26 +936,28 @@
+ static void gqa_gemm_dv_f16(rocblas_handle handle,
+     const __half* do_ptr, const __half* p_ptr, __half* dv_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     GPU_API(MemsetAsync)(dv_ptr, 0, (size_t)B * H_kv * Tk * D * sizeof(__half),
+                          dev_stream(current_device()));
+     long long sO = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+-            D, Tk, Tq, &h_one, do_ptr, D, sO, p_ptr, Tk, sS, &h_zero,
+-            dv_ptr, D, sV, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_transpose,
++            D, Tk, Tq, &f_one, do_ptr, rocblas_datatype_f16_r, D, sO, p_ptr, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++            dv_ptr, rocblas_datatype_f16_r, D, sV, B * H,
++            dv_ptr, rocblas_datatype_f16_r, D, sV, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t h = 0; h < H; ++h) {
+             int64_t hk = h / G;
+-            rocblas_hgemm(handle, rocblas_operation_none, rocblas_operation_transpose,
+-                D, Tk, Tq, &h_one,
+-                do_ptr + (b * H + h) * Tq * D, D,
+-                p_ptr + (b * H + h) * Tq * Tk, Tk,
+-                &h_one, dv_ptr + (b * H_kv + hk) * Tk * D, D);
++            rocblas_gemm_ex(handle, rocblas_operation_none, rocblas_operation_transpose,
++                D, Tk, Tq, &f_one,
++                do_ptr + (b * H + h) * Tq * D, rocblas_datatype_f16_r, D,
++                p_ptr + (b * H + h) * Tq * Tk, rocblas_datatype_f16_r, Tk,
++                &f_one, dv_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D,
++                dv_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -930,23 +965,25 @@
+ static void gqa_gemm_ds_f16(rocblas_handle handle,
+     const __half* v_ptr, const __half* do_ptr, __half* ds_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sO = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+-            Tk, Tq, D, &h_one, v_ptr, D, sV, do_ptr, D, sO, &h_zero,
+-            ds_ptr, Tk, sS, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_transpose, rocblas_operation_none,
++            Tk, Tq, D, &f_one, v_ptr, rocblas_datatype_f16_r, D, sV, do_ptr, rocblas_datatype_f16_r, D, sO, &f_zero,
++            ds_ptr, rocblas_datatype_f16_r, Tk, sS, B * H,
++            ds_ptr, rocblas_datatype_f16_r, Tk, sS, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            rocblas_hgemm_strided_batched(handle, rocblas_operation_transpose, rocblas_operation_none,
+-                Tk, Tq, D, &h_one,
+-                v_ptr + (b * H_kv + hk) * Tk * D, D, 0,
+-                do_ptr + (b * H + hk * G) * Tq * D, D, sO, &h_zero,
+-                ds_ptr + (b * H + hk * G) * Tq * Tk, Tk, sS, G);
++            rocblas_gemm_strided_batched_ex(handle, rocblas_operation_transpose, rocblas_operation_none,
++                Tk, Tq, D, &f_one,
++                v_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, 0,
++                do_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sO, &f_zero,
++                ds_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, G,
++                ds_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, G, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -954,23 +991,25 @@
+ static void gqa_gemm_dq_f16(rocblas_handle handle,
+     const __half* k_ptr, const __half* ds_ptr, __half* dq_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sS = Tq * Tk, sQ = Tq * D;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+-            D, Tq, Tk, &h_one, k_ptr, D, sK, ds_ptr, Tk, sS, &h_zero,
+-            dq_ptr, D, sQ, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_none,
++            D, Tq, Tk, &f_one, k_ptr, rocblas_datatype_f16_r, D, sK, ds_ptr, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++            dq_ptr, rocblas_datatype_f16_r, D, sQ, B * H,
++            dq_ptr, rocblas_datatype_f16_r, D, sQ, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_none,
+-                D, Tq, Tk, &h_one,
+-                k_ptr + (b * H_kv + hk) * Tk * D, D, 0,
+-                ds_ptr + (b * H + hk * G) * Tq * Tk, Tk, sS, &h_zero,
+-                dq_ptr + (b * H + hk * G) * Tq * D, D, sQ, G);
++            rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_none,
++                D, Tq, Tk, &f_one,
++                k_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, 0,
++                ds_ptr + (b * H + hk * G) * Tq * Tk, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++                dq_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sQ, G,
++                dq_ptr + (b * H + hk * G) * Tq * D, rocblas_datatype_f16_r, D, sQ, G, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -978,26 +1017,28 @@
+ static void gqa_gemm_dk_f16(rocblas_handle handle,
+     const __half* q_ptr, const __half* ds_ptr, __half* dk_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     GPU_API(MemsetAsync)(dk_ptr, 0, (size_t)B * H_kv * Tk * D * sizeof(__half),
+                          dev_stream(current_device()));
+     long long sQ = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        rocblas_hgemm_strided_batched(handle, rocblas_operation_none, rocblas_operation_transpose,
+-            D, Tk, Tq, &h_one, q_ptr, D, sQ, ds_ptr, Tk, sS, &h_zero,
+-            dk_ptr, D, sK, B * H);
++        rocblas_gemm_strided_batched_ex(handle, rocblas_operation_none, rocblas_operation_transpose,
++            D, Tk, Tq, &f_one, q_ptr, rocblas_datatype_f16_r, D, sQ, ds_ptr, rocblas_datatype_f16_r, Tk, sS, &f_zero,
++            dk_ptr, rocblas_datatype_f16_r, D, sK, B * H,
++            dk_ptr, rocblas_datatype_f16_r, D, sK, B * H, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t h = 0; h < H; ++h) {
+             int64_t hk = h / G;
+-            rocblas_hgemm(handle, rocblas_operation_none, rocblas_operation_transpose,
+-                D, Tk, Tq, &h_one,
+-                q_ptr + (b * H + h) * Tq * D, D,
+-                ds_ptr + (b * H + h) * Tq * Tk, Tk,
+-                &h_one, dk_ptr + (b * H_kv + hk) * Tk * D, D);
++            rocblas_gemm_ex(handle, rocblas_operation_none, rocblas_operation_transpose,
++                D, Tk, Tq, &f_one,
++                q_ptr + (b * H + h) * Tq * D, rocblas_datatype_f16_r, D,
++                ds_ptr + (b * H + h) * Tq * Tk, rocblas_datatype_f16_r, Tk,
++                &f_one, dk_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D,
++                dk_ptr + (b * H_kv + hk) * Tk * D, rocblas_datatype_f16_r, D, rocblas_datatype_f32_r, rocblas_gemm_algo_standard, 0, 0);
+         }
+     }
+ }
+@@ -1007,25 +1048,24 @@
+     const __half* k_ptr, const __half* q_ptr, __half* s_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D,
+     float alpha) {
+-    __half h_alpha = __float2half(alpha);
+-    __half h_beta = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sQ = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+-            (int)Tk, (int)Tq, (int)D, &h_alpha,
+-            k_ptr, (int)D, sK, q_ptr, (int)D, sQ, &h_beta,
+-            s_ptr, (int)Tk, sS, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
++            (int)Tk, (int)Tq, (int)D, &alpha,
++            k_ptr, CUDA_R_16F, (int)D, sK, q_ptr, CUDA_R_16F, (int)D, sQ, &f_zero,
++            s_ptr, CUDA_R_16F, (int)Tk, sS, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            cublasHgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+-                (int)Tk, (int)Tq, (int)D, &h_alpha,
+-                k_ptr + (b * H_kv + hk) * Tk * D, (int)D, 0,
+-                q_ptr + (b * H + hk * G) * Tq * D, (int)D, sQ, &h_beta,
+-                s_ptr + (b * H + hk * G) * Tq * Tk, (int)Tk, sS, (int)G);
++            cublasGemmStridedBatchedEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
++                (int)Tk, (int)Tq, (int)D, &alpha,
++                k_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, 0,
++                q_ptr + (b * H + hk * G) * Tq * D, CUDA_R_16F, (int)D, sQ, &f_zero,
++                s_ptr + (b * H + hk * G) * Tq * Tk, CUDA_R_16F, (int)Tk, sS, (int)G, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
+@@ -1033,24 +1073,24 @@
+ static void gqa_gemm_o_f16(cublasHandle_t handle,
+     const __half* v_ptr, const __half* p_ptr, __half* o_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sS = Tq * Tk, sO = Tq * D;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+-            (int)D, (int)Tq, (int)Tk, &h_one,
+-            v_ptr, (int)D, sV, p_ptr, (int)Tk, sS, &h_zero,
+-            o_ptr, (int)D, sO, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_N,
++            (int)D, (int)Tq, (int)Tk, &f_one,
++            v_ptr, CUDA_R_16F, (int)D, sV, p_ptr, CUDA_R_16F, (int)Tk, sS, &f_zero,
++            o_ptr, CUDA_R_16F, (int)D, sO, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+-                (int)D, (int)Tq, (int)Tk, &h_one,
+-                v_ptr + (b * H_kv + hk) * Tk * D, (int)D, 0,
+-                p_ptr + (b * H + hk * G) * Tq * Tk, (int)Tk, sS, &h_zero,
+-                o_ptr + (b * H + hk * G) * Tq * D, (int)D, sO, (int)G);
++            cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_N,
++                (int)D, (int)Tq, (int)Tk, &f_one,
++                v_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, 0,
++                p_ptr + (b * H + hk * G) * Tq * Tk, CUDA_R_16F, (int)Tk, sS, &f_zero,
++                o_ptr + (b * H + hk * G) * Tq * D, CUDA_R_16F, (int)D, sO, (int)G, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
+@@ -1058,27 +1098,27 @@
+ static void gqa_gemm_dv_f16(cublasHandle_t handle,
+     const __half* do_ptr, const __half* p_ptr, __half* dv_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     GPU_API(MemsetAsync)(dv_ptr, 0, (size_t)B * H_kv * Tk * D * sizeof(__half),
+                          dev_stream(current_device()));
+     long long sO = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+-            (int)D, (int)Tk, (int)Tq, &h_one,
+-            do_ptr, (int)D, sO, p_ptr, (int)Tk, sS, &h_zero,
+-            dv_ptr, (int)D, sV, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_T,
++            (int)D, (int)Tk, (int)Tq, &f_one,
++            do_ptr, CUDA_R_16F, (int)D, sO, p_ptr, CUDA_R_16F, (int)Tk, sS, &f_zero,
++            dv_ptr, CUDA_R_16F, (int)D, sV, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t h = 0; h < H; ++h) {
+             int64_t hk = h / G;
+-            cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+-                (int)D, (int)Tk, (int)Tq, &h_one,
+-                do_ptr + (b * H + h) * Tq * D, (int)D,
+-                p_ptr + (b * H + h) * Tq * Tk, (int)Tk,
+-                &h_one, dv_ptr + (b * H_kv + hk) * Tk * D, (int)D);
++            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_T,
++                (int)D, (int)Tk, (int)Tq, &f_one,
++                do_ptr + (b * H + h) * Tq * D, CUDA_R_16F, (int)D,
++                p_ptr + (b * H + h) * Tq * Tk, CUDA_R_16F, (int)Tk,
++                &f_one, dv_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
+@@ -1086,24 +1126,24 @@
+ static void gqa_gemm_ds_f16(cublasHandle_t handle,
+     const __half* v_ptr, const __half* do_ptr, __half* ds_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sO = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sV = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+-            (int)Tk, (int)Tq, (int)D, &h_one,
+-            v_ptr, (int)D, sV, do_ptr, (int)D, sO, &h_zero,
+-            ds_ptr, (int)Tk, sS, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
++            (int)Tk, (int)Tq, (int)D, &f_one,
++            v_ptr, CUDA_R_16F, (int)D, sV, do_ptr, CUDA_R_16F, (int)D, sO, &f_zero,
++            ds_ptr, CUDA_R_16F, (int)Tk, sS, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            cublasHgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+-                (int)Tk, (int)Tq, (int)D, &h_one,
+-                v_ptr + (b * H_kv + hk) * Tk * D, (int)D, 0,
+-                do_ptr + (b * H + hk * G) * Tq * D, (int)D, sO, &h_zero,
+-                ds_ptr + (b * H + hk * G) * Tq * Tk, (int)Tk, sS, (int)G);
++            cublasGemmStridedBatchedEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
++                (int)Tk, (int)Tq, (int)D, &f_one,
++                v_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, 0,
++                do_ptr + (b * H + hk * G) * Tq * D, CUDA_R_16F, (int)D, sO, &f_zero,
++                ds_ptr + (b * H + hk * G) * Tq * Tk, CUDA_R_16F, (int)Tk, sS, (int)G, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
+@@ -1111,24 +1151,24 @@
+ static void gqa_gemm_dq_f16(cublasHandle_t handle,
+     const __half* k_ptr, const __half* ds_ptr, __half* dq_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     long long sS = Tq * Tk, sQ = Tq * D;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+-            (int)D, (int)Tq, (int)Tk, &h_one,
+-            k_ptr, (int)D, sK, ds_ptr, (int)Tk, sS, &h_zero,
+-            dq_ptr, (int)D, sQ, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_N,
++            (int)D, (int)Tq, (int)Tk, &f_one,
++            k_ptr, CUDA_R_16F, (int)D, sK, ds_ptr, CUDA_R_16F, (int)Tk, sS, &f_zero,
++            dq_ptr, CUDA_R_16F, (int)D, sQ, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t hk = 0; hk < H_kv; ++hk) {
+-            cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+-                (int)D, (int)Tq, (int)Tk, &h_one,
+-                k_ptr + (b * H_kv + hk) * Tk * D, (int)D, 0,
+-                ds_ptr + (b * H + hk * G) * Tq * Tk, (int)Tk, sS, &h_zero,
+-                dq_ptr + (b * H + hk * G) * Tq * D, (int)D, sQ, (int)G);
++            cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_N,
++                (int)D, (int)Tq, (int)Tk, &f_one,
++                k_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, 0,
++                ds_ptr + (b * H + hk * G) * Tq * Tk, CUDA_R_16F, (int)Tk, sS, &f_zero,
++                dq_ptr + (b * H + hk * G) * Tq * D, CUDA_R_16F, (int)D, sQ, (int)G, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
+@@ -1136,27 +1176,27 @@
+ static void gqa_gemm_dk_f16(cublasHandle_t handle,
+     const __half* q_ptr, const __half* ds_ptr, __half* dk_ptr,
+     int64_t B, int64_t H, int64_t H_kv, int64_t Tq, int64_t Tk, int64_t D) {
+-    __half h_one = __float2half(1.0f), h_zero = __float2half(0.0f);
++    float f_one = 1.0f, f_zero = 0.0f;
+     GPU_API(MemsetAsync)(dk_ptr, 0, (size_t)B * H_kv * Tk * D * sizeof(__half),
+                          dev_stream(current_device()));
+     long long sQ = Tq * D, sS = Tq * Tk;
+     if (H == H_kv) {
+         long long sK = Tk * D;
+-        cublasHgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+-            (int)D, (int)Tk, (int)Tq, &h_one,
+-            q_ptr, (int)D, sQ, ds_ptr, (int)Tk, sS, &h_zero,
+-            dk_ptr, (int)D, sK, (int)(B * H));
++        cublasGemmStridedBatchedEx(handle, CUBLAS_OP_N, CUBLAS_OP_T,
++            (int)D, (int)Tk, (int)Tq, &f_one,
++            q_ptr, CUDA_R_16F, (int)D, sQ, ds_ptr, CUDA_R_16F, (int)Tk, sS, &f_zero,
++            dk_ptr, CUDA_R_16F, (int)D, sK, (int)(B * H), CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         return;
+     }
+     int64_t G = H / H_kv;
+     for (int64_t b = 0; b < B; ++b) {
+         for (int64_t h = 0; h < H; ++h) {
+             int64_t hk = h / G;
+-            cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T,
+-                (int)D, (int)Tk, (int)Tq, &h_one,
+-                q_ptr + (b * H + h) * Tq * D, (int)D,
+-                ds_ptr + (b * H + h) * Tq * Tk, (int)Tk,
+-                &h_one, dk_ptr + (b * H_kv + hk) * Tk * D, (int)D);
++            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_T,
++                (int)D, (int)Tk, (int)Tq, &f_one,
++                q_ptr + (b * H + h) * Tq * D, CUDA_R_16F, (int)D,
++                ds_ptr + (b * H + h) * Tq * Tk, CUDA_R_16F, (int)Tk,
++                &f_one, dk_ptr + (b * H_kv + hk) * Tk * D, CUDA_R_16F, (int)D, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+         }
+     }
+ }
