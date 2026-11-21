@@ -16,6 +16,8 @@
 
 static const PJRT_Api* g_api = nullptr;
 
+static const unsigned char kCompileOptionsProto[] = {0x1A, 0x04, 0x20, 0x01, 0x28, 0x01};
+
 static bool check_err(PJRT_Error* err, const char* what) {
     if (!err) return true;
     std::string msg = "unknown";
@@ -301,6 +303,13 @@ int main(int argc, char** argv) {
         cargs.struct_size = PJRT_Client_Compile_Args_STRUCT_SIZE;
         cargs.client = client;
         cargs.program = &prog;
+        cargs.compile_options = reinterpret_cast<const char*>(kCompileOptionsProto);
+        cargs.compile_options_size = sizeof(kCompileOptionsProto);
+        std::printf("compile_options_hex=");
+        for (size_t i = 0; i < sizeof(kCompileOptionsProto); ++i) {
+            std::printf("%02X", (unsigned)kCompileOptionsProto[i]);
+        }
+        std::printf("\n");
         double t0 = now_ms();
         PJRT_Error* err = g_api->PJRT_Client_Compile(&cargs);
         compile_ms = now_ms() - t0;

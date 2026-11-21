@@ -30,6 +30,13 @@ def main():
         out["torch_xla_version"] = getattr(torch_xla, "__version__", "unknown")
         device = torch_xla.device()
         out["device"] = str(device)
+        if not hasattr(xm, "wait_device_ops"):
+            raise RuntimeError("xm.wait_device_ops unavailable; refusing unsynchronized timing")
+
+        def sync_device():
+            xm.mark_step()
+            xm.wait_device_ops()
+
         rng = np.random.default_rng(20261119)
         for name, m, k, n, dt, iters, warmup in CONFIGS:
             dtype = torch.float32 if dt == "float32" else torch.bfloat16
@@ -39,12 +46,12 @@ def main():
             b = torch.from_numpy(b_np).to(dtype).to(device)
             for _ in range(warmup):
                 c = a @ b
-                torch_xla.sync()
+                sync_device()
             times = []
             for _ in range(iters):
                 t0 = time.perf_counter()
                 c = a @ b
-                torch_xla.sync()
+                sync_device()
                 times.append((time.perf_counter() - t0) * 1000.0)
             times.sort()
             median = times[len(times) // 2]
@@ -62,7 +69,7 @@ def main():
         a = torch.from_numpy(a_np).to(device)
         b = torch.from_numpy(b_np).to(device)
         c = a @ b
-        torch_xla.sync()
+        sync_device()
         c_np = c.cpu().numpy().astype(np.float32)
         c_np.tofile(os.path.join(workdir, "out_torch_xla_512.bin"))
         ref = torch.from_numpy(a_np) @ torch.from_numpy(b_np)
