@@ -6,6 +6,8 @@ import sys
 
 import numpy as np
 
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_reserve_recv_ready_sync_flags=true"
+
 RUNS = [
     ("allreduce_gate_1024", ["allreduce", "1024", "f32", "3", "1", "1"], "ar_gate"),
     ("allreduce_bw_1mb", ["allreduce", "512", "f32", "7", "2", "0"], None),
@@ -33,7 +35,7 @@ def run_one(binary, args, extra, workdir):
     for line in proc.stdout.splitlines():
         if line.startswith("RESULT_JSON "):
             result = json.loads(line[len("RESULT_JSON "):])
-        if line.startswith(("device[", "platform_", "num_addressable", "pjrt_api_version", "libtpu_path", "plugin_attribute", "compile_ms", "on_device_bytes")):
+        if line.startswith(("device[", "platform_", "num_addressable", "pjrt_api_version", "libtpu_path", "plugin_attribute", "compile_ms", "compile_options_hex", "on_device_bytes")):
             device_lines.append(line)
     entry["result"] = result
     entry["info_lines"] = device_lines
@@ -81,6 +83,8 @@ def main():
     bf16_4096_extra = ["--load-a=" + ba_path, "--load-b=" + bb_path,
                        "--save-out=" + os.path.join(workdir, "out_kshard_bf16_4096.bin")]
     extras = {"ar_gate": ar_gate_extra, "mm_gate": gate_extra, "mm_bf16_4096": bf16_4096_extra}
+    out["libtpu_init_args"] = os.environ.get("LIBTPU_INIT_ARGS", "")
+    print("LIBTPU_INIT_ARGS=" + out["libtpu_init_args"])
     for name, args, kind in RUNS:
         if kind == "mm_gate" and name.startswith("matmul_kshard"):
             extra = kshard_gate_extra
@@ -91,6 +95,10 @@ def main():
         json.dump(out, f, indent=2)
     print(json.dumps({k: (v.get("result") if isinstance(v, dict) else v) for k, v in out["runs"].items()}, indent=2))
     print("partial_multichip.json written")
+    hexes = sorted({line.split("=", 1)[1] for e in out["runs"].values()
+                    for line in e.get("info_lines", []) if line.startswith("compile_options_hex=")})
+    print("compile_options_hex values seen: " + ",".join(hexes))
+    print("LIBTPU_INIT_ARGS=" + out["libtpu_init_args"])
 
 
 if __name__ == "__main__":

@@ -67,9 +67,10 @@ def main():
         if len(devices) < 8:
             raise RuntimeError("JAX multi-device baselines need 8 devices, got %d" % len(devices))
 
-        @jax.pmap(axis_name="i")
-        def allreduce_pmap(x):
+        def _allreduce_fn(x):
             return lax.psum(x, axis_name="i")
+
+        allreduce_pmap = jax.pmap(_allreduce_fn, axis_name="i")
 
         ar_entry = {}
         for size in ALLREDUCE_SIZES:
@@ -93,9 +94,10 @@ def main():
             del x, y
         out["allreduce_pmap"] = ar_entry
 
-        @jax.pmap(axis_name="i")
-        def rowshard_pmap(a_shard, b):
+        def _rowshard_fn(a_shard, b):
             return a_shard @ b
+
+        rowshard_pmap = jax.pmap(_rowshard_fn, axis_name="i", in_axes=(0, None))
 
         shard_entry = {}
         for name, m, k, n, dt, iters, warmup in [("f32_4096", 4096, 4096, 4096, "float32", 7, 2),

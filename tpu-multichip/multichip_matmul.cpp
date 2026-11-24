@@ -16,8 +16,8 @@
 
 static const PJRT_Api* g_api = nullptr;
 
-static const unsigned char kCompileOptionsProto18[] = {0x1A, 0x04, 0x20, 0x01, 0x28, 0x08};
-static const unsigned char kCompileOptionsProto11[] = {0x1A, 0x04, 0x20, 0x01, 0x28, 0x01};
+static const unsigned char kCompileOptionsProto18[] = {0x1A, 0x09, 0x20, 0x01, 0x28, 0x08, 0x30, 0x01, 0x62, 0x01, 0x01};
+static const unsigned char kCompileOptionsProto11[] = {0x1A, 0x09, 0x20, 0x01, 0x28, 0x01, 0x30, 0x01, 0x62, 0x01, 0x01};
 
 static bool check_err(PJRT_Error* err, const char* what) {
     if (!err) return true;
@@ -156,7 +156,8 @@ static std::string build_mlir_allreduce(int64_t s, int partitions) {
         "        %%s = stablehlo.add %%a, %%b : tensor<f32>\n"
         "        stablehlo.return %%s : tensor<f32>\n"
         "    }) {replica_groups = dense<[[%s]]> : tensor<1x%dxi64>,\n"
-        "        channel_handle = #stablehlo.channel_handle<handle = 1, type = 0>} : (tensor<%lldx%lldxf32>) -> tensor<%lldx%lldxf32>\n"
+        "        channel_handle = #stablehlo.channel_handle<handle = 1, type = 0>,\n"
+        "        use_global_device_ids} : (tensor<%lldx%lldxf32>) -> tensor<%lldx%lldxf32>\n"
         "    func.return %%0 : tensor<%lldx%lldxf32>\n"
         "  }\n"
         "}\n",
@@ -549,7 +550,7 @@ int main(int argc, char** argv) {
     }
     size_t nd = (size_t)partitions;
     const unsigned char* opts_bytes = (partitions == 8) ? kCompileOptionsProto18 : kCompileOptionsProto11;
-    size_t opts_size = 6;
+    size_t opts_size = 11;
 
     if (is_allreduce) {
         std::string mlir = build_mlir_allreduce(S, partitions);
