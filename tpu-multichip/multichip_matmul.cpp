@@ -642,30 +642,32 @@ int main(int argc, char** argv) {
         double max_abs_diff = -1.0;
         double cross_device_max_abs_diff = -1.0;
         int verify_pass = -1;
-        if (verify) {
+        if (verify || !save_out.empty()) {
             std::vector<PJRT_Buffer*> outs;
             if (!run_once_multi(exe, arg_bufs, num_outputs, &outs)) return 7;
             std::vector<std::vector<float>> out_f(nd, std::vector<float>(nelem));
             for (size_t d = 0; d < nd; ++d) {
                 if (!download_buffer(outs[d], out_f[d].data(), nelem * sizeof(float))) return 8;
             }
-            std::vector<float> ref(nelem, 0.0f);
-            for (size_t d = 0; d < nd; ++d) {
-                for (size_t i = 0; i < nelem; ++i) ref[i] += in_f[d][i];
-            }
-            max_abs_diff = 0.0;
-            cross_device_max_abs_diff = 0.0;
-            for (size_t d = 0; d < nd; ++d) {
-                for (size_t i = 0; i < nelem; ++i) {
-                    double dd = std::fabs((double)out_f[d][i] - (double)ref[i]);
-                    if (dd > max_abs_diff) max_abs_diff = dd;
-                    double cd = std::fabs((double)out_f[d][i] - (double)out_f[0][i]);
-                    if (cd > cross_device_max_abs_diff) cross_device_max_abs_diff = cd;
+            if (verify) {
+                std::vector<float> ref(nelem, 0.0f);
+                for (size_t d = 0; d < nd; ++d) {
+                    for (size_t i = 0; i < nelem; ++i) ref[i] += in_f[d][i];
                 }
+                max_abs_diff = 0.0;
+                cross_device_max_abs_diff = 0.0;
+                for (size_t d = 0; d < nd; ++d) {
+                    for (size_t i = 0; i < nelem; ++i) {
+                        double dd = std::fabs((double)out_f[d][i] - (double)ref[i]);
+                        if (dd > max_abs_diff) max_abs_diff = dd;
+                        double cd = std::fabs((double)out_f[d][i] - (double)out_f[0][i]);
+                        if (cd > cross_device_max_abs_diff) cross_device_max_abs_diff = cd;
+                    }
+                }
+                verify_pass = (max_abs_diff < 1e-4) ? 1 : 0;
+                std::printf("verify_max_abs_diff=%.6g cross_device_max_abs_diff=%.6g verify_pass=%d\n",
+                            max_abs_diff, cross_device_max_abs_diff, verify_pass);
             }
-            verify_pass = (max_abs_diff < 1e-4) ? 1 : 0;
-            std::printf("verify_max_abs_diff=%.6g cross_device_max_abs_diff=%.6g verify_pass=%d\n",
-                        max_abs_diff, cross_device_max_abs_diff, verify_pass);
             if (!save_out.empty()) {
                 std::vector<float> flat(nd * nelem);
                 for (size_t d = 0; d < nd; ++d) {
@@ -854,7 +856,7 @@ int main(int argc, char** argv) {
     double max_rel_err = -1.0;
     double cross_device_max_abs_diff = -1.0;
     int verify_pass = -1;
-    if (verify) {
+    if (verify || !save_out.empty()) {
         std::vector<PJRT_Buffer*> outs;
         if (!run_once_multi(exe, arg_bufs, num_outputs, &outs)) return 7;
         size_t esz = is_bf16 ? 2 : 4;
@@ -889,29 +891,31 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        std::vector<float> ref(nc, 0.0f);
-        for (int64_t i = 0; i < M; ++i) {
-            for (int64_t k = 0; k < K; ++k) {
-                float av = a_f[(size_t)(i * K + k)];
-                if (av == 0.0f) continue;
-                for (int64_t j = 0; j < N; ++j) {
-                    ref[(size_t)(i * N + j)] += av * b_f[(size_t)(k * N + j)];
+        if (verify) {
+            std::vector<float> ref(nc, 0.0f);
+            for (int64_t i = 0; i < M; ++i) {
+                for (int64_t k = 0; k < K; ++k) {
+                    float av = a_f[(size_t)(i * K + k)];
+                    if (av == 0.0f) continue;
+                    for (int64_t j = 0; j < N; ++j) {
+                        ref[(size_t)(i * N + j)] += av * b_f[(size_t)(k * N + j)];
+                    }
                 }
             }
+            max_abs_diff = 0.0;
+            max_rel_err = 0.0;
+            for (size_t i = 0; i < nc; ++i) {
+                double dd = std::fabs((double)c_full[i] - (double)ref[i]);
+                if (dd > max_abs_diff) max_abs_diff = dd;
+                double denom = std::max(1.0, std::fabs((double)ref[i]));
+                double r = dd / denom;
+                if (r > max_rel_err) max_rel_err = r;
+            }
+            if (is_bf16) verify_pass = (max_rel_err < 1e-2) ? 1 : 0;
+            else verify_pass = (max_abs_diff < 1e-4) ? 1 : 0;
+            std::printf("verify_max_abs_diff=%.6g verify_max_rel_err=%.6g cross_device_max_abs_diff=%.6g verify_pass=%d\n",
+                        max_abs_diff, max_rel_err, cross_device_max_abs_diff, verify_pass);
         }
-        max_abs_diff = 0.0;
-        max_rel_err = 0.0;
-        for (size_t i = 0; i < nc; ++i) {
-            double dd = std::fabs((double)c_full[i] - (double)ref[i]);
-            if (dd > max_abs_diff) max_abs_diff = dd;
-            double denom = std::max(1.0, std::fabs((double)ref[i]));
-            double r = dd / denom;
-            if (r > max_rel_err) max_rel_err = r;
-        }
-        if (is_bf16) verify_pass = (max_rel_err < 1e-2) ? 1 : 0;
-        else verify_pass = (max_abs_diff < 1e-4) ? 1 : 0;
-        std::printf("verify_max_abs_diff=%.6g verify_max_rel_err=%.6g cross_device_max_abs_diff=%.6g verify_pass=%d\n",
-                    max_abs_diff, max_rel_err, cross_device_max_abs_diff, verify_pass);
         if (!save_out.empty()) {
             if (!save_f32_file(save_out, c_full.data(), c_full.size())) {
                 std::fprintf(stderr, "MULTICHIP_FAIL cannot open save-out %s\n", save_out.c_str());

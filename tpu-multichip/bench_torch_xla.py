@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 import traceback
@@ -107,15 +106,12 @@ def _spmd_allreduce_entrypoint(workdir):
     return 0
 
 
-def _run_spmd_allreduce_reference(workdir):
-    cmd = [sys.executable, os.path.abspath(__file__), "--workdir", workdir, "--spmd-allreduce-only"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=workdir)
-    if proc.returncode != 0:
-        raise RuntimeError("SPMD all-reduce reference subprocess failed rc=%d: %s" % (proc.returncode, proc.stderr[-2000:]))
-    with open(os.path.join(workdir, "partial_torch_xla_allreduce.json")) as f:
+def _load_spmd_allreduce_reference(workdir):
+    path = os.path.join(workdir, "partial_torch_xla_allreduce.json")
+    with open(path) as f:
         child = json.load(f)
     if "allreduce" not in child:
-        raise RuntimeError("SPMD all-reduce reference produced no allreduce entry")
+        raise RuntimeError("SPMD all-reduce reference produced no allreduce entry: %s" % path)
     return child["allreduce"]
 
 
@@ -192,7 +188,7 @@ def main():
         cb_np.tofile(os.path.join(workdir, "out_torch_xla_bf16_4096.bin"))
         out["gate_bf16_4096"] = {"output_file": "out_torch_xla_bf16_4096.bin",
                                  "note": "unsharded BF16 matmul on the shared BF16-rounded inputs, saved widened to FP32"}
-        out["allreduce"] = _run_spmd_allreduce_reference(workdir)
+        out["allreduce"] = _load_spmd_allreduce_reference(workdir)
     except Exception:
         out["error"] = traceback.format_exc()
     with open(os.path.join(workdir, "partial_torch_xla.json"), "w") as f:
