@@ -202,6 +202,24 @@ static std::string build_mlir_matmul(int64_t m, int64_t k, int64_t n, const char
             (long long)k, (long long)n, etype,
             (long long)m, (long long)n, etype,
             (long long)m, (long long)n, etype);
+    } else if (std::strcmp(etype, "bf16") == 0) {
+        std::snprintf(buf, sizeof(buf),
+            "module @multichip_matmul_kshard {\n"
+            "  func.func public @main(%%arg0: tensor<%lldx%lldx%s> {mhlo.sharding = \"{devices=[1,8]0,1,2,3,4,5,6,7}\"}, %%arg1: tensor<%lldx%lldx%s> {mhlo.sharding = \"{devices=[8,1]0,1,2,3,4,5,6,7}\"}) -> tensor<%lldx%lldx%s> {\n"
+            "    %%0 = stablehlo.dot_general %%arg0, %%arg1, contracting_dims = [1] x [0] : (tensor<%lldx%lldx%s>, tensor<%lldx%lldx%s>) -> tensor<%lldx%lldxf32>\n"
+            "    %%1 = stablehlo.convert %%0 : (tensor<%lldx%lldxf32>) -> tensor<%lldx%lldx%s>\n"
+            "    func.return %%1 : tensor<%lldx%lldx%s>\n"
+            "  }\n"
+            "}\n",
+            (long long)m, (long long)k, etype,
+            (long long)k, (long long)n, etype,
+            (long long)m, (long long)n, etype,
+            (long long)m, (long long)k, etype,
+            (long long)k, (long long)n, etype,
+            (long long)m, (long long)n,
+            (long long)m, (long long)n,
+            (long long)m, (long long)n, etype,
+            (long long)m, (long long)n, etype);
     } else {
         std::snprintf(buf, sizeof(buf),
             "module @multichip_matmul_kshard {\n"
